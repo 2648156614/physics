@@ -1,0 +1,86 @@
+services:
+  web:
+    build: .
+    container_name: physics_web
+    ports:
+      - "80:5000"
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # 关键：用 env_file 把 .env 注入容器（配合 .dockerignore，密钥不进镜像）
+    env_file:
+      - .env
+    environment:
+      # 仅覆盖需要强制指定的项；其余全部走 .env
+      - FLASK_ENV=production
+      # 时区必须显式指定：容器默认 UTC，会让考试起止时间差 8 小时
+      - TZ=Asia/Shanghai
+    volumes:
+      # 用户上传的图片/头像需要持久化，否则容器重建后丢失
+      - uploads_data:/app/static/images
+      - avatars_data:/app/static/avatars
+      # 日志用绑定挂载，方便在宿主机直接 tail 查看
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  db:
+    image: mysql:8.0
+    container_name: physics_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: gytt
+      MYSQL_DATABASE: physics_new3
+      # 允许 web 容器（不同主机名）以 root 连接
+      MYSQL_ROOT_HOST: "%"
+      TZ: Asia/Shanghai
+    # 迁移自旧 .bat 的调优参数 + 中文字符集
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # 连接数要大于 web 线程数，留足余量
+      - --max_connections=300
+      # 跳过反向 DNS 解析，高并发登录时连接建立更快
+      - --skip-name-resolve
+      # 按服务器内存调整：建议给到可用内存的 40%~50%（2G 机型用 256M，4G 用 1G）
+      - --innodb_buffer_pool_size=256M
+      # 若答题写入压力大且可容忍宕机丢 1 秒事务，可放开下面这行提升写吞吐
+      # - --innodb_flush_log_at_trx_commit=2
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pgytt"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    container_name: physics_redis
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    # 开启 AOF 持久化
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      # 之前漏了这个卷：开了 AOF 但没挂载 /data，重启后缓存照样全丢
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  db_data:
+  uploads_data:
+  avatars_data:
+  redis_data:

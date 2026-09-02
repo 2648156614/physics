@@ -1,0 +1,3709 @@
+{% extends "base.html" %}
+
+{% block title %}第{{ problem_id }}题{% endblock %}
+
+{% block content %}
+<style>
+    #problem-content-container {
+        position: relative;
+        overflow: hidden;
+    }
+
+    #exam-initial-shield {
+        position: absolute;
+        inset: 0;
+        z-index: 130;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100%;
+        padding: 1.25rem;
+        border-radius: 8px;
+        color: #1f2937;
+        background: linear-gradient(135deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.98));
+        backdrop-filter: blur(12px) brightness(0.88);
+        -webkit-backdrop-filter: blur(12px) brightness(0.88);
+        pointer-events: none;
+        text-align: center;
+        box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.35);
+    }
+
+    #exam-initial-shield .shield-title {
+        font-weight: 700;
+        margin-bottom: 0.35rem;
+    }
+
+    #exam-initial-shield .shield-text {
+        margin: 0;
+        font-size: 0.92rem;
+        color: #64748b;
+    }
+
+    #problem-content {
+        visibility: hidden;
+    }
+
+    #problem-content-container.question-content-visible.spotlight-ready:not(.resume-shield-active) #problem-content {
+        visibility: visible;
+    }
+
+    #problem-content-container.resume-shield-active #problem-content {
+        visibility: hidden;
+    }
+
+    #resume-visibility-shield {
+        position: absolute;
+        inset: 0;
+        z-index: 120;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100%;
+        padding: 1.25rem;
+        border-radius: 8px;
+        color: #1f2937;
+        background: linear-gradient(135deg, rgba(248, 250, 252, 0.99), rgba(226, 232, 240, 0.99));
+        backdrop-filter: blur(14px) brightness(0.86);
+        -webkit-backdrop-filter: blur(14px) brightness(0.86);
+        pointer-events: none;
+        text-align: center;
+        box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.35);
+    }
+
+    #resume-visibility-shield .shield-title {
+        font-weight: 700;
+        margin-bottom: 0.35rem;
+    }
+
+    #resume-visibility-shield .shield-text {
+        margin: 0;
+        font-size: 0.92rem;
+        color: #64748b;
+    }
+</style>
+<!-- 蒙版层 - 现在只覆盖题目内容区域 -->
+<div id="spotlight-overlay" class="spotlight-overlay"></div>
+
+<div class="row">
+    <!-- 题目跳转侧边栏 -->
+    <div class="col-lg-3 col-md-4 mb-4">
+        <div class="card">
+            <div class="card-header bg-light">
+                <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>题目导航</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="list-group list-group-flush" id="problem-sidebar">
+                    {% for i in range(1, total_problems + 1) %}
+                    <a href="{{ url_for('problem_ajax', problem_id=i) }}"
+                       class="list-group-item list-group-item-action d-flex justify-content-between align-items-center {% if i == problem_id %}active{% endif %}"
+                       data-problem-id="{{ i }}">
+                        <div class="d-flex align-items-center">
+                            <span class="problem-number me-2">{{ i }}</span>
+                            <span class="problem-title">第{{ i }}题</span>
+                        </div>
+                        <span class="problem-status-badge" data-problem-id="{{ i }}">
+                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                        </span>
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="card-footer bg-light">
+                <small class="text-muted">点击题目序号快速跳转</small>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- 主题目区域 -->
+    <div class="col-lg-9 col-md-8">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">
+                        <i class="bi bi-calculator me-2"></i> 第{{ problem_id }}题：{{ problem.template_name }}
+                    </h4>
+                    <div class="d-flex align-items-center">
+                        <span class="badge bg-light text-dark me-2" id="timer-display">
+                            <i class="bi bi-clock me-1"></i> 用时: <span id="time-counter">0</span>秒
+                        </span>
+                        {% if total_attempts > 0 %}
+                        <span class="badge bg-warning text-dark">
+                            <i class="bi bi-exclamation-triangle me-1"></i>
+                            累计尝试: {{ total_attempts }} 次
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- 动态消息显示区域 -->
+                <div id="message-area">
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                        {% if messages %}
+                            {% for category, message in messages %}
+                                <div class="alert alert-{{ category }} alert-dismissible fade show">
+                                    {{ message }}
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                                </div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+                </div>
+
+                <!-- 极简点选兜底：答错后学生手动纠正错因（默认隐藏） -->
+                <div id="error-correction-panel" class="alert alert-warning mt-3" style="display:none;">
+                    <div class="fw-semibold mb-2">
+                        <i class="bi bi-lightbulb me-1"></i>这道题你觉得自己主要是哪种错因？
+                        <small class="fw-normal text-muted">（点一下即可更正，帮助系统更懂你）</small>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-cat="公式记错">公式记错</button>
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-cat="概念混淆">概念混淆</button>
+                        <button type="button" class="btn btn-sm btn-link text-muted" id="error-correction-skip">不用了</button>
+                    </div>
+                </div>
+
+                <!-- 进度指示器 -->
+                <div class="progress mb-4" style="height: 8px;">
+                    {% set progress_width = (problem_id / total_problems * 100) %}
+                    <div class="progress-bar bg-success" role="progressbar"
+                         style="width: {{ progress_width }}%"
+                         aria-valuenow="{{ progress_width }}" aria-valuemin="0" aria-valuemax="100"></div>
+                </div>
+                <div class="d-flex justify-content-between mb-3">
+                    <small class="text-muted">进度: {{ problem_id }}/{{ total_problems }}</small>
+                    <small class="text-muted">累计尝试: <span id="total-attempts">{{ total_attempts }}</span> 次</small>
+                </div>
+
+                <!-- 题目内容区域 - 添加单独的容器 -->
+                <div id="problem-content-container">
+                    <div id="exam-initial-shield" aria-hidden="true">
+                        <div>
+                            <div class="shield-title">题目已遮挡</div>
+                            <p class="shield-text">题目将在 1 秒后加载，并保持遮挡显示。</p>
+                        </div>
+                    </div>
+                    <!-- 题目内容 -->
+                    <div class="math-formula mb-4 p-3 border rounded bg-light" id="problem-content">
+                        {{ problem.problem_text|safe }}
+                    </div>
+                </div>
+
+                <!-- 动态答题表单 - 双模式切换方案 -->
+                <form id="answer-form" class="mt-4">
+                    <!-- 输入模式切换按钮 -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label class="form-label">
+                                <strong><i class="bi bi-input-cursor-text me-1"></i>请输入答案：</strong>
+                            </label>
+                            <div class="btn-group btn-group-sm" role="group" aria-label="输入模式切换">
+                                <button type="button" class="btn btn-outline-primary active" id="normal-mode-btn">
+                                    <i class="bi bi-123 me-1"></i> 普通模式
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" id="scientific-mode-btn">
+                                    <i class="bi bi-calculator me-1"></i> 科学计数法
+                                </button>
+                            </div>
+                        </div>
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle me-1"></i>科学计数法模式适合输入极大或极小的数值
+                        </small>
+                    </div>
+
+                    <div id="answer-inputs">
+                        {% if answer_count == 1 %}
+                        <!-- 单答案题目 -->
+                        <div class="normal-input-container">
+                            <!-- 普通模式输入框 -->
+                            <div class="mb-3 normal-mode">
+                                <div class="input-group input-group-lg">
+                                    <input type="number" step="any" class="form-control"
+                                           id="answer-normal" name="answer-normal"
+                                           placeholder="输入数值（如：1.5, -0.003, 2500）"
+                                           autocomplete="off">
+                                    {% if problem.answer_units and problem.answer_units[0] %}
+                                    <span class="input-group-text unit-display">{{ problem.answer_units[0] }}</span>
+                                    {% endif %}
+                                </div>
+                                <div class="form-text">
+                                    <i class="bi bi-lightbulb me-1"></i>也可以输入科学计数法格式，如：1.6e-19 表示 1.6×10⁻¹⁹
+                                </div>
+                            </div>
+
+                            <!-- 科学计数法模式输入框（默认隐藏） -->
+                            <div class="mb-3 scientific-mode" style="display: none;">
+                                <div class="scientific-notation-input">
+                                    <!-- 符号选择 -->
+                                    <div class="btn-group btn-group-sm me-2" role="group" aria-label="符号选择">
+                                        <input type="radio" class="btn-check" name="sign1"
+                                               id="sign-positive1" value="+" autocomplete="off" checked>
+                                        <label class="btn btn-outline-primary" for="sign-positive1">
+                                            <i class="bi bi-plus-lg"></i> 正
+                                        </label>
+
+                                        <input type="radio" class="btn-check" name="sign1"
+                                               id="sign-negative1" value="-" autocomplete="off">
+                                        <label class="btn btn-outline-primary" for="sign-negative1">
+                                            <i class="bi bi-dash-lg"></i> 负
+                                        </label>
+                                    </div>
+
+                                    <!-- 有效数字输入 -->
+                                    <div class="input-group input-group-sm me-2" style="width: 150px;">
+                                        <input type="number" step="any" class="form-control mantissa-input"
+                                               id="mantissa1"
+                                               placeholder="有效数字"
+                                               value="1.00"
+                                               min="1" max="9.999" step="0.001">
+                                        <span class="input-group-text">×10</span>
+                                    </div>
+
+                                    <!-- 指数 -->
+                                    <div class="input-group input-group-sm me-2" style="width: 120px;">
+                                        <input type="number" class="form-control exponent-input"
+                                               id="exponent1"
+                                               placeholder="指数"
+                                               value="0"
+                                               min="-50" max="50" step="1">
+                                        <span class="input-group-text">次方</span>
+                                    </div>
+
+                                    <!-- 单位显示 -->
+                                    {% if problem.answer_units and problem.answer_units[0] %}
+                                    <span class="input-group-text unit-display">{{ problem.answer_units[0] }}</span>
+                                    {% endif %}
+                                </div>
+
+                                <!-- 实时计算结果和示例 -->
+                                <div class="mt-2">
+                                    <small id="calc-result1" class="text-primary">
+                                        当前值: 1.00 × 10⁰ = 1.00
+                                        {% if problem.answer_units and problem.answer_units[0] %}
+                                        {{ problem.answer_units[0] }}
+                                        {% endif %}
+                                    </small>
+                                </div>
+
+                                <!-- 科学计数法示例 -->
+                                <div class="scientific-example mt-2">
+                                    <small>
+                                        <strong><i class="bi bi-lightbulb me-1"></i>示例：</strong>
+                                        电子电量：<kbd>+</kbd> <kbd>1.60</kbd> <kbd>×10</kbd> <kbd>-19</kbd> 表示 1.60×10⁻¹⁹<br>
+                                        光速：<kbd>+</kbd> <kbd>3.00</kbd> <kbd>×10</kbd> <kbd>8</kbd> 表示 3.00×10⁸
+                                    </small>
+                                </div>
+                            </div>
+
+                            <!-- 隐藏的真实输入框 -->
+                            <input type="hidden" class="form-control form-control-lg"
+                                   id="answer1" name="answer1"
+                                   placeholder="最终数值"
+                                   autocomplete="off">
+                        </div>
+                        {% else %}
+                        <!-- 多答案题目 -->
+                        <div class="row">
+                            {% for i in range(answer_count) %}
+                            <div class="col-md-6 mb-4">
+                                <label class="form-label">
+                                    <strong><i class="bi bi-input-cursor-text me-1"></i>答案 {{ i+1 }}：</strong>
+                                    {% if problem.answer_units and problem.answer_units[i] %}
+                                    <small class="text-muted">(单位: {{ problem.answer_units[i] }})</small>
+                                    {% endif %}
+                                </label>
+
+                                <div class="normal-input-container">
+                                    <!-- 普通模式输入框 -->
+                                    <div class="normal-mode">
+                                        <div class="input-group input-group-sm">
+                                            <input type="number" step="any" class="form-control"
+                                                   id="answer-normal{{ i+1 }}" name="answer-normal{{ i+1 }}"
+                                                   placeholder="答案 {{ i+1 }}"
+                                                   autocomplete="off">
+                                            {% if problem.answer_units and problem.answer_units[i] %}
+                                            <span class="input-group-text unit-display">{{ problem.answer_units[i] }}</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+
+                                    <!-- 科学计数法模式输入框（默认隐藏） -->
+                                    <div class="scientific-mode" style="display: none;">
+                                        <div class="scientific-notation-input">
+                                            <!-- 符号选择 -->
+                                            <div class="btn-group btn-group-sm me-2" role="group" aria-label="符号选择">
+                                                <input type="radio" class="btn-check" name="sign{{ i+1 }}"
+                                                       id="sign-positive{{ i+1 }}" value="+" autocomplete="off" checked>
+                                                <label class="btn btn-outline-primary" for="sign-positive{{ i+1 }}">
+                                                    <i class="bi bi-plus-lg"></i>
+                                                </label>
+
+                                                <input type="radio" class="btn-check" name="sign{{ i+1 }}"
+                                                       id="sign-negative{{ i+1 }}" value="-" autocomplete="off">
+                                                <label class="btn btn-outline-primary" for="sign-negative{{ i+1 }}">
+                                                    <i class="bi bi-dash-lg"></i>
+                                                </label>
+                                            </div>
+
+                                            <!-- 有效数字输入 -->
+                                            <div class="input-group input-group-sm me-2" style="width: 120px;">
+                                                <input type="number" step="any" class="form-control mantissa-input"
+                                                       id="mantissa{{ i+1 }}"
+                                                       placeholder="有效数字"
+                                                       value="1.00"
+                                                       min="1" max="9.999" step="0.001">
+                                                <span class="input-group-text">×10</span>
+                                            </div>
+
+                                            <!-- 指数 -->
+                                            <div class="input-group input-group-sm" style="width: 100px;">
+                                                <input type="number" class="form-control exponent-input"
+                                                       id="exponent{{ i+1 }}"
+                                                       placeholder="指数"
+                                                       value="0"
+                                                       min="-50" max="50" step="1">
+                                                <span class="input-group-text">次方</span>
+                                            </div>
+
+                                            <!-- 单位显示 -->
+                                            {% if problem.answer_units and problem.answer_units[i] %}
+                                            <span class="input-group-text unit-display">{{ problem.answer_units[i] }}</span>
+                                            {% endif %}
+                                        </div>
+
+                                        <!-- 实时计算结果 -->
+                                        <div class="mt-1">
+                                            <small id="calc-result{{ i+1 }}" class="text-primary">
+                                                当前值: 1.00 × 10⁰ = 1.00
+                                                {% if problem.answer_units and problem.answer_units[i] %}
+                                                {{ problem.answer_units[i] }}
+                                                {% endif %}
+                                            </small>
+                                        </div>
+                                    </div>
+
+                                    <!-- 隐藏的真实输入框 -->
+                                    <input type="hidden" class="form-control"
+                                           id="answer{{ i+1 }}" name="answer{{ i+1 }}"
+                                           autocomplete="off">
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <!-- 多答案题目提示 -->
+                        <div class="alert alert-info mt-2">
+                            <small>
+                                <i class="bi bi-info-circle me-1"></i>
+                                <strong>多答案填写提示：</strong>
+                                每个答案可以使用不同输入模式，系统会自动进行容错判断（±1%）
+                                {% if problem.answer_units %}
+                                <br><i class="bi bi-rulers me-1"></i>
+                                <strong>单位说明：</strong>
+                                {% for i in range(answer_count) %}
+                                {% if problem.answer_units[i] %}
+                                答案{{ i+1 }}的单位为 {{ problem.answer_units[i] }}{% if not loop.last %}, {% endif %}
+                                {% endif %}
+                                {% endfor %}
+                                {% endif %}
+                            </small>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- 统一提示 -->
+                    <div class="alert alert-light mt-3">
+                        <small class="text-muted">
+                            <i class="bi bi-shield-check me-1"></i>
+                            <strong>容错说明：</strong>系统会自动进行容错判断（±1%），您可以直接输入最终数值，无需精确匹配。
+                            <span class="d-block mt-1">
+                                <i class="bi bi-arrow-repeat me-1"></i>
+                                <strong>模式切换：</strong>点击上方的按钮可以在普通模式和科学计数法模式之间切换。
+                            </span>
+                            {% if problem.answer_units %}
+                            <span class="d-block mt-1">
+                                <i class="bi bi-rulers me-1"></i>
+                                <strong>单位说明：</strong>输入数值时不需要输入单位，系统已显示正确答案的单位。
+                            </span>
+                            {% endif %}
+                        </small>
+                    </div>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-start mt-4">
+                        <button type="submit" class="btn btn-primary me-md-2 btn-lg" id="submit-btn">
+                            <i class="bi bi-send-fill me-1"></i> 提交答案
+                        </button>
+
+                        <button type="button" class="btn btn-success btn-lg me-md-2" id="next-btn" style="display: none;">
+                            <i class="bi bi-arrow-right me-1"></i> 下一题
+                        </button>
+
+                        <button type="button" class="btn btn-warning btn-lg me-md-2" id="refresh-btn">
+                            <i class="bi bi-arrow-clockwise me-1"></i> 刷新题目
+                        </button>
+
+                        {% if total_attempts > 0 %}
+                        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-danger btn-lg">
+                            <i class="bi bi-x-circle me-1"></i> 退出答题
+                        </a>
+                        {% endif %}
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 动态变量表 -->
+        <div class="card mt-3" id="variables-card">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 题目参数表</h5>
+                <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse"
+                        data-bs-target="#variablesTable" aria-expanded="true" aria-controls="variablesTable">
+                    <i class="bi bi-chevron-down"></i>
+                </button>
+            </div>
+            <div class="collapse show" id="variablesTable">
+                <div class="card-body">
+                    <table class="table table-bordered variable-table table-hover" id="variables-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th><i class="bi bi-list-check me-1"></i>物理量</th>
+                                <th><i class="bi bi-symbol me-1"></i>符号</th>
+                                <th>数值</th>
+                                <th>单位</th>
+                            </tr>
+                        </thead>
+                        <tbody id="variables-body">
+                            {% for key, value in problem.var_values.items() %}
+                            <tr data-var-key="{{ key }}">
+                                <td>
+                                    {% if key == 'r' %}<i class="bi bi-circle me-1"></i>线圈半径
+                                    {% elif key == 'R' %}<i class="bi bi-lightning-charge me-1"></i>电阻
+                                    {% elif key == 'i' %}<i class="bi bi-lightning me-1"></i>感应电流
+                                    {% elif key == 'N' %}<i class="bi bi-123 me-1"></i>线圈匝数
+                                    {% elif key == 'B' or key == 'B0' %}<i class="bi bi-magnet me-1"></i>磁感应强度
+                                    {% elif key == 'A' %}<i class="bi bi-arrow-up-down me-1"></i>振幅
+                                    {% elif key == 'omega' %}<i class="bi bi-arrow-clockwise me-1"></i>角速度
+                                    {% elif key == 'l' %}<i class="bi bi-rulers me-1"></i>边长
+                                    {% elif key == 'v' %}<i class="bi bi-speedometer me-1"></i>速度
+                                    {% elif key == 'dBdt' %}<i class="bi bi-graph-up me-1"></i>磁场变化率
+                                    {% elif key == 'alpha' %}<i class="bi bi-graph-up-arrow me-1"></i>电流变化率
+                                    {% elif key == 'I' %}<i class="bi bi-lightning-fill me-1"></i>电流
+                                    {% elif key == 'm' %}<i class="bi bi-calculator me-1"></i>质量
+                                    {% elif key == 'AC' %}<i class="bi bi-arrow-right me-1"></i>导体长度
+                                    {% elif key == 'L' %}<i class="bi bi-arrow-right me-1"></i>导线长度
+                                    {% elif key == 'x' %}<i class="bi bi-arrow-right me-1"></i>距离
+                                    {% elif key == 'd' %}<i class="bi bi-arrows-h me-1"></i>间距
+                                    {% elif key == 'a' %}<i class="bi bi-circle me-1"></i>小圆半径
+                                    {% else %}<i class="bi bi-question-circle me-1"></i>{{ key }}{% endif %}
+                                </td>
+                                <td class="math-symbol">
+                                    {% if key == 'dBdt' %}\( \frac{dB}{dt} \)
+                                    {% elif key == 'B0' %}\( B_0 \)
+                                    {% elif key == 'omega' %}\( \omega \)
+                                    {% elif key == 'alpha' %}\( \alpha \)
+                                    {% else %}\( {{ key }} \){% endif %}
+                                </td>
+                                <td class="var-value">
+                                    <strong>
+                                        {% if key in ['i', 'A', 'l'] %}
+                                            {{ "%.3f"|format(value) if value is number else value }}
+                                        {% elif key in ['B', 'B0', 'v', 'dBdt', 'alpha', 'm'] %}
+                                            {{ "%.2f"|format(value) if value is number else value }}
+                                        {% else %}
+                                            {{ value }}
+                                        {% endif %}
+                                    </strong>
+                                </td>
+                                <td class="var-unit">
+                                    {% set inferred_unit = problem.var_units.get(key) if problem.var_units else '' %}
+                                    {% if inferred_unit %}{{ inferred_unit }}
+                                    {% elif key == 'r' or key == 'a' or key == 'AC' or key == 'x' %}cm
+                                    {% elif key == 'l' or key == 'L' or key == 'd' %}m
+                                    {% elif key == 'R' %}ohm
+                                    {% elif key == 'i' or key == 'I' %}A
+                                    {% elif key == 'B' or key == 'B0' %}T
+                                    {% elif key == 'A' %}m
+                                    {% elif key == 'omega' %}rad/s
+                                    {% elif key == 'v' %}m/s
+                                    {% elif key == 'dBdt' %}T/s
+                                    {% elif key == 'alpha' %}A/s
+                                    {% elif key == 'm' %}kg
+                                    {% elif key == 'density' %}kg/m^3
+                                    {% else %}see problem text{% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            <!-- 固定电阻率行（仅第九题显示） -->
+                            {% if problem_id == 9 %}
+                            <tr>
+                                <td><i class="bi bi-droplet me-1"></i>电阻率</td>
+                                <td class="math-symbol">\( \rho \)</td>
+                                <td class="var-value"><strong>1.7×10⁻⁷</strong></td>
+                                <td class="var-unit">Ω·m</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 答题统计卡片和解题提示 - 这部分不受蒙版影响 -->
+        <div class="row mt-4" id="hint-and-stats-container">
+            <div class="col-md-6">
+                <div class="card bg-light">
+                    <div class="card-body text-center">
+                        <h6><i class="bi bi-clock-history me-2"></i>答题统计</h6>
+                        <div class="row">
+                            <div class="col-6">
+                                <small class="text-muted">当前用时</small>
+                                <div class="h5 mb-0" id="current-time">0秒</div>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">累计尝试</small>
+                                <div class="h5 mb-0" id="total-attempts-display">{{ total_attempts }} 次</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card bg-light">
+                    <div class="card-body text-center">
+                        <h6><i class="bi bi-lightbulb me-2"></i>解题提示</h6>
+                        <div class="hint-content">
+                            {% if problem_id == 1 %}
+                            <small class="text-muted">法拉第电磁感应定律：\( \varepsilon = -\frac{d\Phi}{dt} \)，磁通量：\( \Phi = B \cdot S = B \cdot \pi r^2 \)，感应电流：\( i = \frac{\varepsilon}{R} \)</small>
+                            {% elif problem_id == 2 %}
+                            <small class="text-muted">速度单位换算：km/h → m/s，磁场单位换算：μT → T，感应电动势：ε = BLv</small>
+                            {% elif problem_id == 3 %}
+                            <small class="text-muted">动生电动势：\( \varepsilon = \int (\vec{v} \times \vec{B}) \cdot d\vec{l} \)，考虑各边的运动情况和磁场方向</small>
+                            {% elif problem_id == 4 %}
+                            <small class="text-muted">动生电动势：导体切割磁感线产生，感生电动势：磁场变化产生，总电动势为两者之和</small>
+                            {% elif problem_id == 5 %}
+                            <small class="text-muted">动生电动势公式：\( \varepsilon = \int (\vec{v} \times \vec{B}) \cdot d\vec{l} \)，考虑不同运动方向时各段的电动势</small>
+                            {% elif problem_id == 6 %}
+                            <small class="text-muted">感应电荷量：\( q = \frac{\Delta\Phi}{R} \)，做功与功率和时间有关</small>
+                            {% elif problem_id == 7 %}
+                            <small class="text-muted">法拉第电磁感应定律，总电动势为两个线圈电动势之和，感应电流最大值</small>
+                            {% elif problem_id == 9 %}
+                            <small class="text-muted">铜制回路的感应电流计算，考虑电阻率和密度</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block styles %}
+<style>
+    .static-hint {
+        padding: 12px 16px;
+        margin: 1rem 0;
+        border-radius: 0.375rem;
+        border: 1px solid transparent;
+        position: relative;
+    }
+
+    .hint-content {
+        display: flex;
+        align-items: center;
+    }
+
+    .static-hint.hint-info {
+        background-color: #e2f0ff;
+        border-color: #b3d7ff;
+        color: #004085;
+    }
+
+    .static-hint.hint-success {
+        background-color: #d4edda;
+        border-color: #c3e6cb;
+        color: #155724;
+    }
+
+    .static-hint.hint-warning {
+        background-color: #fff3cd;
+        border-color: #ffeaa7;
+        color: #856404;
+    }
+
+    .static-hint.hint-error {
+        background-color: #f8d7da;
+        border-color: #f5c6cb;
+        color: #721c24;
+    }
+
+    /* 双模式切换按钮样式 */
+    #normal-mode-btn.active,
+    #scientific-mode-btn.active {
+        background-color: #0d6efd;
+        color: white;
+        border-color: #0d6efd;
+    }
+
+    /* 输入模式切换过渡效果 */
+    .normal-mode,
+    .scientific-mode {
+        transition: all 0.3s ease;
+    }
+
+    /* 科学计数法输入组件样式 */
+    .scientific-notation-input {
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .scientific-notation-input .input-group {
+        flex-shrink: 0;
+    }
+
+    .scientific-notation-input .mantissa-input {
+        text-align: center;
+        font-family: 'Courier New', monospace;
+    }
+
+    .scientific-notation-input .exponent-input {
+        width: 70px;
+        text-align: center;
+        font-family: 'Courier New', monospace;
+    }
+
+    .scientific-notation-input .input-group-text {
+        font-size: 0.85em;
+        padding: 0.25rem 0.5rem;
+        background-color: #f8f9fa;
+    }
+
+    /* 符号按钮样式 */
+    .scientific-notation-input .btn-group .btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.8rem;
+        min-width: 40px;
+    }
+
+    /* 实时结果显示 */
+    .calc-result {
+        font-family: 'Courier New', monospace;
+        font-weight: bold;
+        font-size: 0.85em;
+    }
+
+    /* 科学计数法示例样式 */
+    .scientific-example {
+        background-color: #f8f9fa;
+        border-left: 3px solid #6c757d;
+        padding: 8px;
+        border-radius: 4px;
+        margin-top: 8px;
+        font-size: 0.85em;
+    }
+
+    .scientific-example kbd {
+        background-color: #6c757d;
+        color: white;
+        font-family: 'Courier New', monospace;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-size: 0.8em;
+    }
+
+    /* 普通输入框提示 */
+    .normal-mode .form-text {
+        font-size: 0.85em;
+        margin-top: 5px;
+    }
+
+    /* 隐藏输入框容器 */
+    .normal-input-container {
+        position: relative;
+    }
+
+    /* 防止复制题目内容 */
+    #problem-content-container,
+    .math-formula,
+    #problem-content,
+    #variables-table,
+    .hint-content,
+    .card-body > div:not(#answer-form) {
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        -moz-user-select: none !important;
+        -ms-user-select: none !important;
+        cursor: default !important;
+    }
+
+    /* 防止图片拖拽 */
+    .problem-image {
+        pointer-events: none !important;
+        -webkit-user-drag: none !important;
+        -khtml-user-drag: none !important;
+        -moz-user-drag: none !important;
+        -o-user-drag: none !important;
+    }
+
+    /* 但允许输入框可以被选择和操作 */
+    #answer-form input,
+    #answer-form textarea,
+    #answer-form select,
+    #answer-form button,
+    .btn,
+    .form-control {
+        user-select: auto !important;
+        -webkit-user-select: auto !important;
+        cursor: text !important;
+    }
+
+    /* 防止公式被选中 */
+    mjx-container {
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        -moz-user-select: none !important;
+        -ms-user-select: none !important;
+    }
+
+    /* 导航链接正常 */
+    .list-group-item,
+    a {
+        user-select: auto !important;
+        -webkit-user-select: auto !important;
+        cursor: pointer !important;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 蒙版系统配置 - 在这里修改参数
+const SPOTLIGHT_CONFIG = {
+    enabled: false,       // 是否启用蒙版
+    size: 200,           // 光圈大小（像素）
+    shape: 'rectangle',     // 形状：'circle' 或 'rectangle'
+    blurStrength: '8px', // 模糊强度
+    transitionSpeed: 0.1, // 过渡速度（秒）
+    permanent: true       // 新增：蒙版一直存在，不会消失
+};
+
+const QUESTION_REVEAL_DELAY_MS = 1000;
+let questionContentVisible = false;
+
+// 蒙版系统变量
+let spotlightElement = null;
+let problemContentContainer = null;
+let lastMousePosition = { x: -100, y: -100 }; // 新增：记录最后鼠标位置
+let lastSpotlightRelativePosition = { xRatio: 0.5, yRatio: 0.5, hasValue: false }; // 新增：记录光圈相对位置，避免缩放后丢失
+let spotlightTimer = null; // 新增：保持蒙版定时器
+let resumeShieldTimer = null;
+let isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent); // 新增：检测移动设备
+
+// 双模式切换状态
+let currentInputMode = 'normal'; // 'normal' 或 'scientific'
+
+// ======================== 双模式切换功能 ========================
+
+// 初始化双模式切换
+function initDualModeInput() {
+    console.log('初始化双模式输入系统');
+
+    // 获取按钮元素
+    const normalModeBtn = document.getElementById('normal-mode-btn');
+    const scientificModeBtn = document.getElementById('scientific-mode-btn');
+
+    if (!normalModeBtn || !scientificModeBtn) {
+        console.error('找不到模式切换按钮');
+        return;
+    }
+
+    // 切换为普通模式
+    normalModeBtn.addEventListener('click', function() {
+        if (currentInputMode === 'normal') return;
+
+        currentInputMode = 'normal';
+        updateModeButtons();
+        showNormalInputs();
+
+        console.log('切换到普通模式');
+    });
+
+    // 切换为科学计数法模式
+    scientificModeBtn.addEventListener('click', function() {
+        if (currentInputMode === 'scientific') return;
+
+        currentInputMode = 'scientific';
+        updateModeButtons();
+        showScientificInputs();
+
+        console.log('切换到科学计数法模式');
+    });
+
+    // 初始化科学计数法组件
+    initScientificNotationComponents();
+
+    console.log('双模式输入系统初始化完成，当前模式:', currentInputMode);
+}
+
+// 更新模式按钮状态
+function updateModeButtons() {
+    const normalModeBtn = document.getElementById('normal-mode-btn');
+    const scientificModeBtn = document.getElementById('scientific-mode-btn');
+
+    if (currentInputMode === 'normal') {
+        normalModeBtn.classList.remove('btn-outline-primary');
+        normalModeBtn.classList.add('btn-primary', 'active');
+        scientificModeBtn.classList.remove('btn-primary', 'active');
+        scientificModeBtn.classList.add('btn-outline-secondary');
+    } else {
+        scientificModeBtn.classList.remove('btn-outline-secondary');
+        scientificModeBtn.classList.add('btn-primary', 'active');
+        normalModeBtn.classList.remove('btn-primary', 'active');
+        normalModeBtn.classList.add('btn-outline-primary');
+    }
+}
+
+// 显示普通输入框
+function showNormalInputs() {
+    const answerCount = {{ answer_count }};
+
+    // 在切换前同步当前数据
+    for (let i = 1; i <= answerCount; i++) {
+        // 如果当前是科学计数法模式，将其数据同步到普通模式
+        if (currentInputMode === 'scientific') {
+            ScientificNotationUtils.syncInputModes(i);
+        }
+    }
+
+    // 切换显示
+    for (let i = 1; i <= answerCount; i++) {
+        if (answerCount === 1) {
+            const normalModeDiv = document.querySelector('.normal-mode');
+            const scientificModeDiv = document.querySelector('.scientific-mode');
+
+            if (normalModeDiv) normalModeDiv.style.display = 'block';
+            if (scientificModeDiv) scientificModeDiv.style.display = 'none';
+        } else {
+            const normalModeDivs = document.querySelectorAll(`#answer-normal${i}`).closest('.normal-mode');
+            const scientificModeDivs = document.querySelectorAll(`.scientific-mode`)[i-1];
+
+            normalModeDivs.forEach(div => div.style.display = 'block');
+            if (scientificModeDivs) scientificModeDivs.style.display = 'none';
+        }
+    }
+
+    // 焦点设置
+    if (answerCount === 1) {
+        setTimeout(() => {
+            const normalInput = document.getElementById('answer-normal');
+            if (normalInput) normalInput.focus();
+        }, 100);
+    } else {
+        setTimeout(() => {
+            const firstNormalInput = document.getElementById('answer-normal1');
+            if (firstNormalInput) firstNormalInput.focus();
+        }, 100);
+    }
+}
+
+// 显示科学计数法输入框
+function showScientificInputs() {
+    const answerCount = {{ answer_count }};
+
+    // 在切换前同步当前数据
+    for (let i = 1; i <= answerCount; i++) {
+        // 如果当前是普通模式，将其数据同步到科学计数法模式
+        if (currentInputMode === 'normal') {
+            ScientificNotationUtils.syncInputModes(i);
+        }
+    }
+
+    // 切换显示
+    for (let i = 1; i <= answerCount; i++) {
+        if (answerCount === 1) {
+            const normalModeDiv = document.querySelector('.normal-mode');
+            const scientificModeDiv = document.querySelector('.scientific-mode');
+
+            if (normalModeDiv) normalModeDiv.style.display = 'none';
+            if (scientificModeDiv) scientificModeDiv.style.display = 'block';
+        } else {
+            const normalModeDivs = document.querySelectorAll(`#answer-normal${i}`).closest('.normal-mode');
+            const scientificModeDivs = document.querySelectorAll(`.scientific-mode`)[i-1];
+
+            normalModeDivs.forEach(div => div.style.display = 'none');
+            if (scientificModeDivs) scientificModeDivs.style.display = 'block';
+        }
+    }
+
+    // 焦点设置
+    if (answerCount === 1) {
+        setTimeout(() => {
+            const mantissaInput = document.getElementById('mantissa1');
+            if (mantissaInput) mantissaInput.focus();
+        }, 100);
+    } else {
+        setTimeout(() => {
+            const firstMantissaInput = document.getElementById('mantissa1');
+            if (firstMantissaInput) firstMantissaInput.focus();
+        }, 100);
+    }
+}
+
+// ======================== 双模式转换工具函数 ========================
+
+// 增强的科学计数法工具函数，支持双向转换
+const ScientificNotationUtils = {
+    // 获取上标数字字符
+    getSuperscriptNumber: function(num) {
+        const superscripts = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+        const negativeSign = '⁻';
+
+        if (num === 0) return superscripts[0];
+
+        const isNegative = num < 0;
+        const absNum = Math.abs(num);
+        const digits = absNum.toString().split('');
+
+        let result = isNegative ? negativeSign : '';
+        for (const digit of digits) {
+            const digitInt = parseInt(digit);
+            if (!isNaN(digitInt) && digitInt >= 0 && digitInt <= 9) {
+                result += superscripts[digitInt];
+            }
+        }
+
+        return result;
+    },
+
+    // 将科学计数法组件值转换为浮点数
+    convertToFloat: function(sign, mantissa, exponent) {
+        // 验证输入
+        if (mantissa === '' || isNaN(parseFloat(mantissa))) {
+            console.warn('有效数字无效:', mantissa);
+            return 0;
+        }
+
+        if (exponent === '' || isNaN(parseInt(exponent))) {
+            console.warn('指数无效:', exponent);
+            exponent = 0;
+        }
+
+        const signMultiplier = (sign === '-') ? -1 : 1;
+        const base = parseFloat(mantissa);
+        const exp = parseInt(exponent);
+
+        // 计算：sign * mantissa * 10^exponent
+        const result = signMultiplier * base * Math.pow(10, exp);
+
+        console.log(`科学计数法转换: ${sign}${base} × 10^${exp} = ${result}`);
+        return result;
+    },
+
+    // 将浮点数转换为科学计数法组件格式
+    convertFromFloat: function(floatValue) {
+        if (floatValue === 0) {
+            return {
+                sign: '+',
+                mantissa: '1.00',
+                exponent: '0'
+            };
+        }
+
+        const isNegative = floatValue < 0;
+        const absValue = Math.abs(floatValue);
+
+        // 计算科学计数法
+        const exponent = Math.floor(Math.log10(absValue));
+        let mantissa = absValue / Math.pow(10, exponent);
+
+        // 标准化到 1 ≤ mantissa < 10
+        if (mantissa >= 10) {
+            mantissa /= 10;
+            exponent += 1;
+        } else if (mantissa < 1 && mantissa !== 0) {
+            mantissa *= 10;
+            exponent -= 1;
+        }
+
+        // 保留2位小数
+        const mantissaStr = mantissa.toFixed(2);
+
+        return {
+            sign: isNegative ? '-' : '+',
+            mantissa: mantissaStr,
+            exponent: exponent.toString()
+        };
+    },
+
+    // 从普通输入解析科学计数法格式（如 1.6e-19）或普通数字
+    parseInputToScientific: function(inputValue) {
+        if (!inputValue) {
+            return {
+                sign: '+',
+                mantissa: '1.00',
+                exponent: '0'
+            };
+        }
+
+        const str = inputValue.toString().trim().toLowerCase();
+
+        // 尝试解析科学计数法格式：数字 + e/E + 指数
+        const scientificRegex = /^([+-]?\d*\.?\d+)(?:[eE]([+-]?\d+))?$/;
+        const match = str.match(scientificRegex);
+
+        if (match) {
+            let base = parseFloat(match[1]);
+            const exponent = match[2] ? parseInt(match[2]) : 0;
+
+            // 计算标准科学计数法格式
+            const absBase = Math.abs(base);
+            let calcExponent = exponent;
+            let calcMantissa = absBase;
+
+            if (absBase !== 0) {
+                // 如果基数不在1-10范围内，调整它
+                if (absBase >= 10 || absBase < 1) {
+                    const baseExponent = Math.floor(Math.log10(absBase));
+                    calcMantissa = absBase / Math.pow(10, baseExponent);
+                    calcExponent += baseExponent;
+                }
+
+                // 确保尾数在1-10之间
+                if (calcMantissa >= 10) {
+                    calcMantissa /= 10;
+                    calcExponent += 1;
+                } else if (calcMantissa < 1) {
+                    calcMantissa *= 10;
+                    calcExponent -= 1;
+                }
+            }
+
+            return {
+                sign: base < 0 ? '-' : '+',
+                mantissa: calcMantissa.toFixed(2),
+                exponent: calcExponent.toString()
+            };
+        }
+
+        // 如果无法解析，返回默认值
+        return {
+            sign: '+',
+            mantissa: '1.00',
+            exponent: '0'
+        };
+    },
+
+    // 从科学计数法组件值生成普通数值字符串
+    convertToNormalString: function(sign, mantissa, exponent) {
+        const floatValue = this.convertToFloat(sign, mantissa, exponent);
+
+        // 根据数值大小选择合适的格式
+        const absValue = Math.abs(floatValue);
+
+        if (absValue === 0) return "0";
+
+        // 如果数值在0.001到10000之间，使用常规表示法
+        if (absValue >= 0.001 && absValue <= 10000) {
+            // 根据精度决定小数位数
+            if (absValue >= 100) {
+                return floatValue.toFixed(0);
+            } else if (absValue >= 1) {
+                return floatValue.toFixed(2);
+            } else if (absValue >= 0.01) {
+                return floatValue.toFixed(4);
+            } else {
+                return floatValue.toFixed(6);
+            }
+        } else {
+            // 大数或小数使用科学计数法格式
+            return floatValue.toExponential(2);
+        }
+    },
+
+    // 同步普通模式和科学计数法模式的数据
+    syncInputModes: function(answerIndex) {
+        console.log(`同步模式数据 - 答案 ${answerIndex}, 当前模式: ${currentInputMode}`);
+
+        if (currentInputMode === 'scientific') {
+            // 从科学计数法组件获取值
+            const sign = document.querySelector(`input[name="sign${answerIndex}"]:checked`)?.value || '+';
+            const mantissa = document.getElementById(`mantissa${answerIndex}`).value || '1.00';
+            const exponent = document.getElementById(`exponent${answerIndex}`).value || '0';
+
+            // 计算浮点值
+            const floatValue = this.convertToFloat(sign, mantissa, exponent);
+
+            // 更新普通模式输入框
+            const normalInputId = answerCount === 1 ? 'answer-normal' : `answer-normal${answerIndex}`;
+            const normalInput = document.getElementById(normalInputId);
+            if (normalInput) {
+                normalInput.value = this.convertToNormalString(sign, mantissa, exponent);
+                console.log(`科学计数法 -> 普通模式: ${normalInput.value}`);
+            }
+
+            // 更新隐藏输入框
+            const hiddenInput = document.getElementById(`answer${answerIndex}`);
+            if (hiddenInput) {
+                hiddenInput.value = floatValue;
+            }
+
+            // 更新显示
+            const displayElement = document.getElementById(`calc-result${answerIndex}`);
+            if (displayElement) {
+                const supExponent = this.getSuperscriptNumber(parseInt(exponent));
+                displayElement.textContent =
+                    `当前值: ${sign === '-' ? '-' : ''}${mantissa} × 10${supExponent} = ${floatValue.toExponential(2)}`;
+            }
+
+            return floatValue;
+
+        } else {
+            // 从普通模式输入框获取值
+            const normalInputId = answerCount === 1 ? 'answer-normal' : `answer-normal${answerIndex}`;
+            const normalInput = document.getElementById(normalInputId);
+
+            if (!normalInput) return 0;
+
+            const inputValue = normalInput.value;
+            let floatValue = 0;
+
+            if (inputValue && !isNaN(parseFloat(inputValue))) {
+                floatValue = parseFloat(inputValue);
+
+                // 转换为科学计数法组件值
+                const components = this.convertFromFloat(floatValue);
+
+                // 更新科学计数法组件
+                const signPositive = document.getElementById(`sign-positive${answerIndex}`);
+                const signNegative = document.getElementById(`sign-negative${answerIndex}`);
+                const mantissaInput = document.getElementById(`mantissa${answerIndex}`);
+                const exponentInput = document.getElementById(`exponent${answerIndex}`);
+
+                if (signPositive && signNegative) {
+                    if (components.sign === '+') {
+                        signPositive.checked = true;
+                    } else {
+                        signNegative.checked = true;
+                    }
+                }
+
+                if (mantissaInput) mantissaInput.value = components.mantissa;
+                if (exponentInput) exponentInput.value = components.exponent;
+
+                console.log(`普通模式 -> 科学计数法: ${components.mantissa} × 10^${components.exponent}`);
+
+                // 更新显示
+                const displayElement = document.getElementById(`calc-result${answerIndex}`);
+                if (displayElement) {
+                    const supExponent = this.getSuperscriptNumber(parseInt(components.exponent));
+                    displayElement.textContent =
+                        `当前值: ${components.sign === '-' ? '-' : ''}${components.mantissa} × 10${supExponent} = ${floatValue.toExponential(2)}`;
+                }
+            }
+
+            // 更新隐藏输入框
+            const hiddenInput = document.getElementById(`answer${answerIndex}`);
+            if (hiddenInput) {
+                hiddenInput.value = floatValue;
+            }
+
+            return floatValue;
+        }
+    },
+
+    // 更新科学计数法显示
+    updateScientificDisplay: function(answerIndex) {
+        if (currentInputMode !== 'scientific') return;
+        return this.syncInputModes(answerIndex);
+    },
+
+    // 更新普通模式显示
+    updateNormalDisplay: function(answerIndex) {
+        if (currentInputMode !== 'normal') return;
+        return this.syncInputModes(answerIndex);
+    }
+};
+
+// 初始化科学计数法组件
+function initScientificNotationComponents() {
+    const answerCount = {{ answer_count }};
+
+    for (let i = 1; i <= answerCount; i++) {
+        // 科学计数法组件的监听器
+        const mantissaInput = document.getElementById(`mantissa${i}`);
+        const exponentInput = document.getElementById(`exponent${i}`);
+        const signRadios = document.querySelectorAll(`input[name="sign${i}"]`);
+
+        if (mantissaInput) {
+            mantissaInput.addEventListener('input', () => {
+                if (currentInputMode === 'scientific') {
+                    ScientificNotationUtils.updateScientificDisplay(i);
+                }
+            });
+
+            mantissaInput.value = '1.00';
+        }
+
+        if (exponentInput) {
+            exponentInput.addEventListener('input', () => {
+                if (currentInputMode === 'scientific') {
+                    ScientificNotationUtils.updateScientificDisplay(i);
+                }
+            });
+
+            exponentInput.value = '0';
+        }
+
+        if (signRadios.length > 0) {
+            signRadios.forEach(radio => {
+                radio.addEventListener('change', () => {
+                    if (currentInputMode === 'scientific') {
+                        ScientificNotationUtils.updateScientificDisplay(i);
+                    }
+                });
+            });
+        }
+
+        // 普通输入框的监听器
+        const normalInputId = answerCount === 1 ? 'answer-normal' : `answer-normal${i}`;
+        const normalInput = document.getElementById(normalInputId);
+        if (normalInput) {
+            normalInput.addEventListener('input', () => {
+                if (currentInputMode === 'normal') {
+                    ScientificNotationUtils.updateNormalDisplay(i);
+                }
+            });
+        }
+    }
+
+    // 初始更新显示
+    setTimeout(() => {
+        for (let i = 1; i <= answerCount; i++) {
+            if (currentInputMode === 'scientific') {
+                ScientificNotationUtils.updateScientificDisplay(i);
+            } else {
+                ScientificNotationUtils.updateNormalDisplay(i);
+            }
+        }
+    }, 100);
+}
+
+// ======================== 蒙版系统函数 ========================
+
+// 创建题目内容区域蒙版
+function createProblemSpotlight() {
+    if (!SPOTLIGHT_CONFIG.enabled) return;
+
+    // 获取题目内容容器
+    problemContentContainer = document.getElementById('problem-content-container');
+    if (!problemContentContainer) {
+        console.warn('找不到题目内容容器，蒙版创建失败');
+        return;
+    }
+
+    const containerRect = problemContentContainer.getBoundingClientRect();
+
+    // 如果容器尺寸为0，等待一段时间再试
+    if (containerRect.width === 0 || containerRect.height === 0) {
+        console.warn('题目内容容器尺寸为0，延迟重试');
+        setTimeout(createProblemSpotlight, 100);
+        return;
+    }
+
+    // 移除已存在的蒙版
+    if (!spotlightElement || !document.body.contains(spotlightElement)) {
+        spotlightElement = document.createElement('div');
+        spotlightElement.id = 'spotlight-overlay-element';
+    }
+
+    // 创建蒙版元素 - 使用绝对定位
+    const size = SPOTLIGHT_CONFIG.size;
+    const isCircle = SPOTLIGHT_CONFIG.shape === 'circle';
+
+    // 关键修改：使用绝对定位相对于题目容器
+    spotlightElement.style.cssText = `
+        position: absolute; /* 改为绝对定位 */
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        backdrop-filter: blur(${SPOTLIGHT_CONFIG.blurStrength});
+        -webkit-backdrop-filter: blur(${SPOTLIGHT_CONFIG.blurStrength});
+        background: rgba(255, 255, 255, 0.1);
+        pointer-events: none;
+        z-index: 90;
+        mask-image: ${isCircle ?
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)` :
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)`};
+        -webkit-mask-image: ${isCircle ?
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)` :
+            `radial-gradient(circle ${size/2}px at 0px 0px, transparent 0%, transparent 100%, black 100%)`};
+        transition: all ${SPOTLIGHT_CONFIG.transitionSpeed}s ease;
+        border-radius: 8px;
+        display: block;
+    `;
+
+    // 将蒙版添加到题目容器内部
+    problemContentContainer.style.position = 'relative'; // 确保容器是相对定位
+    if (spotlightElement.parentNode !== problemContentContainer) {
+        problemContentContainer.appendChild(spotlightElement);
+    }
+    problemContentContainer.classList.add('spotlight-ready');
+
+    console.log('蒙版创建成功，使用绝对定位');
+}
+
+// 更新蒙版位置
+function updateSpotlightPosition(x, y) {
+    if (!spotlightElement || !problemContentContainer) return;
+
+    const containerRect = problemContentContainer.getBoundingClientRect();
+
+    // 检查鼠标是否在题目内容区域内
+    const isInsideContentArea =
+        x >= containerRect.left &&
+        x <= containerRect.right &&
+        y >= containerRect.top &&
+        y <= containerRect.bottom;
+
+    const size = SPOTLIGHT_CONFIG.size;
+
+    if (isInsideContentArea) {
+        // 在题目内容区域内，计算相对于容器的坐标
+        const relativeX = x - containerRect.left;
+        const relativeY = y - containerRect.top;
+
+        // 记录最后鼠标位置
+        lastMousePosition = { x, y };
+        lastSpotlightRelativePosition = {
+            xRatio: containerRect.width > 0 ? (relativeX / containerRect.width) : 0.5,
+            yRatio: containerRect.height > 0 ? (relativeY / containerRect.height) : 0.5,
+            hasValue: true
+        };
+
+        // 圆形光圈
+        spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
+        spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${relativeX}px ${relativeY}px, transparent 0%, transparent 100%, black 100%)`;
+    } else if (SPOTLIGHT_CONFIG.permanent) {
+        // 永久模式：即使不在区域内，也保持蒙版在最后位置
+        if (lastMousePosition.x > 0 && lastMousePosition.y > 0) {
+            const relativeX = lastMousePosition.x - containerRect.left;
+            const relativeY = lastMousePosition.y - containerRect.top;
+
+            // 确保位置在容器边界内
+            const clampedX = Math.max(0, Math.min(containerRect.width, relativeX));
+            const clampedY = Math.max(0, Math.min(containerRect.height, relativeY));
+
+            spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${clampedX}px ${clampedY}px, transparent 0%, transparent 100%, black 100%)`;
+            spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${clampedX}px ${clampedY}px, transparent 0%, transparent 100%, black 100%)`;
+        } else {
+            // 如果没有最后位置，优先使用最近一次相对位置，否则使用中心位置
+            const centerX = containerRect.width * (lastSpotlightRelativePosition.hasValue ? lastSpotlightRelativePosition.xRatio : 0.5);
+            const centerY = containerRect.height * (lastSpotlightRelativePosition.hasValue ? lastSpotlightRelativePosition.yRatio : 0.5);
+            spotlightElement.style.maskImage = `radial-gradient(circle ${size/2}px at ${centerX}px ${centerY}px, transparent 0%, transparent 100%, black 100%)`;
+            spotlightElement.style.webkitMaskImage = `radial-gradient(circle ${size/2}px at ${centerX}px ${centerY}px, transparent 0%, transparent 100%, black 100%)`;
+        }
+    } else {
+        // 不在题目内容区域内，完全遮挡
+        spotlightElement.style.maskImage = 'radial-gradient(circle 0px at -100px -100px, transparent 0%, transparent 100%, black 100%)';
+        spotlightElement.style.webkitMaskImage = 'radial-gradient(circle 0px at -100px -100px, transparent 0%, transparent 100%, black 100%)';
+    }
+
+}
+
+// 更新蒙版位置和大小
+function updateSpotlightLayout() {
+    if (!SPOTLIGHT_CONFIG.enabled) return;
+
+    requestAnimationFrame(() => {
+        createProblemSpotlight();
+
+        if (!spotlightElement || !problemContentContainer) return;
+
+        if (lastMousePosition.x > 0 && lastMousePosition.y > 0) {
+            updateSpotlightPosition(lastMousePosition.x, lastMousePosition.y);
+            return;
+        }
+
+        const rect = problemContentContainer.getBoundingClientRect();
+        const relativeX = rect.width * (lastSpotlightRelativePosition.hasValue ? lastSpotlightRelativePosition.xRatio : 0.5);
+        const relativeY = rect.height * (lastSpotlightRelativePosition.hasValue ? lastSpotlightRelativePosition.yRatio : 0.5);
+        updateSpotlightPosition(rect.left + relativeX, rect.top + relativeY);
+    });
+}
+
+function revealQuestionContentAfterShieldReady() {
+    setTimeout(() => {
+        problemContentContainer = problemContentContainer || document.getElementById('problem-content-container');
+        if (!problemContentContainer) return;
+
+        createProblemSpotlight();
+
+        if (spotlightElement) {
+            const rect = problemContentContainer.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            updateSpotlightPosition(centerX, centerY);
+        }
+
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                questionContentVisible = true;
+                problemContentContainer.classList.add('question-content-visible');
+                const initialShield = document.getElementById('exam-initial-shield');
+                if (initialShield) {
+                    initialShield.remove();
+                }
+            });
+        });
+    }, QUESTION_REVEAL_DELAY_MS);
+}
+
+function forceResumeShield(durationMs = 1000) {
+    if (!SPOTLIGHT_CONFIG.enabled) return;
+
+    problemContentContainer = problemContentContainer || document.getElementById('problem-content-container');
+    if (!problemContentContainer) return;
+
+    problemContentContainer.classList.add('resume-shield-active');
+
+    let resumeShield = document.getElementById('resume-visibility-shield');
+    if (!resumeShield) {
+        resumeShield = document.createElement('div');
+        resumeShield.id = 'resume-visibility-shield';
+        resumeShield.setAttribute('aria-hidden', 'true');
+        resumeShield.innerHTML = `
+            <div>
+                <div class="shield-title">\u9898\u76ee\u5df2\u906e\u6321</div>
+                <p class="shield-text">\u6b63\u5728\u6062\u590d\u906e\u6321\uff0c\u8bf7\u7a0d\u5019\u3002</p>
+            </div>
+        `;
+        problemContentContainer.appendChild(resumeShield);
+    }
+
+    if (resumeShieldTimer) {
+        clearTimeout(resumeShieldTimer);
+    }
+
+    updateSpotlightLayout();
+    if (durationMs <= 0) {
+        resumeShieldTimer = null;
+        return;
+    }
+
+    resumeShieldTimer = setTimeout(() => {
+        updateSpotlightLayout();
+        problemContentContainer.classList.remove('resume-shield-active');
+        const activeShield = document.getElementById('resume-visibility-shield');
+        if (activeShield) {
+            activeShield.remove();
+        }
+        resumeShieldTimer = null;
+    }, durationMs);
+}
+
+function maintainSpotlightPermanent() {
+    if (!SPOTLIGHT_CONFIG.permanent) return;
+
+    // 清除现有的定时器
+    if (spotlightTimer) {
+        clearInterval(spotlightTimer);
+    }
+
+    // 设置定时器定期检查蒙版状态
+    spotlightTimer = setInterval(() => {
+        if (spotlightElement && problemContentContainer) {
+            // 确保蒙版可见
+            if (spotlightElement.style.display === 'none') {
+                spotlightElement.style.display = 'block';
+            }
+        }
+    }, 2000); // 每2秒检查一次
+}
+
+// 移动端特殊处理
+function setupMobileSpotlightSupport() {
+    if (!isMobileDevice) return;
+
+    console.log('移动设备检测到，启用特殊蒙版处理');
+
+    // 移动端触摸时更新蒙版位置
+    document.addEventListener('touchstart', function(e) {
+        if (e.touches.length > 0) {
+            const touch = e.touches[0];
+            updateSpotlightPosition(touch.clientX, touch.clientY);
+        }
+    });
+
+    // 移动端触摸移动时更新蒙版
+    document.addEventListener('touchmove', function(e) {
+        if (e.touches.length > 0) {
+            const touch = e.touches[0];
+            updateSpotlightPosition(touch.clientX, touch.clientY);
+        }
+    });
+
+    // 监听页面可见性变化（防止切换到其他应用后蒙版消失）
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            forceResumeShield(0);
+        } else {
+            forceResumeShield(1000);
+        }
+    });
+
+    window.addEventListener('pagehide', function() {
+        forceResumeShield(0);
+    });
+
+    window.addEventListener('pageshow', function() {
+        forceResumeShield(1000);
+    });
+
+    window.addEventListener('blur', function() {
+        forceResumeShield(0);
+    });
+
+    window.addEventListener('focus', function() {
+        forceResumeShield(1000);
+    });
+
+    // 移动端滚动时更新蒙版位置
+    window.addEventListener('scroll', function() {
+        setTimeout(() => {
+            if (spotlightElement && problemContentContainer && lastMousePosition.x > 0) {
+                updateSpotlightPosition(lastMousePosition.x, lastMousePosition.y);
+            }
+        }, 50);
+    });
+}
+
+// 检测键盘弹出/收起
+function detectKeyboardChanges() {
+    let originalViewportHeight = window.innerHeight;
+
+    // 监听窗口大小变化（键盘弹出会改变视口高度）
+    window.addEventListener('resize', function() {
+        const newViewportHeight = window.innerHeight;
+
+        // 如果高度变化超过150像素（可能是键盘弹出）
+        if (Math.abs(newViewportHeight - originalViewportHeight) > 150) {
+            console.log('检测到键盘变化，重新定位蒙版');
+
+            setTimeout(updateSpotlightLayout, 300);
+        }
+
+        originalViewportHeight = newViewportHeight;
+    });
+
+    // 监听输入框聚焦事件
+    document.addEventListener('focusin', function(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            console.log('输入框获取焦点，重新定位蒙版');
+            setTimeout(updateSpotlightLayout, 500);
+        }
+    });
+
+    // 监听输入框失焦事件
+    document.addEventListener('focusout', function(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            setTimeout(updateSpotlightLayout, 500);
+        }
+    });
+}
+
+// 初始化蒙版系统
+function initSpotlightSystem() {
+    if (!SPOTLIGHT_CONFIG.enabled) {
+        problemContentContainer = document.getElementById('problem-content-container');
+        if (!problemContentContainer) return;
+
+        questionContentVisible = true;
+        problemContentContainer.classList.add('question-content-visible', 'spotlight-ready');
+        problemContentContainer.classList.remove('resume-shield-active');
+
+        ['exam-initial-shield', 'resume-visibility-shield', 'spotlight-overlay-element'].forEach((id) => {
+            const element = document.getElementById(id);
+            if (element) element.remove();
+        });
+        return;
+    }
+
+    revealQuestionContentAfterShieldReady();
+
+    // 等待页面完全加载后再创建蒙版
+    setTimeout(() => {
+        createProblemSpotlight();
+
+        // 如果蒙版创建失败，重试一次
+        if (!spotlightElement || !problemContentContainer) {
+            setTimeout(() => {
+                createProblemSpotlight();
+                if (spotlightElement && problemContentContainer) {
+                    // 初始位置设为容器中心
+                    const rect = problemContentContainer.getBoundingClientRect();
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+                    lastMousePosition = { x: centerX, y: centerY };
+                    updateSpotlightPosition(centerX, centerY);
+                }
+            }, 1000);
+        } else {
+            // 初始位置设为容器中心
+            const rect = problemContentContainer.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            lastMousePosition = { x: centerX, y: centerY };
+            updateSpotlightPosition(centerX, centerY);
+        }
+
+        // 鼠标移动时更新蒙版位置
+        document.addEventListener('mousemove', function(e) {
+            updateSpotlightPosition(e.clientX, e.clientY);
+        });
+
+        // 触摸设备支持
+        document.addEventListener('touchmove', function(e) {
+            if (e.touches.length > 0) {
+                const touch = e.touches[0];
+                updateSpotlightPosition(touch.clientX, touch.clientY);
+                e.preventDefault();
+            }
+        });
+
+        // 窗口大小变化时重新计算
+        window.addEventListener('resize', function() {
+            console.log('窗口大小变化，延迟更新蒙版');
+            setTimeout(updateSpotlightLayout, 200);
+        });
+
+        // 添加键盘变化检测
+        detectKeyboardChanges();
+
+        // 设置移动端支持
+        setupMobileSpotlightSupport();
+
+        // 启动永久蒙版维持定时器
+        maintainSpotlightPermanent();
+
+        // 添加键盘快捷键
+        document.addEventListener('keydown', function(e) {
+            // 按M键切换输入模式
+            if (e.altKey && e.key === 'm') {
+                e.preventDefault();
+                if (currentInputMode === 'normal') {
+                    document.getElementById('scientific-mode-btn').click();
+                } else {
+                    document.getElementById('normal-mode-btn').click();
+                }
+            }
+        });
+
+        // 初始状态：使用中心位置
+        if (spotlightElement && problemContentContainer) {
+            const rect = problemContentContainer.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            updateSpotlightPosition(centerX, centerY);
+        }
+    }, 50); // 初始遮挡层已随 HTML 首屏渲染，这里尽快切换到局部蒙版
+}
+
+// 调试函数：检查蒙版状态
+function debugSpotlight() {
+    console.log('=== 蒙版调试信息 ===');
+    console.log('蒙版元素:', spotlightElement);
+    console.log('题目内容容器:', problemContentContainer);
+    console.log('最后鼠标位置:', lastMousePosition);
+    console.log('移动设备:', isMobileDevice);
+    console.log('永久模式:', SPOTLIGHT_CONFIG.permanent);
+
+    if (problemContentContainer) {
+        const rect = problemContentContainer.getBoundingClientRect();
+        console.log('题目内容区域:', {
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height,
+            right: rect.right,
+            bottom: rect.bottom
+        });
+    }
+
+    if (spotlightElement) {
+        console.log('蒙版样式:', {
+            top: spotlightElement.style.top,
+            left: spotlightElement.style.left,
+            width: spotlightElement.style.width,
+            height: spotlightElement.style.height,
+            maskImage: spotlightElement.style.maskImage
+        });
+    }
+    console.log('=== 调试结束 ===');
+}
+
+// ======================== 计时器和答题逻辑 ========================
+
+// 全局变量
+let startTime = Date.now();  // 页面加载时立即记录开始时间
+let isSubmitting = false;
+let timerInterval = null;
+const problemId = {{ problem_id }};
+const answerCount = {{ answer_count }};
+const totalProblems = {{ total_problems }};
+let totalAttempts = {{ total_attempts }};
+let timerInitialized = false;  // 添加标志防止重复初始化
+const displayMapping = {{ display_mapping | tojson }};
+const displayToActual = {{ display_to_actual | tojson }};
+const isProblemCompleted = {{ 'true' if is_completed else 'false' }};
+let completionLocked = false;
+let switchCount = 0;
+let tabAwayActive = document.hidden;
+let switchIgnoreUntil = 0;
+let pendingSwitchTimer = null;
+let expectedPageTransition = false;
+const SWITCH_CONFIRM_DELAY_MS = 800;
+const SWITCH_ACTION_GRACE_MS = 1500;
+const SWITCH_NAVIGATION_GRACE_MS = 6000;
+
+function markExpectedUiAction(durationMs = SWITCH_ACTION_GRACE_MS) {
+    switchIgnoreUntil = Math.max(switchIgnoreUntil, Date.now() + durationMs);
+    cancelPendingSwitch();
+}
+
+function markExpectedPageTransition(durationMs = SWITCH_NAVIGATION_GRACE_MS) {
+    expectedPageTransition = true;
+    markExpectedUiAction(durationMs);
+}
+
+function shouldIgnoreSwitchEvent() {
+    return (
+        Date.now() < switchIgnoreUntil ||
+        expectedPageTransition ||
+        isSubmitting ||
+        completionLocked ||
+        isProblemCompleted
+    );
+}
+
+function cancelPendingSwitch() {
+    if (pendingSwitchTimer) {
+        clearTimeout(pendingSwitchTimer);
+        pendingSwitchTimer = null;
+    }
+}
+
+function recordTabSwitch() {
+    if (shouldIgnoreSwitchEvent() || tabAwayActive || pendingSwitchTimer) {
+        return;
+    }
+    tabAwayActive = true;
+    pendingSwitchTimer = setTimeout(() => {
+        pendingSwitchTimer = null;
+        const stillAway = document.hidden || !document.hasFocus();
+        if (stillAway && !shouldIgnoreSwitchEvent()) {
+            switchCount += 1;
+            console.log('Tab switch count:', switchCount);
+            showSwitchWarning();
+        }
+    }, SWITCH_CONFIRM_DELAY_MS);
+}
+
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+        recordTabSwitch();
+    } else {
+        cancelPendingSwitch();
+        tabAwayActive = false;
+    }
+});
+
+window.addEventListener('blur', recordTabSwitch);
+window.addEventListener('focus', function() {
+    cancelPendingSwitch();
+    tabAwayActive = false;
+});
+
+function resetSwitchTracking() {
+    switchCount = 0;
+    tabAwayActive = document.hidden;
+    expectedPageTransition = false;
+    switchIgnoreUntil = 0;
+    cancelPendingSwitch();
+}
+
+function showSwitchWarning() {
+    showTempMessage(`你已切屏 ${switchCount} 次，请遵守考试秩序。`, 'warning', 4500, false);
+}
+
+// 初始化全局正确答案变量
+let currentCorrectAnswers = {{ problem.correct_answers | tojson }};
+console.log('Ajax问题页面初始化 - 问题ID:', problemId, '答案数量:', answerCount, '累计尝试:', totalAttempts, '总题目数:', totalProblems);
+console.log('初始正确答案:', currentCorrectAnswers);
+console.log('页面加载时间:', new Date().toLocaleTimeString());
+console.log('当前输入模式:', currentInputMode);
+
+// 初始化计时器 - 从页面加载开始计时
+function initTimer() {
+    // 如果已经初始化过，不再重复初始化
+    if (timerInitialized) {
+        console.log('计时器已初始化，跳过');
+        return;
+    }
+
+    clearInterval(timerInterval);
+
+    // 使用页面加载时间作为开始时间
+    // startTime 已经在页面加载时设置为 Date.now()
+
+    console.log('计时器初始化，开始时间:', new Date(startTime).toLocaleTimeString());
+
+    timerInterval = setInterval(() => {
+        const currentTime = Math.floor((Date.now() - startTime) / 1000);
+        document.getElementById('time-counter').textContent = currentTime;
+        document.getElementById('current-time').textContent = currentTime + '秒';
+    }, 1000);
+
+    timerInitialized = true;
+}
+
+// 格式化正确答案显示（使用科学计数法）
+function formatCorrectAnswers(correctAnswers) {
+    if (!correctAnswers || !Array.isArray(correctAnswers)) {
+        return "正确答案: 暂无";
+    }
+
+    const formattedAnswers = correctAnswers.map(answer => {
+        if (typeof answer === 'number') {
+            // 转换为科学计数法显示
+            if (answer === 0) return "0";
+
+            const isNegative = answer < 0;
+            const absAnswer = Math.abs(answer);
+            const exponent = Math.floor(Math.log10(absAnswer));
+            const mantissa = absAnswer / Math.pow(10, exponent);
+
+            // 调整到标准形式
+            let finalMantissa = mantissa;
+            let finalExponent = exponent;
+            if (mantissa >= 10) {
+                finalMantissa = mantissa / 10;
+                finalExponent = exponent + 1;
+            } else if (mantissa < 1) {
+                finalMantissa = mantissa * 10;
+                finalExponent = exponent - 1;
+            }
+
+            // 格式化
+            const sign = isNegative ? '-' : '';
+            const superscript = getSuperscript(finalExponent);
+            return `${sign}${finalMantissa.toFixed(2)} × 10${superscript}`;
+        }
+        return answer;
+    });
+
+    if (formattedAnswers.length === 1) {
+        return `正确答案: ${formattedAnswers[0]}`;
+    } else {
+        const parts = formattedAnswers.map((answer, index) =>
+            `答案${index + 1} = ${answer}`
+        );
+        return `正确答案: ${parts.join(', ')}`;
+    }
+}
+
+// 生成上标字符
+function getSuperscript(number) {
+    const superscripts = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+    const negative = '⁻';
+
+    if (number === 0) return superscripts[0];
+
+    const isNegative = number < 0;
+    const absNum = Math.abs(number).toString();
+    let result = isNegative ? negative : '';
+
+    for (const char of absNum) {
+        const digit = parseInt(char);
+        if (digit >= 0 && digit <= 9) {
+            result += superscripts[digit];
+        }
+    }
+
+    return result;
+}
+
+// 显示消息（不会自动消失）
+function showMessage(message, type = 'info') {
+    const messageArea = document.getElementById('message-area');
+    const alertClass = type === 'error' ? 'alert-danger' :
+                      type === 'success' ? 'alert-success' :
+                      type === 'warning' ? 'alert-warning' : 'alert-info';
+
+    // 创建不自动消失的alert
+    const messageId = 'message-' + Date.now();
+    messageArea.innerHTML = `
+        <div id="${messageId}" class="alert ${alertClass}">
+            <div class="d-flex align-items-center">
+                <i class="bi ${type === 'success' ? 'bi-check-circle-fill' :
+                              type === 'error' ? 'bi-exclamation-triangle-fill' :
+                              type === 'warning' ? 'bi-exclamation-circle-fill' : 'bi-info-circle-fill'}
+                    me-2"></i>
+                <div class="flex-grow-1">${message}</div>
+                <button type="button" class="btn-close" onclick="document.getElementById('${messageId}').remove()"></button>
+            </div>
+        </div>
+    `;
+
+    // 自动滚动到消息区域
+    messageArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// 显示临时消息（会自动消失）
+function showTempMessage(message, type = 'info', duration = 3000, shouldScroll = true) {
+    const messageArea = document.getElementById('message-area');
+    const alertClass = type === 'error' ? 'alert-danger' :
+                      type === 'success' ? 'alert-success' :
+                      type === 'warning' ? 'alert-warning' : 'alert-info';
+
+    const messageId = 'temp-message-' + Date.now();
+    const tempMessage = document.createElement('div');
+    tempMessage.id = messageId;
+    tempMessage.className = `alert ${alertClass} alert-dismissible fade show`;
+    tempMessage.innerHTML = `
+        <div class="d-flex align-items-center">
+            <i class="bi ${type === 'success' ? 'bi-check-circle-fill' :
+                          type === 'error' ? 'bi-exclamation-triangle-fill' :
+                          type === 'warning' ? 'bi-exclamation-circle-fill' : 'bi-info-circle-fill'}
+                me-2"></i>
+            <div>${message}</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+
+    messageArea.appendChild(tempMessage);
+
+    // 自动滚动到消息区域
+    if (shouldScroll) {
+        messageArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // 自动消失
+    setTimeout(() => {
+        const messageElement = document.getElementById(messageId);
+        if (messageElement) {
+            messageElement.remove();
+        }
+    }, duration);
+}
+
+// 更新尝试次数显示
+function updateAttemptsDisplay() {
+    document.getElementById('total-attempts').textContent = totalAttempts;
+    document.getElementById('total-attempts-display').textContent = totalAttempts + ' 次';
+}
+
+// 恢复按钮状态
+function resetSubmitButton() {
+    const submitBtn = document.getElementById('submit-btn');
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = '<i class="bi bi-send-fill me-1"></i> 提交答案';
+    submitBtn.style.display = 'inline-block';
+    isSubmitting = false;
+}
+
+// 获取答案数据 - 双向转换兼容版本
+function getAnswerData() {
+    const answerData = {
+        time_taken: (Date.now() - startTime) / 1000,  // 从页面加载到提交的总时间
+        switch_count: switchCount,
+        correct_answers: currentCorrectAnswers  // 关键：传递当前正确答案
+    };
+
+    console.log('答题时间计算:', answerData.time_taken, '秒');
+    console.log('当前输入模式:', currentInputMode);
+
+    // 强制同步所有输入框数据
+    for (let i = 1; i <= answerCount; i++) {
+        ScientificNotationUtils.syncInputModes(i);
+    }
+
+    if (answerCount === 1) {
+        // 单答案题目
+        const answerValue = document.getElementById('answer1').value;
+        if (answerValue) {
+            answerData.answer = parseFloat(answerValue);
+            console.log('最终答案:', answerData.answer);
+        }
+    } else {
+        // 多答案题目
+        for (let i = 1; i <= answerCount; i++) {
+            const answerValue = document.getElementById(`answer${i}`).value;
+            if (answerValue) {
+                answerData[`answer${i}`] = parseFloat(answerValue);
+                console.log(`答案${i}:`, answerData[`answer${i}`]);
+            }
+        }
+    }
+
+    console.log('提交的答案数据:', answerData);
+    console.log('使用的正确答案:', currentCorrectAnswers);
+    return answerData;
+}
+
+// 验证输入（双向转换兼容版本）
+function validateInputs() {
+    const answerCount = {{ answer_count }};
+    let hasValidInput = false;
+
+    // 强制同步数据以确保所有输入框都有值
+    for (let i = 1; i <= answerCount; i++) {
+        ScientificNotationUtils.syncInputModes(i);
+    }
+
+    // 检查隐藏的答案输入框（存储最终数值的地方）
+    for (let i = 1; i <= answerCount; i++) {
+        const hiddenInput = document.getElementById(`answer${i}`);
+        if (hiddenInput && hiddenInput.value && !isNaN(parseFloat(hiddenInput.value))) {
+            hasValidInput = true;
+        }
+    }
+
+    if (!hasValidInput) {
+        showMessage('请输入有效的数字答案', 'error');
+        return false;
+    }
+
+    return true;
+}
+
+// 清空输入框（双向转换兼容版本）
+function clearInputs() {
+    const answerCount = {{ answer_count }};
+
+    if (currentInputMode === 'scientific') {
+        // 清空科学计数法输入组件
+        for (let i = 1; i <= answerCount; i++) {
+            const mantissaInput = document.getElementById(`mantissa${i}`);
+            const exponentInput = document.getElementById(`exponent${i}`);
+            const signPositive = document.getElementById(`sign-positive${i}`);
+
+            if (mantissaInput) mantissaInput.value = '1.00';
+            if (exponentInput) exponentInput.value = '0';
+            if (signPositive) {
+                signPositive.checked = true;
+                signPositive.dispatchEvent(new Event('change'));
+            }
+
+            // 更新显示和同步数据
+            ScientificNotationUtils.updateScientificDisplay(i);
+        }
+    } else {
+        // 清空普通输入框
+        if (answerCount === 1) {
+            const normalInput = document.getElementById('answer-normal');
+            if (normalInput) {
+                normalInput.value = '';
+                ScientificNotationUtils.updateNormalDisplay(1);
+            }
+        } else {
+            for (let i = 1; i <= answerCount; i++) {
+                const normalInput = document.getElementById(`answer-normal${i}`);
+                if (normalInput) {
+                    normalInput.value = '';
+                    ScientificNotationUtils.updateNormalDisplay(i);
+                }
+            }
+        }
+    }
+}
+
+// 禁用输入框（双向转换兼容版本）
+function disableInputs() {
+    const answerCount = {{ answer_count }};
+
+    if (currentInputMode === 'scientific') {
+        // 禁用科学计数法输入组件
+        for (let i = 1; i <= answerCount; i++) {
+            const mantissaInput = document.getElementById(`mantissa${i}`);
+            const exponentInput = document.getElementById(`exponent${i}`);
+            const signRadios = document.querySelectorAll(`input[name="sign${i}"]`);
+
+            if (mantissaInput) mantissaInput.disabled = true;
+            if (exponentInput) exponentInput.disabled = true;
+            if (signRadios) {
+                signRadios.forEach(radio => radio.disabled = true);
+            }
+        }
+    } else {
+        // 禁用普通输入框
+        if (answerCount === 1) {
+            const normalInput = document.getElementById('answer-normal');
+            if (normalInput) normalInput.disabled = true;
+        } else {
+            for (let i = 1; i <= answerCount; i++) {
+                const normalInput = document.getElementById(`answer-normal${i}`);
+                if (normalInput) normalInput.disabled = true;
+            }
+        }
+    }
+
+    // 禁用模式切换按钮
+    document.getElementById('normal-mode-btn').disabled = true;
+    document.getElementById('scientific-mode-btn').disabled = true;
+}
+
+// 启用输入框（双向转换兼容版本）
+function enableInputs() {
+    const answerCount = {{ answer_count }};
+
+    if (currentInputMode === 'scientific') {
+        // 启用科学计数法输入组件
+        for (let i = 1; i <= answerCount; i++) {
+            const mantissaInput = document.getElementById(`mantissa${i}`);
+            const exponentInput = document.getElementById(`exponent${i}`);
+            const signRadios = document.querySelectorAll(`input[name="sign${i}"]`);
+
+            if (mantissaInput) mantissaInput.disabled = false;
+            if (exponentInput) exponentInput.disabled = false;
+            if (signRadios) {
+                signRadios.forEach(radio => radio.disabled = false);
+            }
+        }
+    } else {
+        // 启用普通输入框
+        if (answerCount === 1) {
+            const normalInput = document.getElementById('answer-normal');
+            if (normalInput) normalInput.disabled = false;
+        } else {
+            for (let i = 1; i <= answerCount; i++) {
+                const normalInput = document.getElementById(`answer-normal${i}`);
+                if (normalInput) normalInput.disabled = false;
+            }
+        }
+    }
+
+    // 启用模式切换按钮
+    document.getElementById('normal-mode-btn').disabled = false;
+    document.getElementById('scientific-mode-btn').disabled = false;
+}
+
+// 重置表单状态（双向转换兼容版本）
+function resetFormState() {
+    clearInputs();
+    enableInputs();
+    resetSubmitButton();
+    initTimer();
+}
+
+function reloadProblemPageAfterUpdateFailure(error) {
+    console.error('题目参数更新失败，准备自动刷新页面:', error);
+    showMessage('题目更新失败，正在自动刷新页面...', 'error');
+    disableInputs();
+
+    const submitBtn = document.getElementById('submit-btn');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>正在刷新...';
+    }
+
+    const refreshBtn = document.getElementById('refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.disabled = true;
+    }
+
+    if (typeof forceResumeShield === 'function') {
+        forceResumeShield(0);
+    }
+
+    setTimeout(() => {
+        markExpectedPageTransition();
+        window.location.reload();
+    }, 1000);
+}
+
+// 异步刷新题目参数
+async function refreshProblemParams() {
+    console.log('开始异步刷新题目参数...');
+
+    markExpectedUiAction(3000);
+
+    try {
+        const submitBtn = document.getElementById('submit-btn');
+        const originalText = submitBtn.innerHTML;
+
+        showMessage('正在刷新题目...', 'info');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>刷新中...';
+
+        const response = await fetch(`/refresh_problem/${problemId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP错误: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('刷新API响应:', data);
+
+        if (data.success) {
+            // 刷新成功后重置计时器（重新从当前时间开始计时）
+            startTime = Date.now();
+            resetSwitchTracking();
+            timerInitialized = false;
+            initTimer();
+
+            showMessage('题目已刷新，计时器已重置！', 'success');
+
+            // 重新加载页面以获取新题目
+            setTimeout(() => {
+                markExpectedPageTransition();
+                window.location.reload();
+            }, 1000);
+        } else {
+            throw new Error(data.message);
+        }
+
+        return true;
+
+    } catch (error) {
+        console.error('刷新题目参数失败:', error);
+        showMessage('刷新失败: ' + error.message, 'error');
+        return false;
+    } finally {
+        // 恢复按钮状态
+        const submitBtn = document.getElementById('submit-btn');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="bi bi-send-fill me-1"></i> 提交答案';
+        }
+    }
+}
+
+// 更新题目文本
+async function updateProblemText(newProblemText) {
+    const mathFormulaDiv = document.getElementById('problem-content');
+    if (!mathFormulaDiv) return;
+
+    // 使用淡出效果
+    mathFormulaDiv.style.opacity = '0.7';
+    mathFormulaDiv.style.transition = 'opacity 0.3s ease';
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    // 更新题目文本
+    mathFormulaDiv.innerHTML = newProblemText;
+
+    // 使用淡入效果
+    mathFormulaDiv.style.opacity = '0';
+    await new Promise(resolve => setTimeout(resolve, 50));
+    mathFormulaDiv.style.opacity = '1';
+
+    // 重新渲染数学公式
+    if (window.MathJax) {
+        MathJax.typesetPromise([mathFormulaDiv]).catch(console.error);
+    }
+
+    // 关键：更新蒙版布局
+    setTimeout(() => {
+        updateSpotlightLayout();
+    }, 500); // 给DOM一些时间完全更新
+}
+
+// 更新题目参数和正确答案
+async function updateProblemParameters(newVarValues, newCorrectAnswers, newProblemText) {
+    console.log('更新题目参数:', newVarValues);
+    console.log('更新正确答案:', newCorrectAnswers);
+
+    // 更新全局正确答案变量
+    currentCorrectAnswers = newCorrectAnswers;
+
+    // 更新变量表中的数值
+    for (const [key, value] of Object.entries(newVarValues)) {
+        const rows = document.querySelectorAll(`tr[data-var-key="${key}"]`);
+        rows.forEach(row => {
+            const valueCell = row.querySelector('.var-value');
+            if (valueCell) {
+                // 添加更新动画
+                valueCell.classList.add('param-updating');
+                setTimeout(() => {
+                    let displayValue = value;
+                    if (key in ['i', 'A', 'l']) {
+                        displayValue = parseFloat(value).toFixed(3);
+                    } else if (key in ['B', 'B0', 'v', 'dBdt', 'alpha', 'm']) {
+                        displayValue = parseFloat(value).toFixed(2);
+                    }
+                    valueCell.innerHTML = `<strong>${displayValue}</strong>`;
+                    valueCell.classList.remove('param-updating');
+                    valueCell.classList.add('param-updated');
+                    setTimeout(() => valueCell.classList.remove('param-updated'), 1000);
+                }, 300);
+            }
+        });
+    }
+
+    // 更新题目文本
+    if (newProblemText) {
+        await updateProblemText(newProblemText);
+    } else {
+        // 即使没有新题目文本，也更新蒙版布局
+        setTimeout(() => {
+            updateSpotlightLayout();
+        }, 300);
+    }
+
+    console.log('题目参数和正确答案更新完成，当前正确答案:', currentCorrectAnswers);
+}
+
+// 获取当前输入的答案
+function getCurrentAnswer() {
+    const answerCount = {{ answer_count }};
+
+    for (let i = 1; i <= answerCount; i++) {
+        // 同步数据以确保获取最新值
+        ScientificNotationUtils.syncInputModes(i);
+
+        const answerValue = document.getElementById(`answer${i}`).value;
+        if (answerValue && parseFloat(answerValue) !== 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 根据显示序号获取实际题目ID
+function getActualIdFromDisplay(displayId) {
+    if (displayToActual && displayToActual[displayId]) {
+        return displayToActual[displayId];
+    }
+
+    for (const [actualId, info] of Object.entries(displayMapping)) {
+        if (info.display_number === displayId) {
+            return parseInt(actualId);
+        }
+    }
+
+    return null;
+}
+
+// 锁定已完成题目的输入
+function handleCompletedProblem() {
+    if (completionLocked) {
+        return;
+    }
+
+    completionLocked = true;
+    disableInputs();
+
+    const submitBtn = document.getElementById('submit-btn');
+    if (submitBtn) {
+        submitBtn.style.display = 'none';
+    }
+
+    const nextBtn = document.getElementById('next-btn');
+    if (nextBtn) {
+        nextBtn.style.display = 'inline-block';
+    }
+
+    showMessage('该题已完成，无需再次作答', 'success');
+}
+
+// 获取题目完成状态
+async function getProblemCompletionStatus() {
+    try {
+        const response = await fetch('/api/user/completion_status');
+        if (!response.ok) {
+            throw new Error('获取完成状态失败');
+        }
+        const data = await response.json();
+        return data.completion_status;
+    } catch (error) {
+        console.error('获取完成状态失败:', error);
+        return {};
+    }
+}
+
+// 更新题目侧边栏的状态显示
+async function updateProblemSidebar() {
+    const completionStatus = await getProblemCompletionStatus();
+    const sidebarItems = document.querySelectorAll('#problem-sidebar .list-group-item');
+
+    const currentProblemId = {{ problem_id }};
+
+    sidebarItems.forEach(item => {
+        const problemId = parseInt(item.getAttribute('data-problem-id'));
+        const isCompleted = completionStatus[problemId] || false;
+        const statusBadge = item.querySelector('.problem-status-badge');
+
+        // 更新活动状态
+        if (problemId === currentProblemId) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
+
+        // 更新状态徽章
+        if (problemId === currentProblemId) {
+            statusBadge.innerHTML = '<span class="badge bg-primary"><i class="bi bi-play-fill"></i> 当前</span>';
+        } else if (isCompleted) {
+            statusBadge.innerHTML = '<span class="badge bg-success"><i class="bi bi-check"></i> 已完成</span>';
+        } else {
+            statusBadge.innerHTML = '<span class="badge bg-secondary"><i class="bi bi-circle"></i> 未开始</span>';
+        }
+
+        if (isCompleted) {
+            item.classList.add('completed');
+        } else {
+            item.classList.remove('completed');
+        }
+    });
+
+    if (completionStatus[currentProblemId]) {
+        handleCompletedProblem();
+    }
+}
+
+// 初始化题目侧边栏
+function initProblemSidebar() {
+    const sidebar = document.getElementById('problem-sidebar');
+    if (!sidebar) return;
+
+    // 更新完成状态显示
+    updateProblemSidebar();
+
+    // 为每个跳转链接添加确认提示（如果当前有未保存的答案）
+    const links = sidebar.querySelectorAll('.list-group-item');
+    links.forEach(link => {
+        link.addEventListener('click', function(e) {
+            const currentAnswer = getCurrentAnswer();
+            if (currentAnswer && !confirm('切换题目将丢失当前输入的答案，确定要跳转吗？')) {
+                e.preventDefault();
+            }
+        });
+    });
+}
+
+// 设置输入框监听器 - 支持双模式
+function setupInputListeners() {
+    const answerCount = {{ answer_count }};
+
+    if (answerCount === 1) {
+        // 单答案：普通模式输入框回车提交
+        const normalInput = document.getElementById('answer-normal');
+        if (normalInput) {
+            normalInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+                }
+            });
+        }
+
+        // 单答案：科学计数法模式，指数输入框回车提交
+        const exponentInput = document.getElementById('exponent1');
+        if (exponentInput) {
+            exponentInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+                }
+            });
+        }
+    } else {
+        // 多答案：最后一个普通模式输入框回车提交
+        const lastNormalInput = document.getElementById(`answer-normal${answerCount}`);
+        if (lastNormalInput) {
+            lastNormalInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+                }
+            });
+        }
+
+        // 多答案：最后一个科学计数法模式指数输入框回车提交
+        const lastExponentInput = document.getElementById(`exponent${answerCount}`);
+        if (lastExponentInput) {
+            lastExponentInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
+                }
+            });
+        }
+    }
+}
+
+// 处理表单提交
+document.getElementById('answer-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    if (isSubmitting) {
+        console.log('正在提交中，忽略重复提交');
+        return;
+    }
+
+    if (!validateInputs()) {
+        console.log('输入验证失败');
+        return;
+    }
+
+    const submitBtn = document.getElementById('submit-btn');
+    const answerData = getAnswerData();
+
+    // 更新按钮状态
+    markExpectedUiAction(5000);
+    isSubmitting = true;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> 提交中...';
+
+    console.log('开始提交答案...');
+    console.log('当前输入模式:', currentInputMode);
+    console.log('当前正确答案:', currentCorrectAnswers);
+
+    try {
+        const response = await fetch('/api/submit/' + problemId, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(answerData)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP错误: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('API响应:', data);
+
+        if (data.already_completed) {
+            showMessage(data.message || '该题已完成，无需再次作答', 'info');
+            handleCompletedProblem();
+            resetSubmitButton();
+            return;
+        }
+
+        if (data.success) {
+            if (data.correct) {
+                // 回答正确
+                showMessage(data.message, 'success');
+                document.getElementById('next-btn').style.display = 'inline-block';
+                submitBtn.style.display = 'none';
+                disableInputs();
+                clearInterval(timerInterval);  // 停止计时器
+
+                // 更新完成状态显示
+                updateProblemSidebar();
+
+                // 自动跳转到下一题
+                if (data.next_problem) {
+                    setTimeout(() => {
+                        showTempMessage(`3秒后自动跳转到第${data.next_problem}题...`, 'info');
+                    }, 500);
+
+                    setTimeout(() => {
+                        markExpectedPageTransition();
+                        window.location.href = '/problem_ajax/' + data.next_problem;
+                    }, 3000);
+                } else {
+                    setTimeout(() => {
+                        showTempMessage('恭喜完成所有题目！3秒后返回主页...', 'success');
+                    }, 500);
+
+                    setTimeout(() => {
+                        markExpectedPageTransition();
+                        window.location.href = '{{ url_for("dashboard") }}';
+                    }, 3000);
+                }
+            } else {
+                // 回答错误 - 更新尝试次数显示
+                totalAttempts = data.total_attempts;
+                updateAttemptsDisplay();
+
+                // 使用科学计数法格式的正确答案显示（稳定显示，先不立即刷新新题）
+                const correctAnswerMessage = formatCorrectAnswers(data.correct_answers);
+                showMessage(`❌ 答案不正确！${correctAnswerMessage}。可先选择下方错因，稍后将自动生成新题供你重试。`, 'error');
+
+                // 极简点选兜底：弹出错因纠正面板（在刷新新题之前，先给学生时间）
+                if (data.response_ids && data.response_ids.length) {
+                    showErrorCorrection(data.response_ids);
+                }
+
+                // 延迟刷新新题目：用户点选/跳过 或 超时后 才生成新题（自适应重试仍生效）
+                scheduleProblemRegeneration(data);
+            }
+        } else {
+            showMessage('提交失败: ' + data.message, 'error');
+            resetSubmitButton();
+        }
+
+    } catch (error) {
+        console.error('提交错误:', error);
+        showMessage('网络错误: ' + error.message, 'error');
+        resetSubmitButton();
+    }
+});
+
+// 下一题按钮
+document.getElementById('next-btn').addEventListener('click', function() {
+    markExpectedPageTransition();
+    const nextProblem = problemId + 1;
+    if (nextProblem <= totalProblems) {
+        window.location.href = '/problem_ajax/' + nextProblem;
+    } else {
+        window.location.href = '{{ url_for("dashboard") }}';
+    }
+});
+
+// 刷新题目按钮
+document.getElementById('refresh-btn').addEventListener('click', function() {
+    markExpectedUiAction(3000);
+    if (confirm('确定要刷新题目吗？这将生成新的题目参数，但不会增加尝试次数。')) {
+        refreshProblemParams()
+            .then(success => {
+                if (success) {
+                    resetFormState();
+                }
+            });
+    }
+});
+
+// 页面初始化
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('动态问题页面加载完成');
+    console.log('页面加载时间:', new Date().toLocaleTimeString());
+    console.log('开始计时时间:', new Date(startTime).toLocaleTimeString());
+
+    // 初始化功能
+    initTimer();
+    setupInputListeners();
+    updateAttemptsDisplay();
+
+    // 初始化题目侧边栏
+    initProblemSidebar();
+
+    // 初始化蒙版系统
+    initSpotlightSystem();
+
+    // 初始化双模式输入系统
+    initDualModeInput();
+
+    // 已完成的题目直接锁定输入
+    if (isProblemCompleted) {
+        handleCompletedProblem();
+    }
+
+    // 移动端特殊处理：监听输入框变化
+    if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+        // 监听所有输入框
+        const inputs = document.querySelectorAll('input[type="number"], input[type="text"]');
+        inputs.forEach(input => {
+            input.addEventListener('focus', function() {
+                console.log('移动端输入框聚焦，延迟重定位');
+                setTimeout(updateSpotlightLayout, 300);
+            });
+
+            input.addEventListener('blur', function() {
+                setTimeout(updateSpotlightLayout, 300);
+            });
+        });
+    }
+
+    // 添加快捷键支持
+    document.addEventListener('keydown', function(e) {
+        // Ctrl + 数字键跳转到对应题目
+        if (e.ctrlKey && e.key >= '1' && e.key <= '9') {
+            const targetProblem = parseInt(e.key);
+            if (targetProblem >= 1 && targetProblem <= totalProblems) {
+                e.preventDefault();
+                markExpectedUiAction(3000);
+                const currentAnswer = getCurrentAnswer();
+                if (!currentAnswer || confirm('切换题目将丢失当前输入的答案，确定要跳转吗？')) {
+                    markExpectedPageTransition();
+                    window.location.href = `/problem_ajax/${targetProblem}`;
+                }
+            }
+        }
+
+        // Ctrl+Shift+D 调试蒙版
+        if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+            e.preventDefault();
+            debugSpotlight();
+        }
+
+        // Ctrl+Shift+T 调试计时器
+        if (e.ctrlKey && e.shiftKey && e.key === 'T') {
+            e.preventDefault();
+            debugTimer();
+        }
+
+        // Alt+M 切换输入模式
+        if (e.altKey && e.key === 'm') {
+            e.preventDefault();
+            if (currentInputMode === 'normal') {
+                document.getElementById('scientific-mode-btn').click();
+            } else {
+                document.getElementById('normal-mode-btn').click();
+            }
+        }
+
+        // Ctrl+Shift+C 测试模式转换
+        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+            e.preventDefault();
+            window.testModeConversion();
+        }
+    });
+
+    // 自动聚焦到第一个输入框
+    setTimeout(() => {
+        if (answerCount === 1) {
+            if (currentInputMode === 'normal') {
+                document.getElementById('answer-normal').focus();
+            } else {
+                document.getElementById('mantissa1').focus();
+            }
+        } else if (answerCount > 1) {
+            if (currentInputMode === 'normal') {
+                document.getElementById('answer-normal1').focus();
+            } else {
+                document.getElementById('mantissa1').focus();
+            }
+        }
+    }, 500);
+
+    // 初始化时强制同步一次数据
+    setTimeout(() => {
+        for (let i = 1; i <= answerCount; i++) {
+            ScientificNotationUtils.syncInputModes(i);
+        }
+    }, 500);
+
+    // ============ 添加复制保护 ============
+    const problemContainer = document.getElementById('problem-content-container');
+
+    if (problemContainer) {
+        // 1. 防止右键菜单
+        problemContainer.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            showTempMessage('题目内容不可复制', 'warning', 2000);
+            return false;
+        });
+
+        // 2. 防止键盘快捷键复制
+        document.addEventListener('keydown', function(e) {
+            const activeElement = document.activeElement;
+
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C' || e.key === 'x' || e.key === 'X')) {
+                const isInInput = activeElement.tagName === 'INPUT' ||
+                                 activeElement.tagName === 'TEXTAREA' ||
+                                 activeElement.isContentEditable;
+
+                if (!isInInput) {
+                    e.preventDefault();
+                    showTempMessage('题目内容不可复制', 'warning', 2000);
+                    return false;
+                }
+            }
+        });
+
+        // 3. 防止拖拽选择
+        let isDragging = false;
+        problemContainer.addEventListener('mousedown', function() {
+            isDragging = true;
+        });
+
+        document.addEventListener('mouseup', function() {
+            isDragging = false;
+        });
+
+        document.addEventListener('mousemove', function() {
+            if (isDragging) {
+                window.getSelection().removeAllRanges();
+            }
+        });
+
+        // 4. 防止触摸长按
+        problemContainer.addEventListener('touchstart', function(e) {
+            const touchTimer = setTimeout(function() {
+                showTempMessage('题目内容不可复制', 'warning', 2000);
+            }, 800);
+
+            const cancelTimer = function() {
+                clearTimeout(touchTimer);
+                problemContainer.removeEventListener('touchend', cancelTimer);
+            };
+
+            problemContainer.addEventListener('touchend', cancelTimer);
+        });
+    }
+
+    // 5. 防止文本选择事件
+    document.addEventListener('selectstart', function(e) {
+        const allowedTags = ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'];
+        if (!allowedTags.includes(e.target.tagName)) {
+            e.preventDefault();
+            return false;
+        }
+    });
+
+    // 6. 防止拖拽图片
+    document.addEventListener('dragstart', function(e) {
+        if (e.target.tagName === 'IMG' || e.target.classList.contains('math-formula')) {
+            e.preventDefault();
+            return false;
+        }
+    });
+
+    // 7. 增强保护：定期清理选中内容
+    setInterval(function() {
+        const selection = window.getSelection();
+        const activeElement = document.activeElement;
+        const allowedElements = ['INPUT', 'TEXTAREA'];
+
+        if (!allowedElements.includes(activeElement.tagName)) {
+            if (selection.toString().length > 100) {
+                selection.removeAllRanges();
+            }
+        }
+    }, 1000);
+
+    // 8. 防止开发者工具
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'F12' ||
+            (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i')) ||
+            (e.ctrlKey && e.shiftKey && e.key === 'J') ||
+            (e.ctrlKey && e.key === 'U')) {
+            e.preventDefault();
+            showTempMessage('开发者工具已禁用', 'warning', 2000);
+            return false;
+        }
+    });
+});
+
+// 页面卸载前清理
+window.addEventListener('beforeunload', function() {
+    clearInterval(timerInterval);
+
+    // 清理蒙版定时器
+    if (spotlightTimer) {
+        clearInterval(spotlightTimer);
+        spotlightTimer = null;
+    }
+});
+
+// ======================== 调试功能 ========================
+
+// 添加调试功能
+window.debugTimer = function() {
+    console.log('=== 计时器调试信息 ===');
+    console.log('开始时间:', new Date(startTime).toLocaleTimeString());
+    console.log('当前时间:', new Date().toLocaleTimeString());
+    console.log('已用时:', Math.floor((Date.now() - startTime) / 1000), '秒');
+    console.log('计时器是否初始化:', timerInitialized);
+    console.log('计时器间隔ID:', timerInterval);
+
+    // 检查页面元素
+    const timeCounter = document.getElementById('time-counter');
+    const currentTime = document.getElementById('current-time');
+    console.log('time-counter元素:', timeCounter);
+    console.log('time-counter内容:', timeCounter ? timeCounter.textContent : '未找到');
+    console.log('current-time元素:', currentTime);
+    console.log('current-time内容:', currentTime ? currentTime.textContent : '未找到');
+};
+
+// 手动重置计时器（仅用于测试）
+window.resetTimerForTest = function() {
+    console.log('手动重置计时器...');
+    startTime = Date.now();
+    timerInitialized = false;
+    initTimer();
+    console.log('计时器已重置，新开始时间:', new Date(startTime).toLocaleTimeString());
+};
+
+// 测试答题时间计算
+window.testTimeCalculation = function() {
+    console.log('=== 测试答题时间计算 ===');
+    const testAnswerData = getAnswerData();
+    console.log('测试计算结果:', testAnswerData.time_taken, '秒');
+    return testAnswerData.time_taken;
+};
+
+// 测试双模式转换
+window.testModeConversion = function() {
+    console.log('=== 测试双模式转换 ===');
+
+    // 测试1: 科学计数法 -> 普通模式
+    console.log('测试1: 科学计数法 -> 普通模式');
+    document.getElementById('mantissa1').value = '1.60';
+    document.getElementById('exponent1').value = '-19';
+    document.getElementById('sign-positive1').checked = true;
+
+    // 切换到科学计数法模式以确保同步
+    if (currentInputMode !== 'scientific') {
+        document.getElementById('scientific-mode-btn').click();
+    }
+    ScientificNotationUtils.syncInputModes(1);
+
+    // 切换到普通模式查看结果
+    document.getElementById('normal-mode-btn').click();
+    const normalValue = document.getElementById('answer-normal').value;
+    console.log('转换结果:', normalValue);
+    console.log('预期结果: 1.6e-19');
+
+    // 测试2: 普通模式 -> 科学计数法
+    console.log('\n测试2: 普通模式 -> 科学计数法');
+    document.getElementById('answer-normal').value = '3.00e8';
+    ScientificNotationUtils.syncInputModes(1);
+
+    // 切换到科学计数法模式查看结果
+    document.getElementById('scientific-mode-btn').click();
+    const mantissa = document.getElementById('mantissa1').value;
+    const exponent = document.getElementById('exponent1').value;
+    console.log('转换结果:', mantissa, '× 10^', exponent);
+    console.log('预期结果: 3.00 × 10^8');
+
+    // 测试3: 双向一致性检查
+    console.log('\n测试3: 双向一致性检查');
+    const testValues = [0.001, 1000, 1.5e-5, 6.02e23, -3.14];
+
+    for (const testValue of testValues) {
+        // 设置普通模式值
+        document.getElementById('answer-normal').value = testValue;
+        document.getElementById('normal-mode-btn').click();
+        ScientificNotationUtils.syncInputModes(1);
+
+        // 切换到科学计数法模式
+        document.getElementById('scientific-mode-btn').click();
+        const components = {
+            mantissa: document.getElementById('mantissa1').value,
+            exponent: document.getElementById('exponent1').value,
+            sign: document.querySelector('input[name="sign1"]:checked').value
+        };
+
+        // 再切换回普通模式
+        document.getElementById('normal-mode-btn').click();
+        const convertedBack = document.getElementById('answer-normal').value;
+
+        console.log(`原值: ${testValue}`);
+        console.log(`科学计数法: ${components.sign}${components.mantissa} × 10^${components.exponent}`);
+        console.log(`转换回普通: ${convertedBack}`);
+
+        // 计算误差
+        const originalFloat = parseFloat(testValue);
+        const convertedFloat = parseFloat(convertedBack);
+        const error = Math.abs(originalFloat - convertedFloat) / originalFloat * 100;
+        console.log(`相对误差: ${error.toFixed(6)}%`);
+        console.log('---');
+    }
+
+    return '测试完成';
+};
+
+// 获取当前模式状态
+window.getCurrentMode = function() {
+    return currentInputMode;
+};
+
+// 切换模式（测试用）
+window.toggleInputMode = function() {
+    if (currentInputMode === 'normal') {
+        document.getElementById('scientific-mode-btn').click();
+    } else {
+        document.getElementById('normal-mode-btn').click();
+    }
+    return currentInputMode;
+};
+
+</script>
+
+<!-- 极简小雨点选兜底：错因手动纠正 -->
+<script>
+    // 暂存刚提交的错误记录 id，供点选时回传
+    let pendingResponseIds = [];
+    let regenTimer = null;
+    let regenData = null;
+
+    // 用户点选/跳过错因后，或等待超时后，才真正刷新生成新题
+    function triggerRegeneration() {
+        if (regenTimer === null) return;  // 已刷新或从未安排
+        clearTimeout(regenTimer);
+        hideErrorCorrection();  // 收起纠错面板，避免残留到新题
+        regenTimer = null;
+        const data = regenData;
+        regenData = null;
+        if (!data) return;
+        if (data.new_problem_generated && data.new_var_values) {
+            showMessage('正在生成新题目，请重新作答...', 'info');
+            updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text)
+                .then(() => {
+                    startTime = Date.now();
+                    resetSwitchTracking();
+                    timerInitialized = false;
+                    initTimer();
+                    showMessage('新题目已生成！请重新作答。', 'success');
+                    resetFormState();
+                })
+                .catch(error => reloadProblemPageAfterUpdateFailure(error));
+        } else {
+            resetSwitchTracking();
+            resetFormState();
+        }
+    }
+
+    // 安排新题刷新：默认 6 秒后自动刷新；若用户先点选/跳过，则立即刷新
+    function scheduleProblemRegeneration(data) {
+        regenData = data;
+        regenTimer = setTimeout(triggerRegeneration, 6000);
+    }
+
+    function showErrorCorrection(ids) {
+        pendingResponseIds = ids || [];
+        const panel = document.getElementById('error-correction-panel');
+        if (panel) panel.style.display = 'block';
+    }
+
+    function hideErrorCorrection() {
+        const panel = document.getElementById('error-correction-panel');
+        if (panel) panel.style.display = 'none';
+    }
+
+    document.querySelectorAll('#error-correction-panel button[data-cat]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            correctErrorCategory(btn.getAttribute('data-cat'));
+        });
+    });
+    const skipBtn = document.getElementById('error-correction-skip');
+    if (skipBtn) skipBtn.addEventListener('click', function () {
+        hideErrorCorrection();
+        triggerRegeneration();  // 跳过后立即生成新题
+    });
+
+    async function correctErrorCategory(category) {
+        if (!pendingResponseIds.length) {
+            hideErrorCorrection();
+            return;
+        }
+        try {
+            const resp = await fetch('/api/correct_error_category', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ response_ids: pendingResponseIds, error_category: category })
+            });
+            const d = await resp.json();
+            if (d.success) {
+                hideErrorCorrection();
+                showTempMessage('已记录错因：' + category, 'success', 2500);
+                triggerRegeneration();  // 记录成功后立即生成新题
+            } else {
+                showTempMessage('更新失败：' + (d.message || '未知错误'), 'error', 2500);
+            }
+        } catch (e) {
+            showTempMessage('网络错误：' + e.message, 'error', 2500);
+        }
+    }
+</script>
+
+<style>
+/* 蒙版系统样式 */
+#spotlight-overlay-element {
+    animation: spotlightAppear 0.3s ease;
+}
+
+@keyframes spotlightAppear {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* 数学公式样式 */
+.math-formula {
+    font-size: 1.1em;
+    line-height: 1.6;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+}
+
+.variable-table {
+    font-size: 0.9em;
+}
+
+.variable-table th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+}
+
+.math-symbol {
+    font-family: 'Times New Roman', serif;
+    font-style: italic;
+}
+
+.progress {
+    border-radius: 10px;
+}
+
+.progress-bar {
+    border-radius: 10px;
+    transition: width 0.3s ease;
+}
+
+.card {
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    border: 1px solid rgba(0, 0, 0, 0.125);
+}
+
+.card-header {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.125);
+}
+
+.btn {
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.form-control {
+    border-radius: 8px;
+    border: 2px solid #e9ecef;
+    transition: border-color 0.2s ease;
+}
+
+.form-control:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+.alert {
+    border-radius: 8px;
+    border: none;
+}
+
+.table-hover tbody tr:hover {
+    background-color: rgba(0, 0, 0, 0.025);
+}
+
+#timer-display {
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+}
+
+/* 题目侧边栏样式 */
+#problem-sidebar .list-group-item {
+    border: none;
+    border-bottom: 1px solid #e9ecef;
+    transition: all 0.2s ease;
+}
+
+#problem-sidebar .list-group-item.completed {
+    background-color: #e7f8ee;
+    color: #198754;
+}
+
+#problem-sidebar .list-group-item:last-child {
+    border-bottom: none;
+}
+
+#problem-sidebar .list-group-item:hover {
+    background-color: #f8f9fa;
+    transform: translateX(2px);
+}
+
+#problem-sidebar .list-group-item.active {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+    font-weight: bold;
+}
+
+.problem-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background-color: #6c757d;
+    color: white;
+    border-radius: 50%;
+    font-size: 0.8em;
+    font-weight: bold;
+}
+
+#problem-sidebar .list-group-item.active .problem-number {
+    background-color: white;
+    color: #0d6efd;
+}
+
+.problem-title {
+    font-size: 0.9em;
+}
+
+.problem-status-badge .badge {
+    font-size: 0.7em;
+}
+
+/* 参数更新动画 */
+.param-updating {
+    background-color: #fff3cd !important;
+    transition: background-color 0.3s ease;
+}
+
+.param-updated {
+    animation: highlightUpdate 1s ease;
+}
+
+@keyframes highlightUpdate {
+    0% { background-color: #d4edda; }
+    50% { background-color: #c3e6cb; }
+    100% { background-color: transparent; }
+}
+
+/* 永久提示样式 - 确保不会消失 */
+.permanent-hint {
+    position: relative;
+    border-left: 4px solid #0dcaf0 !important;
+}
+
+.permanent-hint .btn-close {
+    display: none !important;
+}
+
+.hint-content {
+    min-height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 统一图片样式控制 */
+.problem-image {
+    width: 100%;
+    max-width: 480px;
+    height: auto;
+    max-height: 320px;
+    object-fit: contain;
+    border: 2px solid #dee2e6;
+    border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    margin: 15px auto;
+    display: block;
+    background: white;
+    padding: 5px;
+}
+
+.problem-image-container {
+    text-align: center;
+    margin: 10px 0;
+}
+
+.image-caption {
+    font-size: 0.85em;
+    font-style: italic;
+    margin-top: 8px;
+    color: #6c757d;
+    text-align: center;
+}
+
+/* 科学计数法特殊样式 */
+.scientific-notation-input .btn-group .btn-outline-primary.active {
+    background-color: #0d6efd;
+    color: white;
+}
+
+.scientific-notation-input .mantissa-input:focus,
+.scientific-notation-input .exponent-input:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+/* 模式切换按钮动画 */
+#normal-mode-btn,
+#scientific-mode-btn {
+    transition: all 0.3s ease;
+}
+
+#normal-mode-btn:not(.active):hover,
+#scientific-mode-btn:not(.active):hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* 输入模式切换过渡 */
+.normal-mode,
+.scientific-mode {
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 单位显示样式 - 新增 */
+.unit-display {
+    min-width: 60px;
+    background-color: #e9ecef;
+    border-color: #dee2e6;
+    color: #495057;
+    font-weight: 500;
+}
+
+.input-group-text.unit-display {
+    transition: all 0.2s ease;
+}
+
+.input-group:focus-within .input-group-text.unit-display {
+    background-color: #0d6efd;
+    color: white;
+    border-color: #0d6efd;
+}
+
+/* 科学计数法单位显示 */
+.scientific-notation-input .input-group-text.unit-display {
+    font-size: 0.85em;
+    padding: 0.25rem 0.5rem;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    .problem-image {
+        max-width: 100%;
+        max-height: 250px;
+    }
+
+    /* 移动端侧边栏调整 */
+    .col-lg-3 {
+        margin-bottom: 1rem;
+    }
+
+    /* 移动端双模式输入调整 */
+    .scientific-notation-input {
+        flex-wrap: wrap;
+    }
+
+    .scientific-notation-input .btn-group {
+        width: 100%;
+        margin-bottom: 8px;
+        justify-content: center;
+    }
+
+    .scientific-notation-input .input-group {
+        width: 100% !important;
+        margin-bottom: 8px;
+    }
+
+    /* 移动端模式切换按钮调整 */
+    .btn-group[aria-label="输入模式切换"] {
+        width: 100%;
+        margin-top: 10px;
+    }
+
+    .btn-group[aria-label="输入模式切换"] .btn {
+        flex: 1;
+        text-align: center;
+    }
+
+    /* 移动端单位显示调整 */
+    .unit-display {
+        min-width: 50px;
+        font-size: 0.9em;
+    }
+
+    .scientific-notation-input .input-group-text.unit-display {
+        padding: 0.2rem 0.4rem;
+        font-size: 0.8em;
+    }
+}
+
+@media (max-width: 576px) {
+    .problem-image {
+        max-width: 100%;
+        max-height: 200px;
+    }
+
+    .scientific-notation-input {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .scientific-notation-input .btn-group {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .scientific-notation-input .input-group {
+        margin: 5px 0;
+    }
+
+    /* 多答案题目在移动端垂直排列 */
+    #answer-inputs .row .col-md-6 {
+        margin-bottom: 1rem;
+    }
+
+    /* 超小屏幕单位显示 */
+    .unit-display {
+        min-width: 40px;
+        font-size: 0.8em;
+    }
+}
+
+/* 悬停效果 */
+.problem-image {
+    transition: all 0.3s ease;
+}
+
+.problem-image:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+}
+
+/* 图片占位符样式 */
+.problem-image-placeholder {
+    max-width: 400px;
+    height: 200px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin: 10px auto;
+    border: 2px dashed #dee2e6;
+    border-radius: 8px;
+}
+
+/* 响应式图片 */
+@media (max-width: 768px) {
+    .problem-image {
+        max-width: 100%;
+    }
+
+    .problem-image-placeholder {
+        max-width: 100%;
+        height: 150px;
+    }
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+    .card-header h4 {
+        font-size: 1.1rem;
+    }
+
+    .math-formula {
+        font-size: 0.95rem;
+        padding: 0.75rem;
+    }
+
+    .form-control, .form-control-lg {
+        font-size: 16px; /* 防止iOS缩放 */
+        height: 44px;
+    }
+
+    .btn {
+        margin-bottom: 0.5rem;
+    }
+
+    .btn-group .btn {
+        width: auto;
+        margin-bottom: 0;
+    }
+
+    .variable-table {
+        font-size: 0.8rem;
+    }
+
+    .progress {
+        height: 6px;
+    }
+
+    /* 移动端按钮组垂直排列 */
+    .d-md-flex .btn {
+        margin-bottom: 0.5rem;
+    }
+
+    /* 题目参数表在移动端简化 */
+    .variable-table td, .variable-table th {
+        padding: 0.5rem;
+    }
+
+    /* 图片在移动端的优化 */
+    .problem-image {
+        max-width: 100%;
+        height: auto;
+        max-height: 200px;
+    }
+
+    /* 蒙版系统样式 - 移动端优化 */
+    #problem-content-container {
+        min-height: 200px; /* 确保容器有足够高度 */
+        position: relative !important; /* 强制相对定位 */
+    }
+
+    #spotlight-overlay-element {
+        border-radius: 0; /* 移除圆角，避免定位问题 */
+    }
+
+    /* 移动端输入提示调整 */
+    .normal-mode .form-text {
+        font-size: 0.8em;
+    }
+}
+
+/* 超小屏幕适配 */
+@media (max-width: 576px) {
+    .container {
+        padding-left: 5px;
+        padding-right: 5px;
+    }
+
+    .card-body {
+        padding: 0.75rem;
+    }
+
+    .math-formula {
+        font-size: 0.9rem;
+        padding: 0.5rem;
+    }
+
+    .btn-lg {
+        padding: 0.75rem 1rem;
+        font-size: 0.9rem;
+    }
+
+    /* 统计卡片在移动端堆叠 */
+    .row .col-md-6 {
+        margin-bottom: 1rem;
+    }
+
+    /* 科学计数法输入组件的移动端适配 */
+    .scientific-notation-input .mantissa-input,
+    .scientific-notation-input .exponent-input {
+        font-size: 16px; /* 防止iOS缩放 */
+    }
+
+    /* 模式切换按钮在超小屏幕的调整 */
+    .btn-group[aria-label="输入模式切换"] .btn {
+        padding: 0.375rem 0.5rem;
+        font-size: 0.8rem;
+    }
+}
+
+/* 横屏模式优化 */
+@media (max-height: 500px) and (orientation: landscape) {
+    .navbar {
+        position: fixed;
+        top: 0;
+        width: 100%;
+        z-index: 1030;
+    }
+
+    .container {
+        margin-top: 60px;
+    }
+
+    .card {
+        margin-bottom: 0.5rem;
+    }
+
+    /* 确保蒙版不会被键盘覆盖 */
+    #problem-content-container {
+        transform: none !important;
+    }
+}
+
+/* 数学公式在移动端的响应式处理 */
+.math-formula mjx-container {
+    max-width: 100% !important;
+    overflow-x: auto !important;
+}
+
+/* 触摸设备优化 */
+@media (hover: none) and (pointer: coarse) {
+    .btn {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .form-control {
+        font-size: 16px; /* 防止iOS缩放 */
+    }
+
+    /* 增加触摸反馈 */
+    .btn:active {
+        transform: scale(0.98);
+        transition: transform 0.1s;
+    }
+
+    /* 科学计数法触摸优化 */
+    .scientific-notation-input .btn-group .btn {
+        padding: 0.5rem 1rem;
+        min-height: 44px;
+    }
+
+    .scientific-notation-input .input-group {
+        min-height: 44px;
+    }
+
+    /* 模式切换按钮触摸优化 */
+    .btn-group[aria-label="输入模式切换"] .btn {
+        min-height: 44px;
+    }
+}
+
+/* 高分屏移动设备优化 */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    .math-formula {
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* 科学计数法高清优化 */
+    .scientific-notation-input .mantissa-input,
+    .scientific-notation-input .exponent-input {
+        -webkit-font-smoothing: antialiased;
+    }
+}
+
+/* 蒙版模糊效果增强 */
+#spotlight-overlay-element {
+    backdrop-filter: blur(8px) brightness(0.9);
+    -webkit-backdrop-filter: blur(8px) brightness(0.9);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* 确保答题提示和统计区域不被遮挡 */
+#hint-and-stats-container {
+    position: relative;
+    z-index: 20;
+}
+
+/* 防止输入时页面滚动 */
+html {
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+body {
+    -webkit-overflow-scrolling: touch;
+}
+</style>
+{% endblock %}

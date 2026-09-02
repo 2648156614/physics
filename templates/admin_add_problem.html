@@ -1,0 +1,428 @@
+{% extends "base.html" %}
+
+{% block title %}添加题目 - 管理员{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">添加新题目</h2>
+        <div>
+            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> 返回管理后台
+            </a>
+            <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-outline-info">
+                <i class="bi bi-list-check"></i> 管理题目
+            </a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i> 题目信息</h5>
+                </div>
+                <div class="card-body">
+                    <div class="template-import-panel">
+                        <div class="d-flex align-items-center mb-2">
+                            <i class="bi bi-magic me-2"></i>
+                            <strong>模板一键识别</strong>
+                        </div>
+                        <p class="small mb-2">
+                            可以直接粘贴 AI 生成的 Python 字典模板，系统会自动识别
+                            <code>name</code>、<code>text</code>、<code>variables</code>、<code>formula</code>、
+                            <code>answer_count</code>、<code>answer_units</code> 等字段并填入下方表单。
+                            如果模板里包含 <code>image_filename</code>，图片仍请使用原来的上传框上传原图。
+                        </p>
+                        <textarea class="form-control font-monospace" id="template_import" rows="6"
+                                  placeholder="把完整模板粘贴到这里，例如：{'name': '...', 'text': r&quot;&quot;&quot;...&quot;&quot;&quot;, 'variables': '...', 'formula': '...'}"></textarea>
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="parse_template_btn">
+                                <i class="bi bi-lightning-charge"></i> 识别并填入表单
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="clear_template_btn">
+                                <i class="bi bi-x-circle"></i> 清空粘贴内容
+                            </button>
+                        </div>
+                        <div class="small mt-2 d-none" id="template_import_status"></div>
+                    </div>
+
+                    <form method="POST" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="paper_id" class="form-label">所属题库</label>
+                            <select class="form-select" id="paper_id" name="paper_id" required>
+                                {% for paper in exam_papers %}
+                                <option value="{{ paper.id }}" {% if template is defined and template.paper_id == paper.id %}selected{% endif %}>{{ paper.name }} {% if paper.is_enabled %}(已开启){% else %}(已关闭){% endif %}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="template_name" class="form-label">题目名称</label>
+                            <input type="text" class="form-control" id="template_name" name="template_name" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="knowledge_point" class="form-label">知识点（可选，留空自动推断）</label>
+                            <input type="text" class="form-control" id="knowledge_point" name="knowledge_point"
+                                   value="" placeholder="例如：电磁学 / 力学 / 热学 / 光学 / 振动与波 / 综合分析">
+                            <div class="form-text">用于学情画像的薄弱知识点分析；不填则根据题名自动归类。</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="problem_text" class="form-label">题目内容 (支持HTML和LaTeX)</label>
+                            <textarea class="form-control" id="problem_text" name="problem_text" rows="8" required></textarea>
+                            <div class="form-text">
+                                提示：变量占位符请使用 <code>{% raw %}{{变量名}}{% endraw %}</code>（例如 <code>{% raw %}{{F}}{% endraw %}</code>），不要放在 LaTeX 下标里；数学公式用 <code>\( LaTeX公式 \)</code>。旧格式 <code>__F__</code> 和 <code>{% raw %}{{ problem.var_values.F }}{% endraw %}</code> 会自动转换。
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="problem_image" class="form-label">题目图片 (可选)</label>
+                            <input type="file" class="form-control" id="problem_image" name="problem_image"
+                                   accept=".png,.jpg,.jpeg,.gif,.svg">
+                            <div class="form-text">
+                                支持格式：PNG, JPG, GIF, SVG。最大16MB。模板中识别到图片文件名时，仍需在这里上传对应原图。
+                            </div>
+                            <div class="form-text text-primary d-none" id="detected_image_hint"></div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="variables" class="form-label">变量列表 (用逗号分隔)</label>
+                            <input type="text" class="form-control" id="variables" name="variables"
+                                   placeholder="例如: r,R,i,B 或 v0[0,30],a[0.2,8],t[0.5,20]">
+                            <div class="form-text">支持两种写法：<code>r,R,i,B</code> 或带范围 <code>v0[0,30],a[0.2,8],t[0.5,20]</code>，系统会自动标准化格式。</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="solution_formula" class="form-label">解答公式 (Python表达式)</label>
+                            <textarea class="form-control" id="solution_formula" name="solution_formula" rows="4" required></textarea>
+                            <div class="form-text">
+                                使用Python数学表达式，多答案用逗号分隔。例如：<code>i * R / (pi * (r/100)**2)</code>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="answer_count" class="form-label">答案数量</label>
+                                    <select class="form-select" id="answer_count" name="answer_count">
+                                        <option value="1">1个答案</option>
+                                        <option value="2">2个答案</option>
+                                        <option value="3">3个答案</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="difficulty" class="form-label">难度</label>
+                                    <select class="form-select" id="difficulty" name="difficulty">
+                                        <option value="easy">简单</option>
+                                        <option value="medium" selected>中等</option>
+                                        <option value="hard">困难</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 新增：答案单位字段 -->
+                        <div class="mb-3">
+                            <label for="answer_units" class="form-label">答案单位</label>
+                            <input type="text" class="form-control" id="answer_units" name="answer_units"
+                                   placeholder="例如：V 或 A,m/s,Ω">
+                            <div class="form-text">
+                                为每个答案指定单位，用逗号分隔。例如：<br>
+                                - 单答案题目：V<br>
+                                - 三个答案的题目：V,A,Ω<br>
+                                - 无量纲答案用减号：- 或 -,-<br>
+                                与答案数量保持一致。
+                            </div>
+                        </div>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-lg me-2"></i> 添加题目
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 添加说明</h5>
+                </div>
+                <div class="card-body">
+                    <h6>变量命名规范：</h6>
+                    <ul class="small">
+                        <li>半径：r, a</li>
+                        <li>电阻：R</li>
+                        <li>电流：i, I</li>
+                        <li>磁场：B, B0</li>
+                        <li>速度：v</li>
+                        <li>长度：l, L</li>
+                        <li>质量：m</li>
+                        <li>角速度：omega</li>
+                    </ul>
+
+                    <h6>公式编写提示：</h6>
+                    <ul class="small">
+                        <li>使用标准数学函数：pi, sin, cos, sqrt</li>
+                        <li>注意单位转换（cm → m）</li>
+                        <li>多答案用逗号分隔</li>
+                        <li>可以使用 sympy 符号计算</li>
+                    </ul>
+
+                    <h6>题目内容格式：</h6>
+                    <ul class="small">
+                        <li>HTML标签支持</li>
+                        <li>LaTeX数学公式</li>
+                        <li>图片路径：<code>/problem_image/图片名.png</code></li>
+                    </ul>
+
+                    <h6>答案单位格式：</h6>
+                    <ul class="small">
+                        <li>单位用逗号分隔</li>
+                        <li>无量纲答案用 "-" 表示</li>
+                        <li>单位数量必须与答案数量一致</li>
+                        <li>示例：V,A,Ω 或 -,- 或 V,-</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-image me-2"></i> 图片使用说明</h5>
+                </div>
+                <div class="card-body">
+                    <h6>图片规范：</h6>
+                    <ul class="small">
+                        <li>建议尺寸：400×300 像素</li>
+                        <li>格式：PNG（推荐）、JPG、GIF、SVG</li>
+                        <li>文件命名：使用英文和数字，避免中文</li>
+                        <li>图片将自动插入到题目内容开头</li>
+                    </ul>
+
+                    <h6>现有图片：</h6>
+                    <a href="{{ url_for('admin_image_manager') }}" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-images"></i> 管理图片库
+                    </a>
+                </div>
+            </div>
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-lightbulb me-2"></i> 示例</h5>
+                </div>
+                <div class="card-body">
+                    <h6>单答案题目：</h6>
+                    <pre class="small bg-light p-2 rounded">
+变量：r,R,i
+公式：i * R / (pi * (r/100)**2)
+单位：T/s</pre>
+
+                    <h6>多答案题目：</h6>
+                    <pre class="small bg-light p-2 rounded">
+变量：l,B,omega
+公式："(3/8) * B * omega * l**2, -(3/8) * B * omega * l**2, 0"
+单位：V,V,V</pre>
+
+                    <h6>混合单位题目：</h6>
+                    <pre class="small bg-light p-2 rounded">
+变量：v,AC,dBdt,B,x
+公式："B * v * (AC/100), (B * v * (AC/100)) + (dBdt * (x/100) * (AC/100)), 1"
+单位：V,V,-</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const importTextarea = document.getElementById('template_import');
+    const parseButton = document.getElementById('parse_template_btn');
+    const clearButton = document.getElementById('clear_template_btn');
+    const statusBox = document.getElementById('template_import_status');
+    const imageHint = document.getElementById('detected_image_hint');
+
+    const fieldMap = {
+        name: 'template_name',
+        text: 'problem_text',
+        variables: 'variables',
+        formula: 'solution_formula',
+        answer_units: 'answer_units'
+    };
+
+    function setStatus(message, type) {
+        statusBox.textContent = message;
+        statusBox.className = 'small mt-2 text-' + type;
+        statusBox.classList.remove('d-none');
+    }
+
+    function hideStatus() {
+        statusBox.classList.add('d-none');
+        statusBox.textContent = '';
+    }
+
+    function skipWhitespace(source, index) {
+        while (index < source.length && /\s/.test(source[index])) {
+            index += 1;
+        }
+        return index;
+    }
+
+    function readQuotedValue(source, index) {
+        index = skipWhitespace(source, index);
+
+        while (index < source.length && /[rRuUbBfF]/.test(source[index]) && (source[index + 1] === '"' || source[index + 1] === "'")) {
+            index += 1;
+        }
+
+        const quote = source[index];
+        if (quote !== '"' && quote !== "'") {
+            return null;
+        }
+
+        const tripleQuote = source.slice(index, index + 3) === quote.repeat(3);
+        if (tripleQuote) {
+            const endIndex = source.indexOf(quote.repeat(3), index + 3);
+            if (endIndex === -1) {
+                return null;
+            }
+            return source.slice(index + 3, endIndex);
+        }
+
+        let value = '';
+        let escaped = false;
+        for (let i = index + 1; i < source.length; i += 1) {
+            const char = source[i];
+            if (escaped) {
+                const escapes = {n: '\n', r: '\r', t: '\t', '\\': '\\', '"': '"', "'": "'"};
+                value += Object.prototype.hasOwnProperty.call(escapes, char) ? escapes[char] : char;
+                escaped = false;
+            } else if (char === '\\') {
+                escaped = true;
+            } else if (char === quote) {
+                return value;
+            } else {
+                value += char;
+            }
+        }
+        return null;
+    }
+
+    function readNumberValue(source, index) {
+        const match = source.slice(index).match(/^\s*([+-]?\d+(?:\.\d+)?)/);
+        return match ? match[1] : null;
+    }
+
+    function extractTemplateValue(source, key, valueType) {
+        const keyPattern = new RegExp('[\\\'\"]' + key + '[\\\'\"]\\s*:', 'm');
+        const match = keyPattern.exec(source);
+        if (!match) {
+            return null;
+        }
+
+        const valueIndex = match.index + match[0].length;
+        if (valueType === 'number') {
+            return readNumberValue(source, valueIndex);
+        }
+        return readQuotedValue(source, valueIndex);
+    }
+
+    function parseTemplate(source) {
+        const parsed = {};
+        Object.keys(fieldMap).forEach(function (key) {
+            const value = extractTemplateValue(source, key, 'string');
+            if (value !== null) {
+                parsed[key] = value;
+            }
+        });
+
+        const answerCount = extractTemplateValue(source, 'answer_count', 'number');
+        if (answerCount !== null) {
+            parsed.answer_count = answerCount;
+        }
+
+        const imageFilename = extractTemplateValue(source, 'image_filename', 'string');
+        if (imageFilename !== null) {
+            parsed.image_filename = imageFilename;
+        }
+
+        return parsed;
+    }
+
+    function fillForm(parsed) {
+        let filledCount = 0;
+        Object.entries(fieldMap).forEach(function ([key, elementId]) {
+            if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+                const element = document.getElementById(elementId);
+                if (element) {
+                    element.value = parsed[key];
+                    element.dispatchEvent(new Event('input', {bubbles: true}));
+                    filledCount += 1;
+                }
+            }
+        });
+
+        if (parsed.answer_count) {
+            const answerCountSelect = document.getElementById('answer_count');
+            if (answerCountSelect) {
+                answerCountSelect.value = parsed.answer_count;
+                filledCount += 1;
+            }
+        }
+
+        if (parsed.image_filename) {
+            imageHint.textContent = '模板中识别到图片：' + parsed.image_filename + '。浏览器不能自动选择本地文件，请在上方上传框手动上传这张原图。';
+            imageHint.classList.remove('d-none');
+        } else {
+            imageHint.classList.add('d-none');
+            imageHint.textContent = '';
+        }
+
+        return filledCount;
+    }
+
+    function parseAndFill() {
+        const source = importTextarea.value.trim();
+        if (!source) {
+            setStatus('请先粘贴题目模板。', 'warning');
+            return;
+        }
+
+        const parsed = parseTemplate(source);
+        const filledCount = fillForm(parsed);
+        if (filledCount > 0) {
+            setStatus('已识别并填入 ' + filledCount + ' 个字段，请检查后提交。', 'success');
+        } else {
+            setStatus('没有识别到可填入的字段，请确认粘贴的是包含 name/text/variables/formula 等键的模板。', 'danger');
+        }
+    }
+
+    parseButton.addEventListener('click', parseAndFill);
+    clearButton.addEventListener('click', function () {
+        importTextarea.value = '';
+        hideStatus();
+    });
+    importTextarea.addEventListener('paste', function () {
+        window.setTimeout(parseAndFill, 0);
+    });
+});
+</script>
+
+<style>
+.template-import-panel {
+    color: #055160;
+    background-color: #cff4fc;
+    border: 1px solid #9eeaf9;
+    border-radius: 8px;
+    padding: 15px 20px;
+    margin-bottom: 1rem;
+}
+</style>
+{% endblock %}

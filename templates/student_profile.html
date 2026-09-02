@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}我的学情{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2 class="my-4"><i class="bi bi-person-vcard me-2"></i>我的学情画像</h2>
+
+    {% if empty %}
+    <div class="alert alert-info d-flex align-items-center">
+        <i class="bi bi-info-circle-fill me-2 fs-4"></i>
+        <div>
+            <strong>还没有学情数据。</strong> 完成几道题目后，这里会自动生成你的错因雷达图、薄弱知识点和成长档案。
+        </div>
+    </div>
+    {% else %}
+
+    <!-- 总体统计卡片 -->
+    <div class="row mb-4">
+        <div class="col-md-4 mb-3">
+            <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">正确率</div>
+                    <div class="h4 mb-0 font-weight-bold">{{ accuracy }}%</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 mb-3">
+            <div class="card border-left-success shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="text-xs font-weight-bold text-success text-uppercase mb-1">总答题数</div>
+                    <div class="h4 mb-0 font-weight-bold">{{ total }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4 mb-3">
+            <div class="card border-left-danger shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">错题数</div>
+                    <div class="h4 mb-0 font-weight-bold">{{ wrong }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <!-- 错因雷达图 -->
+        <div class="col-lg-5 mb-3">
+            <div class="card shadow h-100">
+                <div class="card-header bg-primary text-white">
+                    <i class="bi bi-shield-shaded me-1"></i> 错因雷达图
+                </div>
+                <div class="card-body d-flex flex-column align-items-center justify-content-center">
+                    {{ radar_svg | safe }}
+                    <div class="mt-2 small text-muted text-center">仅统计答错的题目，越靠外说明该类错误越多。</div>
+                </div>
+            </div>
+        </div>
+        <!-- 错因分布明细 -->
+        <div class="col-lg-7 mb-3">
+            <div class="card shadow h-100">
+                <div class="card-header bg-light">
+                    <i class="bi bi-pie-chart me-1"></i> 错因类型分布
+                </div>
+                <div class="card-body">
+                    <ul class="list-group list-group-flush">
+                        {% for cat in category_order %}
+                        {% set cnt = profile.category_dist.get(cat, 0) %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-record-circle me-2 text-primary"></i>{{ cat }}</span>
+                            <span class="badge bg-primary rounded-pill">{{ cnt }}</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    <div class="small text-muted mt-2">注：「公式记错」为占位类别，将在第二步学生自述 + AI 聚类后自动填充。</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 薄弱知识点 -->
+    <div class="card shadow mb-4">
+        <div class="card-header bg-warning text-dark">
+            <i class="bi bi-exclamation-triangle me-1"></i> 薄弱知识点（按正确率从低到高）
+        </div>
+        <div class="card-body">
+            <div class="row">
+                {% for kp in profile.knowledge_stats %}
+                <div class="col-md-6 col-lg-4 mb-3">
+                    <div class="card h-100 border-0 shadow-sm">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">{{ kp.knowledge_point }}</h6>
+                                <span class="h5 mb-0 font-weight-bold
+                                    {% if kp.correct_rate < 60 %}text-danger
+                                    {% elif kp.correct_rate >= 80 %}text-success
+                                    {% else %}text-warning{% endif %}">{{ kp.correct_rate }}%</span>
+                            </div>
+                            <div class="progress mt-2" style="height: 8px;">
+                                <div class="progress-bar
+                                    {% if kp.correct_rate < 60 %}bg-danger
+                                    {% elif kp.correct_rate >= 80 %}bg-success
+                                    {% else %}bg-warning{% endif %}"
+                                    role="progressbar" style="width: {{ kp.correct_rate }}%;"></div>
+                            </div>
+                            <div class="small text-muted mt-2">
+                                作答 {{ kp.total }} 次 · 错 {{ kp.wrong }} 次
+                                {% if kp.main_error %}· 主要错因：{{ kp.main_error }}{% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- 最近作答 -->
+    <div class="card shadow">
+        <div class="card-header bg-light">
+            <i class="bi bi-clock-history me-1"></i> 最近作答记录
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>时间</th><th>题目</th><th>知识点</th><th>结果</th><th>错因</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in profile.recent %}
+                        <tr>
+                            <td class="small text-muted">{{ r.response_time.strftime('%m-%d %H:%M') if r.response_time else '' }}</td>
+                            <td>{{ r.template_name }}</td>
+                            <td><span class="badge bg-info text-dark">{{ r.knowledge_point or '未分类' }}</span></td>
+                            <td>
+                                {% if r.is_correct %}<span class="badge bg-success">正确</span>
+                                {% else %}<span class="badge bg-danger">错误</span>{% endif %}
+                            </td>
+                            <td>
+                                {% if not r.is_correct and r.error_category %}
+                                <span class="badge bg-secondary">{{ r.error_category }}</span>
+                                {% elif r.is_correct %}<span class="text-muted small">—</span>
+                                {% else %}<span class="text-muted small">未知</span>{% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+{% endblock %}

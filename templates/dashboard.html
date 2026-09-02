@@ -1,0 +1,852 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘{% endblock %}
+
+{% block content %}
+<!-- 顶部欢迎区域 -->
+<div class="welcome-header bg-gradient-primary text-white rounded-3 p-4 mb-4">
+    <div class="row align-items-center">
+        <div class="col-md-8">
+            <h1 class="display-6 fw-bold mb-2">
+                {% if completed_all %}
+                    🎉 恭喜完成所有题目, {{ display_name }}!
+                {% else %}
+                    欢迎回来, {{ display_name }}! 👋
+                {% endif %}
+            </h1>
+            <p class="lead mb-0">
+                {% if completed_all %}
+                    您已成功完成所有物理微积分练习！
+                {% else %}
+                    继续您的物理微积分学习之旅
+                {% endif %}
+            </p>
+        </div>
+        <div class="col-md-4 text-md-end">
+            <div class="btn-group">
+                {% if not completed_all and total_problems > 0 and selected_paper %}
+                <a id="exam-start-button"
+                   href="{{ url_for('problem_ajax', problem_id=current_problem) }}"
+                   class="btn btn-light btn-lg {% if not exam_access.allowed %}disabled{% endif %}"
+                   {% if not exam_access.allowed %}aria-disabled="true"{% endif %}>
+                    <i class="bi bi-play-circle me-2"></i>
+                    <span id="exam-start-button-text">
+                        {% if exam_access.allowed %}
+                            {% if completed_count > 0 %}继续{% endif %}学习
+                        {% else %}
+                            {% if exam_access.status == 'ended' %}考试已结束{% else %}未到开考时间{% endif %}
+                        {% endif %}
+                    </span>
+                </a>
+                {% endif %}
+                <!-- 管理员功能按钮 -->
+                {% if is_admin %}
+                <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-light btn-lg">
+                    <i class="bi bi-gear me-2"></i>管理后台
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if not exam_access.allowed %}
+<div id="exam-waiting-alert" class="alert {% if exam_access.status == 'ended' %}alert-secondary{% else %}alert-warning{% endif %} border-0 shadow-sm">
+    <div class="d-flex align-items-start gap-3">
+        <i class="bi bi-clock-history fs-3"></i>
+        <div>
+            <h5 class="alert-heading mb-1">{% if exam_access.status == 'ended' %}考试已结束{% else %}考试尚未开始{% endif %}</h5>
+            <p class="mb-1">{{ exam_access.message }}</p>
+            <div class="small">
+                服务器当前时间：{{ exam_access.server_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                {% if exam_access.status == 'not_started' and exam_access.exam_start_time %}
+                · 距离开考：<span id="exam-countdown">计算中</span>
+                {% endif %}
+                {% if exam_access.exam_end_time %}
+                · 结束时间：{{ exam_access.exam_end_time.strftime('%Y-%m-%d %H:%M') }}
+                {% endif %}
+                {% if exam_access.teacher_name %} · 任课老师：{{ exam_access.teacher_name }}{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if exam_access.allowed and exam_access.exam_end_time %}
+<div id="exam-active-alert" class="alert alert-info border-0 shadow-sm">
+    <div class="d-flex align-items-start gap-3">
+        <i class="bi bi-hourglass-split fs-3"></i>
+        <div>
+            <h5 class="alert-heading mb-1">考试进行中</h5>
+            <p class="mb-1">请在结束时间前完成答题。</p>
+            <div class="small">
+                服务器当前时间：{{ exam_access.server_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                · 距离结束：<span id="exam-end-countdown">计算中</span>
+                {% if exam_access.teacher_name %} · 任课老师：{{ exam_access.teacher_name }}{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if exam_access.status == 'not_started' and exam_access.exam_start_time and not exam_access.allowed %}
+<div class="modal fade" id="examStartedModal" tabindex="-1" aria-labelledby="examStartedModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title" id="examStartedModalLabel"><i class="bi bi-check-circle me-2"></i>考试已开始</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                已到达老师设置的开考时间，现在可以开始答题。
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">稍后开始</button>
+                <a class="btn btn-success" href="{{ url_for('problem_ajax', problem_id=current_problem) }}">开始答题</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if exam_access.exam_end_time and exam_access.allowed %}
+<div class="modal fade" id="examEndedModal" tabindex="-1" aria-labelledby="examEndedModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-secondary text-white">
+                <h5 class="modal-title" id="examEndedModalLabel"><i class="bi bi-lock me-2"></i>考试已结束</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                已到达老师设置的结束时间，系统已关闭答题入口。
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">知道了</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div>
+                <h5 class="mb-1"><i class="bi bi-collection me-2"></i>当前题库</h5>
+                {% if selected_paper %}
+                <div class="text-muted">{{ selected_paper.name }}{% if selected_paper.description %} · {{ selected_paper.description }}{% endif %}</div>
+                {% else %}
+                <div class="text-muted">教师没有布置题目</div>
+                {% endif %}
+            </div>
+            {% if available_papers %}
+            <form method="post" action="{{ url_for('select_exam_paper') }}" class="d-flex flex-wrap gap-2 align-items-center">
+                <select class="form-select" name="paper_id" style="min-width: 240px;">
+                    {% for paper in available_papers %}
+                    <option value="{{ paper.id }}" {% if selected_paper_id == paper.id %}selected{% endif %}>{{ paper.name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-outline-primary">切换题库</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- 侧边栏 -->
+    <div class="col-lg-3 mb-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <!-- 学习进度 -->
+                <div class="text-center mb-4">
+                    {% if completed_all %}
+                        {% set progress = 100 %}
+                    {% else %}
+                        {% set progress = (completed_count / total_problems * 100) if total_problems else 0 %}
+                    {% endif %}
+                    <div class="progress-circle mx-auto mb-3" data-progress="{{ progress }}" style="--progress: {{ progress }};">
+                        <span class="progress-value">{{ "%.0f"|format(progress) }}%</span>
+                    </div>
+                    <h6 class="text-muted">学习进度</h6>
+                    <small class="text-muted">
+                        {% if completed_all %}
+                            已完成 {{ completed_count }}/{{ total_problems }} 题
+                        {% else %}
+                            已完成 {{ completed_count }}/{{ total_problems }} 题
+                        {% endif %}
+                    </small>
+                </div>
+
+                <!-- 快捷导航 -->
+                <h6 class="sidebar-title">快捷导航</h6>
+                <div class="list-group list-group-flush">
+                    <a href="{{ url_for('dashboard') }}" class="list-group-item list-group-item-action active">
+                        <i class="bi bi-speedometer2 me-2"></i>学习仪表盘
+                    </a>
+                    <a href="{{ url_for('history') }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-clock-history me-2"></i>答题历史
+                    </a>
+                    <a href="{{ url_for('statistics') }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-graph-up me-2"></i>学习统计
+                    </a>
+                    <!-- 管理员导航 -->
+                    {% if is_admin %}
+                    <a href="{{ url_for('admin_dashboard') }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-gear me-2"></i>系统管理
+                    </a>
+                    <a href="{{ url_for('admin_students_by_status', status='completed') }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-people me-2"></i>用户管理
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="col-lg-9">
+        <!-- 统计卡片 -->
+        <div class="row mb-4">
+            <div class="col-xl-3 col-md-6 mb-3">
+                <div class="card stat-card bg-primary text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <h4 class="card-title" id="completed-count">{{ completed_count }}</h4>
+                                <p class="card-text">已完成题目</p>
+                            </div>
+                            <div class="stat-icon">
+                                <i class="bi bi-check-circle"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-xl-3 col-md-6 mb-3">
+                <div class="card stat-card bg-success text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <h4 class="card-title" id="remaining-count">{{ total_problems - completed_count }}</h4>
+                                <p class="card-text">待完成题目</p>
+                            </div>
+                            <div class="stat-icon">
+                                <i class="bi bi-list-task"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-xl-3 col-md-6 mb-3">
+                <div class="card stat-card bg-info text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <h4 class="card-title" id="progress-percent">{{ "%.0f"|format((completed_count / total_problems * 100) if total_problems else 0) }}%</h4>
+                                <p class="card-text">总体进度</p>
+                            </div>
+                            <div class="stat-icon">
+                                <i class="bi bi-graph-up"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-xl-3 col-md-6 mb-3">
+                <div class="card stat-card bg-warning text-white">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center">
+                            <div class="flex-grow-1">
+                                <h4 class="card-title">
+                                    {% if completed_all %}
+                                        {{ completed_count }}
+                                    {% else %}
+                                        {{ completed_count }}
+                                    {% endif %}
+                                </h4>
+                                <p class="card-text">连续正确</p>
+                            </div>
+                            <div class="stat-icon">
+                                <i class="bi bi-award"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 当前进度卡片 -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-0">
+                <h5 class="mb-0"><i class="bi bi-activity me-2"></i>当前学习进度</h5>
+            </div>
+            <div class="card-body">
+                {% if completed_all %}
+                    {% set progress = 100 %}
+                {% else %}
+                    {% set progress = (completed_count / total_problems * 100) if total_problems else 0 %}
+                {% endif %}
+
+                <div class="progress mb-3" style="height: 20px;">
+                    <div class="progress-bar bg-gradient-progress" role="progressbar"
+                         style="width: {{ progress }}%"
+                         aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
+                        {{ "%.0f"|format(progress) }}%
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center">
+                    {% if completed_all %}
+                        <p class="mb-0">🎉 恭喜！您已经完成了所有{{ total_problems }}道题目！</p>
+                    {% else %}
+                        <p class="mb-0" id="progress-text">
+                            {% if completed_count > 0 %}
+                                您已完成 {{ completed_count }} 题，正在学习第 {{ current_problem }} 题
+                            {% else %}
+                                开始学习第 {{ current_problem }} 题吧！
+                            {% endif %}
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 题目完成状态卡片 -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-0">
+                <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>题目完成状态</h5>
+            </div>
+            <div class="card-body">
+                {% if total_problems > 0 %}
+                <div class="row" id="problem-status-grid">
+                    <!-- 题目状态将通过JavaScript动态加载 -->
+                    {% for i in range(1, total_problems + 1) %}
+                    <div class="col-6 col-md-4 col-lg-3 mb-3">
+                        <div class="problem-status-card text-center p-3 border rounded" data-problem-id="{{ i }}">
+                            <div class="problem-number mb-2">{{ i }}</div>
+                            <div class="problem-status">
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                            </div>
+                            <small class="text-muted">第{{ i }}题</small>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-center text-muted py-4">{% if has_available_papers %}当前题库暂无题目，请等待管理员配置。{% else %}教师没有布置题目{% endif %}</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 完成状态提示 -->
+        {% if completed_all %}
+        <div class="alert alert-success">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-trophy-fill me-3 fs-2"></i>
+                <div>
+                    <h5 class="alert-heading mb-2">学习完成！</h5>
+                    <p class="mb-0">您已经成功完成了所有物理微积分练习题目。可以查看<a href="{{ url_for('statistics') }}" class="alert-link">学习统计</a>或<a href="{{ url_for('history') }}" class="alert-link">答题历史</a>回顾您的学习成果。</p>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 管理员专属区域 -->
+        {% if is_admin %}
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white border-0">
+                <h5 class="mb-0"><i class="bi bi-shield-check me-2"></i>管理员功能</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <a href="{{ url_for('admin_students_by_status', status='completed') }}" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-people me-2"></i>用户管理
+                        </a>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <a href="{{ url_for('admin_all_problems_stats') }}" class="btn btn-outline-success w-100">
+                            <i class="bi bi-journal-text me-2"></i>题目统计
+                        </a>
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-info w-100">
+                            <i class="bi bi-gear me-2"></i>系统管理
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+window.examCanStart = {{ 'true' if exam_access.allowed else 'false' }};
+
+// 获取题目完成状态
+async function getProblemCompletionStatus() {
+    try {
+        const response = await fetch('/api/user/completion_status');
+        if (!response.ok) {
+            throw new Error('获取完成状态失败');
+        }
+        const data = await response.json();
+        return data.completion_status;
+    } catch (error) {
+        console.error('获取完成状态失败:', error);
+        return {};
+    }
+}
+
+// 更新题目状态显示
+async function updateProblemStatusDisplay() {
+    const completionStatus = await getProblemCompletionStatus();
+    const statusCards = document.querySelectorAll('.problem-status-card');
+
+    let completedCount = 0;
+
+    statusCards.forEach(card => {
+        const problemId = parseInt(card.getAttribute('data-problem-id'));
+        const isCompleted = completionStatus[problemId] || false;
+        const statusElement = card.querySelector('.problem-status');
+        const numberElement = card.querySelector('.problem-number');
+
+        if (isCompleted) {
+            completedCount++;
+            statusElement.innerHTML = '<span class="badge bg-success"><i class="bi bi-check"></i> 已完成</span>';
+            numberElement.className = 'problem-number mb-2 completed';
+            card.classList.add('completed-card');
+        } else {
+            statusElement.innerHTML = '<span class="badge bg-secondary"><i class="bi bi-circle"></i> 未开始</span>';
+            numberElement.className = 'problem-number mb-2';
+            card.classList.remove('completed-card');
+        }
+    });
+
+    // 更新统计卡片
+    document.getElementById('completed-count').textContent = completedCount;
+    document.getElementById('remaining-count').textContent = {{ total_problems }} - completedCount;
+    document.getElementById('progress-percent').textContent = Math.round((completedCount / {{ total_problems }}) * 100) + '%';
+
+    // 更新进度条
+    const progress = (completedCount / {{ total_problems }}) * 100;
+    const progressBar = document.querySelector('.progress-bar');
+    if (progressBar) {
+        progressBar.style.width = progress + '%';
+        progressBar.setAttribute('aria-valuenow', progress);
+        progressBar.textContent = Math.round(progress) + '%';
+    }
+
+    // 更新进度文本
+    const progressText = document.getElementById('progress-text');
+    if (progressText) {
+        if (completedCount > 0) {
+            // 找到第一个未完成的题目
+            let nextProblem = 1;
+            for (let i = 1; i <= {{ total_problems }}; i++) {
+                if (!completionStatus[i]) {
+                    nextProblem = i;
+                    break;
+                }
+            }
+            progressText.textContent = `您已完成 ${completedCount} 题，正在学习第 ${nextProblem} 题`;
+        } else {
+            progressText.textContent = '开始学习第 1 题吧！';
+        }
+    }
+
+    // 更新圆形进度图
+    updateProgressCircle(progress);
+}
+
+// 更新圆形进度图
+function updateProgressCircle(progress) {
+    const progressCircle = document.querySelector('.progress-circle');
+    if (progressCircle) {
+        progressCircle.style.background = `conic-gradient(#4e73df 0% ${progress}%, #eaecf4 ${progress}% 100%)`;
+        const progressValue = progressCircle.querySelector('.progress-value');
+        if (progressValue) {
+            progressValue.textContent = Math.round(progress) + '%';
+        }
+    }
+}
+
+// 页面初始化
+document.addEventListener('DOMContentLoaded', function() {
+    const startButton = document.getElementById('exam-start-button');
+    if (startButton) {
+        startButton.addEventListener('click', function(event) {
+            if (!window.examCanStart) {
+                event.preventDefault();
+            }
+        });
+    }
+
+    // 更新题目状态显示
+    updateProblemStatusDisplay();
+
+    // 每30秒自动更新一次状态
+    setInterval(updateProblemStatusDisplay, 30000);
+
+    // 添加点击题目卡片的跳转功能
+    const statusCards = document.querySelectorAll('.problem-status-card');
+    statusCards.forEach(card => {
+        card.addEventListener('click', function() {
+            if (!window.examCanStart) return;
+            const problemId = this.getAttribute('data-problem-id');
+            window.location.href = '/problem_ajax/' + problemId;
+        });
+    });
+});
+
+{% if exam_access.status == 'not_started' and exam_access.exam_start_time and not exam_access.allowed %}
+(function setupExamStartWatcher() {
+    const serverNow = {{ (exam_access.server_time.timestamp() * 1000)|int }};
+    const examStart = {{ (exam_access.exam_start_time.timestamp() * 1000)|int }};
+    const localLoadedAt = Date.now();
+    const countdownEl = document.getElementById('exam-countdown');
+    const waitingAlert = document.getElementById('exam-waiting-alert');
+    const startButton = document.getElementById('exam-start-button');
+    const startButtonText = document.getElementById('exam-start-button-text');
+    let notified = false;
+
+    function estimateServerNow() {
+        return serverNow + (Date.now() - localLoadedAt);
+    }
+
+    function formatRemaining(ms) {
+        const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return `${hours}小时${String(minutes).padStart(2, '0')}分${String(seconds).padStart(2, '0')}秒`;
+        }
+        return `${minutes}分${String(seconds).padStart(2, '0')}秒`;
+    }
+
+    function openExam() {
+        window.examCanStart = true;
+        if (startButton) {
+            startButton.classList.remove('disabled');
+            startButton.removeAttribute('aria-disabled');
+        }
+        if (startButtonText) {
+            startButtonText.textContent = '{{ "继续学习" if completed_count > 0 else "开始学习" }}';
+        }
+        if (waitingAlert) {
+            waitingAlert.classList.remove('alert-warning');
+            waitingAlert.classList.add('alert-success');
+            waitingAlert.querySelector('.alert-heading').textContent = '考试已开始';
+            const message = waitingAlert.querySelector('p');
+            if (message) message.textContent = '已到达老师设置的开考时间，现在可以开始答题。';
+        }
+        if (countdownEl) {
+            countdownEl.textContent = '已开始';
+        }
+        if (!notified) {
+            notified = true;
+            const modalEl = document.getElementById('examStartedModal');
+            if (modalEl && window.bootstrap) {
+                new bootstrap.Modal(modalEl).show();
+            } else {
+                alert('考试已开始，现在可以开始答题。');
+            }
+        }
+    }
+
+    function tick() {
+        const remaining = examStart - estimateServerNow();
+        if (remaining <= 0) {
+            openExam();
+            return;
+        }
+        if (countdownEl) {
+            countdownEl.textContent = formatRemaining(remaining);
+        }
+        window.setTimeout(tick, Math.min(1000, remaining));
+    }
+
+    tick();
+})();
+{% endif %}
+
+{% if exam_access.exam_end_time and exam_access.allowed %}
+(function setupExamEndWatcher() {
+    const serverNow = {{ (exam_access.server_time.timestamp() * 1000)|int }};
+    const examEnd = {{ (exam_access.exam_end_time.timestamp() * 1000)|int }};
+    const localLoadedAt = Date.now();
+    const countdownEl = document.getElementById('exam-end-countdown');
+    const activeAlert = document.getElementById('exam-active-alert');
+    const startButton = document.getElementById('exam-start-button');
+    const startButtonText = document.getElementById('exam-start-button-text');
+    let notified = false;
+
+    function estimateServerNow() {
+        return serverNow + (Date.now() - localLoadedAt);
+    }
+
+    function formatRemaining(ms) {
+        const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return `${hours}小时${String(minutes).padStart(2, '0')}分${String(seconds).padStart(2, '0')}秒`;
+        }
+        return `${minutes}分${String(seconds).padStart(2, '0')}秒`;
+    }
+
+    function closeExam() {
+        window.examCanStart = false;
+        if (startButton) {
+            startButton.classList.add('disabled');
+            startButton.setAttribute('aria-disabled', 'true');
+        }
+        if (startButtonText) {
+            startButtonText.textContent = '考试已结束';
+        }
+        if (activeAlert) {
+            activeAlert.classList.remove('alert-info');
+            activeAlert.classList.add('alert-secondary');
+            activeAlert.querySelector('.alert-heading').textContent = '考试已结束';
+            const message = activeAlert.querySelector('p');
+            if (message) message.textContent = '已到达老师设置的结束时间，无法继续答题。';
+        }
+        if (countdownEl) {
+            countdownEl.textContent = '已结束';
+        }
+        if (!notified) {
+            notified = true;
+            const modalEl = document.getElementById('examEndedModal');
+            if (modalEl && window.bootstrap) {
+                new bootstrap.Modal(modalEl).show();
+            } else {
+                alert('考试已结束，无法继续答题。');
+            }
+        }
+    }
+
+    function tick() {
+        const remaining = examEnd - estimateServerNow();
+        if (remaining <= 0) {
+            closeExam();
+            return;
+        }
+        if (countdownEl) {
+            countdownEl.textContent = formatRemaining(remaining);
+        }
+        window.setTimeout(tick, Math.min(1000, remaining));
+    }
+
+    tick();
+})();
+{% endif %}
+</script>
+
+<style>
+.welcome-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.stat-card {
+    border-radius: 12px;
+    transition: transform 0.2s;
+}
+
+.stat-card:hover {
+    transform: translateY(-5px);
+}
+
+.stat-icon {
+    font-size: 2.5rem;
+    opacity: 0.7;
+}
+
+.progress-circle {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: conic-gradient(#4e73df 0% calc(var(--progress, 0) * 1%), #eaecf4 calc(var(--progress, 0) * 1%) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.progress-circle::before {
+    content: '';
+    width: 70px;
+    height: 70px;
+    background: white;
+    border-radius: 50%;
+    position: absolute;
+}
+
+.progress-value {
+    position: relative;
+    z-index: 1;
+    font-weight: bold;
+    color: #4e73df;
+}
+
+.bg-gradient-progress {
+    background: linear-gradient(45deg, #4e73df, #1cc88a);
+}
+
+.sidebar-title {
+    color: #6e707e;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin: 1rem 0 0.5rem 0;
+}
+
+/* 题目状态卡片样式 */
+.problem-status-card {
+    transition: all 0.3s ease;
+    cursor: pointer;
+    background: white;
+}
+
+.problem-status-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    border-color: #0d6efd !important;
+}
+
+.problem-status-card.completed-card {
+    background: linear-gradient(135deg, #f8fff8 0%, #e8f5e8 100%);
+    border-color: #198754 !important;
+}
+
+.problem-number {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #6c757d;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 2px solid #6c757d;
+    border-radius: 50%;
+    margin: 0 auto;
+}
+
+.problem-number.completed {
+    background-color: #198754;
+    color: white;
+    border-color: #198754;
+}
+
+.problem-status .badge {
+    font-size: 0.7em;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    .welcome-header {
+        padding: 1.5rem !important;
+    }
+
+    .welcome-header .display-6 {
+        font-size: 1.5rem;
+    }
+
+    .welcome-header .lead {
+        font-size: 1rem;
+    }
+
+    .stat-card .card-title {
+        font-size: 1.5rem;
+    }
+
+    .progress-circle {
+        width: 60px;
+        height: 60px;
+    }
+
+    .progress-circle::before {
+        width: 50px;
+        height: 50px;
+    }
+
+    .progress-value {
+        font-size: 0.8rem;
+    }
+
+    /* 侧边栏在移动端全宽 */
+    .col-lg-3 {
+        margin-bottom: 1rem;
+    }
+
+    /* 统计卡片在移动端堆叠 */
+    .row .col-xl-3 {
+        margin-bottom: 1rem;
+    }
+
+    /* 题目状态网格在移动端调整 */
+    .problem-status-card {
+        padding: 1rem !important;
+    }
+
+    .problem-number {
+        width: 35px;
+        height: 35px;
+        font-size: 1.2rem;
+    }
+}
+
+/* 超小屏幕优化 */
+@media (max-width: 576px) {
+    .welcome-header {
+        text-align: center;
+    }
+
+    .welcome-header .btn-group {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .welcome-header .btn {
+        margin-bottom: 0.5rem;
+        width: 100%;
+    }
+
+    .list-group-item {
+        padding: 0.75rem 1rem;
+    }
+
+    .sidebar-title {
+        font-size: 0.7rem;
+    }
+
+    /* 题目状态网格在超小屏幕单列显示 */
+    #problem-status-grid .col-6 {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+}
+
+/* 动画效果 */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.problem-status-card {
+    animation: fadeIn 0.5s ease forwards;
+}
+
+.problem-status-card:nth-child(odd) {
+    animation-delay: 0.1s;
+}
+
+.problem-status-card:nth-child(even) {
+    animation-delay: 0.2s;
+}
+</style>
+{% endblock %}

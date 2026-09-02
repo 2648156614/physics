@@ -1,0 +1,67 @@
+/* static/css/mobile.css - 移动端专用样式 */
+
+/* 移动端基础优化 */
+.mobile-device .container {
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+.mobile-device .card {
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+.mobile-device .btn {
+    border-radius: 6px;
+}
+
+/* 导航栏移动端优化 */
+.mobile-device .navbar-brand {
+    font-size: 1rem;
+}
+
+.mobile-device .navbar-nav .nav-link {
+    padding: 0.75rem 1rem;
+}
+
+/* 表格移动端优化 */
+.mobile-device .table-responsive {
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+}
+
+.mobile-device .table th,
+.mobile-device .table td {
+    padding: 0.75rem 0.5rem;
+}
+
+/* 表单元素移动端优化 */
+.mobile-device .form-control {
+    font-size: 16px; /* 防止iOS缩放 */
+    height: 44px;
+}
+
+.mobile-device .form-select {
+    font-size: 16px;
+    height: 44px;
+}
+
+/* 数学公式移动端优化 */
+.mobile-device .math-formula mjx-container {
+    overflow-x: auto !important;
+}
+
+/* 图片移动端优化 */
+.mobile-device .problem-image {
+    max-width: 100%;
+    height: auto;
+}
+
+/* 统计卡片移动端优化 */
+.mobile-device .stat-card .card-body {
+    padding: 1rem;
+}
+
+.mobile-device .stat-icon {
+    font-size: 2rem;
+}

@@ -1,0 +1,39 @@
+# 关键：避免把密钥打进镜像（.env 由 docker-compose 的 env_file 在运行时注入）
+.env
+.env.*
+!.env.example
+
+# Windows 上产生的字节码缓存，带进 Linux 镜像纯属污染
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 本地日志不要进镜像（容器内日志走挂载卷）
+logs/
+*.log
+
+# 版本管理与编辑器
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+
+# 本地虚拟环境
+venv/
+.venv/
+env/
+
+# Docker 自身文件无需进镜像
+docker-compose.yml
+docker-compose.*.yml
+
+# 数据库备份文件（体积大，通过 docker cp 单独传）
+*.sql
+*.sql.gz
+*.zip
+*.tar.gz
+
+# 系统杂项
+.DS_Store
+Thumbs.db

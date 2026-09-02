@@ -1,0 +1,614 @@
+{% extends "base.html" %}
+
+{% block title %}题目统计 - 所有学生{% endblock %}
+
+{% block content %}
+<style>
+    .admin-stats-page {
+        --panel-bg: rgba(255, 255, 255, 0.92);
+        --panel-border: rgba(44, 62, 80, 0.08);
+        --panel-shadow: 0 18px 45px rgba(31, 45, 61, 0.10);
+        --accent-start: #2563eb;
+        --accent-end: #14b8a6;
+    }
+
+    .admin-stats-page .dashboard-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .admin-stats-page .hero-panel,
+    .admin-stats-page .glass-panel {
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 24px;
+        box-shadow: var(--panel-shadow);
+        backdrop-filter: blur(12px);
+    }
+
+    .admin-stats-page .hero-panel {
+        padding: 1.25rem;
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.95), rgba(20, 184, 166, 0.88));
+        color: #fff;
+    }
+
+    .admin-stats-page .hero-title {
+        font-size: clamp(1.6rem, 2.6vw, 2.4rem);
+        font-weight: 700;
+        margin-bottom: 0.35rem;
+    }
+
+    .admin-stats-page .hero-subtitle {
+        opacity: 0.88;
+        margin-bottom: 0;
+    }
+
+    .admin-stats-page .filter-form {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1rem;
+        align-items: end;
+    }
+
+    .admin-stats-page .filter-card {
+        padding: 1rem 1.1rem;
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 18px;
+    }
+
+    .admin-stats-page .filter-card label {
+        color: rgba(255, 255, 255, 0.9);
+        font-weight: 600;
+    }
+
+    .admin-stats-page .filter-actions {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+    }
+
+    .admin-stats-page .filter-actions .btn {
+        min-width: 130px;
+    }
+
+    .admin-stats-page .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 1rem;
+    }
+
+    .admin-stats-page .stat-card {
+        position: relative;
+        overflow: hidden;
+        padding: 1.15rem 1.2rem;
+        min-height: 126px;
+    }
+
+    .admin-stats-page .stat-card::after {
+        content: "";
+        position: absolute;
+        inset: auto -24px -24px auto;
+        width: 96px;
+        height: 96px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.16), rgba(20, 184, 166, 0.1));
+    }
+
+    .admin-stats-page .stat-label {
+        color: #64748b;
+        font-size: 0.92rem;
+        font-weight: 600;
+        margin-bottom: 0.55rem;
+    }
+
+    .admin-stats-page .stat-value {
+        font-size: clamp(1.65rem, 2.4vw, 2.2rem);
+        font-weight: 700;
+        color: #0f172a;
+        margin-bottom: 0.3rem;
+    }
+
+    .admin-stats-page .stat-meta {
+        color: #64748b;
+        font-size: 0.85rem;
+        margin-bottom: 0;
+    }
+
+    .admin-stats-page .analytics-grid,
+    .admin-stats-page .chart-stack,
+    .admin-stats-page .table-stack {
+        display: grid;
+        gap: 1rem;
+        min-height: 0;
+    }
+
+    .admin-stats-page .chart-stack {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: stretch;
+    }
+
+    .admin-stats-page .table-stack {
+        grid-template-columns: 1fr;
+    }
+
+    .admin-stats-page .panel-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: center;
+        margin-bottom: 0.85rem;
+    }
+
+    .admin-stats-page .panel-title {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: #0f172a;
+    }
+
+    .admin-stats-page .panel-subtitle {
+        margin: 0.2rem 0 0;
+        color: #64748b;
+        font-size: 0.88rem;
+    }
+
+    .admin-stats-page .panel-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: rgba(37, 99, 235, 0.08);
+        color: #2563eb;
+        border-radius: 999px;
+        padding: 0.35rem 0.8rem;
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+
+    .admin-stats-page .chart-panel,
+    .admin-stats-page .table-panel {
+        padding: 1rem 1.1rem;
+        min-height: 0;
+    }
+
+    .admin-stats-page .chart-panel {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .admin-stats-page .chart-canvas {
+        height: clamp(320px, 46vw, 420px);
+        min-height: 320px;
+        width: 100%;
+    }
+
+    .admin-stats-page .table-panel.problem-table-panel {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .admin-stats-page .problem-table-scroll {
+        max-height: 360px;
+        overflow: auto;
+        border-radius: 18px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .admin-stats-page .student-table-scroll {
+        height: 360px;
+        max-height: 360px;
+        overflow: auto;
+        border-radius: 18px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .admin-stats-page .table {
+        margin-bottom: 0;
+        white-space: nowrap;
+    }
+
+    .admin-stats-page .table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: #f8fafc;
+        color: #334155;
+        font-size: 0.86rem;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.3);
+    }
+
+    .admin-stats-page .table tbody tr:hover {
+        background: rgba(37, 99, 235, 0.04);
+    }
+
+    .admin-stats-page .metric-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 74px;
+        padding: 0.32rem 0.7rem;
+        border-radius: 999px;
+        font-weight: 700;
+        font-size: 0.86rem;
+    }
+
+    .admin-stats-page .metric-pill-blue { background: rgba(37, 99, 235, 0.12); color: #1d4ed8; }
+    .admin-stats-page .metric-pill-green { background: rgba(22, 163, 74, 0.12); color: #15803d; }
+    .admin-stats-page .metric-pill-cyan { background: rgba(8, 145, 178, 0.12); color: #0f766e; }
+    .admin-stats-page .metric-pill-amber { background: rgba(245, 158, 11, 0.16); color: #b45309; }
+
+
+    .admin-stats-page .student-row-link {
+        color: inherit;
+        text-decoration: none;
+        display: block;
+        width: 100%;
+    }
+
+    .admin-stats-page .student-link-cell {
+        color: #2563eb;
+        font-weight: 700;
+    }
+
+    .admin-stats-page .student-summary {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 0.5rem;
+    }
+
+    .admin-stats-page .student-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.75rem;
+        border-radius: 999px;
+        background: #f1f5f9;
+        color: #334155;
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+
+    .admin-stats-page .completion-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #f59e0b;
+    }
+
+    .admin-stats-page .completion-dot.done {
+        background: #22c55e;
+    }
+
+    @media (max-width: 1399px) {
+        .admin-stats-page .stats-grid,
+        .admin-stats-page .filter-form {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .admin-stats-page .chart-stack {
+            grid-template-columns: minmax(0, 1fr);
+        }
+    }
+
+    @media (max-width: 991px) {
+        .admin-stats-page .stats-grid,
+        .admin-stats-page .filter-form,
+        .admin-stats-page .chart-stack {
+            grid-template-columns: 1fr;
+        }
+
+        .admin-stats-page .chart-canvas,
+        .admin-stats-page .problem-table-scroll,
+        .admin-stats-page .student-table-scroll {
+            height: 320px;
+            max-height: 320px;
+            min-height: 320px;
+        }
+
+    }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+
+{% set completed_count = filtered_students | selectattr('completed_all') | list | length %}
+{% set incomplete_count = total_students - completed_count %}
+
+<div class="admin-stats-page">
+    <div class="dashboard-shell">
+        <section class="hero-panel">
+            <div class="d-flex flex-column flex-xl-row justify-content-between gap-4">
+                <div>
+                    <div class="panel-tag bg-white text-primary mb-3"><i class="bi bi-stars"></i> 升级版数据驾驶舱</div>
+                    <h2 class="hero-title">题目统计 · 全量学生答题总览</h2>
+                    <p class="hero-subtitle">筛选结果、核心指标、动态图表与学生清单集中展示，提升分析效率并减少页面滚动。</p>
+                    {% if not problem_stats %}
+                    <div class="alert alert-light text-dark mt-3 mb-0">当前没有已开启题库的题目，暂无题目可统计。</div>
+                    {% endif %}
+                </div>
+                <a href="{{ url_for('admin_export_all_student_analytics', paper_id=selected_paper_id) }}" class="btn btn-light align-self-start">
+                    <i class="bi bi-file-earmark-excel"></i> 导出全部答题数据
+                </a>
+                <a href="{{ url_for('admin_dashboard', paper_id=selected_paper_id) }}" class="btn btn-outline-light align-self-start">
+                    <i class="bi bi-arrow-left"></i> 返回管理后台
+                </a>
+            </div>
+            <form method="get" class="filter-form mt-4">
+                <div class="filter-card">
+                    <label for="class_name" class="form-label">按班级筛选</label>
+                    <select id="class_name" name="class_name" class="form-select">
+                        <option value="">全部班级</option>
+                        {% for class_name in class_options %}
+                            <option value="{{ class_name }}" {% if selected_class_name == class_name %}selected{% endif %}>{{ class_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="filter-card">
+                    <label for="major" class="form-label">按专业筛选</label>
+                    <select id="major" name="major" class="form-select">
+                        <option value="">全部专业</option>
+                        {% for major in major_options %}
+                            <option value="{{ major }}" {% if selected_major == major %}selected{% endif %}>{{ major }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="filter-card">
+                    <label class="form-label">筛选操作</label>
+                    <div class="filter-actions">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-funnel"></i> 应用筛选</button>
+                        <a href="{{ url_for('admin_all_problems_stats', paper_id=selected_paper_id) }}" class="btn btn-outline-light">重置</a>
+                    </div>
+                </div>
+            </form>
+        </section>
+
+        <section class="stats-grid">
+            <article class="glass-panel stat-card">
+                <div class="stat-label">总学生数</div>
+                <div class="stat-value">{{ total_students }}</div>
+                <p class="stat-meta">当前筛选条件下的学生规模</p>
+            </article>
+            <article class="glass-panel stat-card">
+                <div class="stat-label">题目总数</div>
+                <div class="stat-value">{{ problem_stats|length }}</div>
+                <p class="stat-meta">纳入对比分析的题目模板数</p>
+            </article>
+            <article class="glass-panel stat-card">
+                <div class="stat-label">累计答题次数</div>
+                <div class="stat-value">{{ overall_stats.total_attempts or 0 }}</div>
+                <p class="stat-meta">覆盖所有学生与全部题目的作答</p>
+            </article>
+            <article class="glass-panel stat-card">
+                <div class="stat-label">总体首次正确率</div>
+                <div class="stat-value">{{ '%.1f'|format(overall_stats.first_correct_rate or 0) }}%</div>
+                <p class="stat-meta">首次作答即完全正确的占比</p>
+            </article>
+        </section>
+
+        <section class="analytics-grid">
+            <div class="chart-stack">
+                <article class="glass-panel chart-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h5 class="panel-title"><i class="bi bi-bar-chart-line me-2"></i>每道题答对人数对比</h5>
+                            <p class="panel-subtitle">柱状图展示每道题最终答对人数，支持横向缩放滚动，打开即播放从零增长动画。</p>
+                        </div>
+                        <span class="panel-tag"><i class="bi bi-activity"></i> Final Correct</span>
+                    </div>
+                    <div id="correct-bar-chart" class="chart-canvas"></div>
+                </article>
+
+                <article class="glass-panel chart-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h5 class="panel-title"><i class="bi bi-pie-chart me-2"></i>答题次数占比分布</h5>
+                            <p class="panel-subtitle">饼图展示所有题目的学生答题次数占比，更直观看到高频题与低频题。</p>
+                        </div>
+                        <span class="panel-tag"><i class="bi bi-diagram-3"></i> Attempts Share</span>
+                    </div>
+                    <div id="attempt-pie-chart" class="chart-canvas"></div>
+                </article>
+            </div>
+
+        </section>
+
+        <section class="table-stack">
+            <article class="glass-panel table-panel problem-table-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h5 class="panel-title"><i class="bi bi-table me-2"></i>题目详细统计</h5>
+                            <p class="panel-subtitle">明细表单独放到图表下方，避免和图表抢占首屏空间，查看时也更自然。</p>
+                        </div>
+                        <span class="panel-tag"><i class="bi bi-list-columns"></i> Detail Grid</span>
+                    </div>
+                    <div class="problem-table-scroll">
+                        <table class="table table-hover align-middle">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>题目名称</th>
+                                    <th>参与学生</th>
+                                    <th>首次正确率</th>
+                                    <th>总答题次数</th>
+                                    <th>首次答对人数</th>
+                                    <th>最终答对人数</th>
+                                    <th>平均答题正确时长</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for stat in problem_stats %}
+                                <tr>
+                                    <td>{{ stat.template_id }}</td>
+                                    <td>{{ stat.template_name }}</td>
+                                    <td><span class="metric-pill metric-pill-blue">{{ stat.participant_students or 0 }}</span></td>
+                                    <td><span class="metric-pill {{ 'metric-pill-green' if stat.first_correct_rate >= 50 else 'metric-pill-amber' }}">{{ stat.first_correct_rate }}%</span></td>
+                                    <td><span class="metric-pill metric-pill-cyan">{{ stat.total_attempts }}</span></td>
+                                    <td>{{ stat.first_correct_students or 0 }}</td>
+                                    <td class="text-success fw-semibold">{{ stat.final_correct_students or 0 }}</td>
+                                    <td>
+                                        {% if stat.avg_correct_time %}
+                                            <span class="text-success">{{ "%.1f"|format(stat.avg_correct_time) }}秒</span>
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+            <article class="glass-panel table-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h5 class="panel-title"><i class="bi bi-people me-2"></i>学生列表（固定高度滚动）</h5>
+                            <p class="panel-subtitle">学生清单保留内部滚动，但不再挤压上方图表区域，整体布局会随屏幕宽度自适应。</p>
+                        </div>
+                        <span class="panel-tag"><i class="bi bi-mouse"></i> Scroll Within</span>
+                    </div>
+                    <div class="student-summary">
+                        <span class="student-chip"><span class="completion-dot done"></span>已完成 {{ completed_count }}</span>
+                        <span class="student-chip"><span class="completion-dot"></span>未完成 {{ incomplete_count }}</span>
+                        <span class="student-chip"><i class="bi bi-clock-history"></i>平均正确时长 {% if overall_stats.avg_correct_time %}{{ '%.1f'|format(overall_stats.avg_correct_time) }} 秒{% else %}-{% endif %}</span>
+                    </div>
+                    <div class="student-table-scroll mt-3">
+                        <table class="table table-hover align-middle">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>账号</th>
+                                    <th>姓名</th>
+                                    <th>专业</th>
+                                    <th>班级</th>
+                                    <th>完成状态</th>
+                                    <th>正确题数</th>
+                                    <th>总用时</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for student in filtered_students %}
+                                <tr onclick="window.location='{{ url_for('admin_student_details', user_id=student.id, paper_id=selected_paper_id) }}'" style="cursor:pointer;">
+                                    <td class="student-link-cell">{{ loop.index }}</td>
+                                    <td class="student-link-cell">{{ student.username }}</td>
+                                    <td>{{ student.name or '-' }}</td>
+                                    <td>{{ student.major }}</td>
+                                    <td>{{ student.class_name }}</td>
+                                    <td>
+                                        {% if student.completed_all %}
+                                            <span class="badge bg-success">已完成</span>
+                                        {% else %}
+                                            <span class="badge bg-warning text-dark">未完成</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ student.total_score or 0 }}</td>
+                                    <td>
+                                        {% if student.total_time %}
+                                            {{ "%.1f"|format(student.total_time) }}秒
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+            </article>
+        </section>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const problemStats = {{ problem_stats | tojson }};
+        const textColor = '#334155';
+        const axisColor = '#94a3b8';
+        const gridLineColor = 'rgba(148, 163, 184, 0.18)';
+
+        const barChartEl = document.getElementById('correct-bar-chart');
+        const pieChartEl = document.getElementById('attempt-pie-chart');
+        if (!barChartEl || !pieChartEl || typeof echarts === 'undefined') {
+            return;
+        }
+
+        const barChart = echarts.init(barChartEl);
+        const pieChart = echarts.init(pieChartEl);
+
+        const names = problemStats.map(item => item.template_name || `题目${item.template_id}`);
+        const finalCorrect = problemStats.map(item => Number(item.final_correct_students || 0));
+        const attemptShare = problemStats.map(item => ({
+            value: Number(item.total_attempts || 0),
+            name: item.template_name || `题目${item.template_id}`
+        }));
+
+        barChart.setOption({
+            animationDuration: 1500,
+            animationDelay: function (idx) { return idx * 80; },
+            animationEasing: 'cubicOut',
+            tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+            grid: { left: 40, right: 24, top: 24, bottom: 70, containLabel: true },
+            dataZoom: [
+                { type: 'inside', xAxisIndex: 0, filterMode: 'none' },
+                { type: 'slider', xAxisIndex: 0, height: 18, bottom: 10 }
+            ],
+            xAxis: {
+                type: 'category',
+                data: names,
+                axisLabel: { color: textColor, interval: 0, rotate: names.length > 6 ? 28 : 0 },
+                axisLine: { lineStyle: { color: axisColor } },
+                axisTick: { alignWithLabel: true }
+            },
+            yAxis: {
+                type: 'value',
+                name: '答对人数',
+                minInterval: 1,
+                axisLabel: { color: textColor },
+                axisLine: { show: false },
+                splitLine: { lineStyle: { color: gridLineColor } }
+            },
+            series: [{
+                type: 'bar',
+                data: finalCorrect,
+                barMaxWidth: 40,
+                showBackground: true,
+                backgroundStyle: { color: 'rgba(37, 99, 235, 0.08)' },
+                itemStyle: {
+                    borderRadius: [10, 10, 0, 0],
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: '#2563eb' },
+                        { offset: 1, color: '#14b8a6' }
+                    ])
+                },
+                label: { show: true, position: 'top', color: textColor }
+            }]
+        });
+
+        pieChart.setOption({
+            animationType: 'scale',
+            animationDuration: 1500,
+            animationDelay: function (idx) { return idx * 60; },
+            animationEasing: 'cubicOut',
+            tooltip: { trigger: 'item', formatter: '{b}<br/>答题次数：{c}<br/>占比：{d}%' },
+            legend: { bottom: 0, left: 'center', textStyle: { color: textColor } },
+            series: [{
+                name: '答题次数占比',
+                type: 'pie',
+                radius: ['40%', '72%'],
+                center: ['50%', '46%'],
+                avoidLabelOverlap: true,
+                itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 3 },
+                label: { color: textColor, formatter: '{b}\n{d}%' },
+                emphasis: { label: { fontSize: 14, fontWeight: 'bold' } },
+                data: attemptShare
+            }]
+        });
+
+        window.addEventListener('resize', function () {
+            barChart.resize();
+            pieChart.resize();
+        });
+    });
+</script>
+{% endblock %}

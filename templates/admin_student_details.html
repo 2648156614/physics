@@ -1,0 +1,484 @@
+{% extends "base.html" %}
+
+{% block title %}学生详情 - {{ student.name or student.username }}{% endblock %}
+
+{% block content %}
+<style>
+    .student-story-page {
+        --bg: linear-gradient(180deg, #eff6ff 0%, #f8fafc 45%, #f8fafc 100%);
+        --panel-bg: rgba(255, 255, 255, 0.9);
+        --panel-border: rgba(148, 163, 184, 0.18);
+        --panel-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
+        --text-main: #0f172a;
+        --text-soft: #64748b;
+        --primary: #2563eb;
+        --secondary: #14b8a6;
+        --danger: #ef4444;
+        --warning: #f59e0b;
+        background: var(--bg);
+        border-radius: 32px;
+        padding: 1.5rem;
+        display: grid;
+        gap: 1.25rem;
+    }
+    .student-story-page .glass-panel {
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
+        box-shadow: var(--panel-shadow);
+        backdrop-filter: blur(14px);
+        border-radius: 28px;
+    }
+    .student-story-page .hero-banner {
+        padding: 1.5rem;
+        margin-bottom: 0;
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.96), rgba(20, 184, 166, 0.88));
+        color: #fff;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+    .student-story-page .eyebrow,
+    .student-story-page .section-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: .45rem;
+        padding: .4rem .85rem;
+        border-radius: 999px;
+        font-size: .82rem;
+        font-weight: 700;
+    }
+    .student-story-page .eyebrow { background: rgba(255,255,255,.18); color: #fff; }
+    .student-story-page .section-eyebrow { background: rgba(37, 99, 235, .1); color: var(--primary); }
+    .student-story-page .hero-title { font-size: clamp(1.8rem, 3vw, 2.8rem); font-weight: 800; margin: .9rem 0 .45rem; }
+    .student-story-page .hero-meta { color: rgba(255,255,255,.85); margin: 0; }
+    .student-story-page .insight-callout {
+        margin-top: 1rem;
+        background: rgba(255,255,255,.14);
+        border: 1px solid rgba(255,255,255,.18);
+        border-radius: 20px;
+        padding: 1rem 1.1rem;
+        max-width: 780px;
+    }
+    .student-story-page .screen {
+        min-height: auto;
+        padding: 0;
+        display: block;
+    }
+    .student-story-page .screen + .screen {
+        margin-top: .25rem;
+    }
+    .student-story-page .screen-inner { width: 100%; padding: 1.35rem 1.4rem; }
+    .student-story-page .section-heading { display:flex; justify-content:space-between; gap:.75rem; align-items:end; flex-wrap:wrap; margin-bottom: 1rem; }
+    .student-story-page .section-heading h3 { margin:.55rem 0 .35rem; color: var(--text-main); font-size: clamp(1.5rem, 2.5vw, 2.2rem); }
+    .student-story-page .section-heading p { margin:0; color:var(--text-soft); }
+    .student-story-page .metric-grid { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:.9rem; }
+    .student-story-page .metric-card { padding: 1.2rem; position: relative; overflow:hidden; }
+    .student-story-page .metric-card::after {
+        content:""; position:absolute; right:-16px; bottom:-16px; width:90px; height:90px; border-radius:50%;
+        background: linear-gradient(135deg, rgba(37,99,235,.16), rgba(20,184,166,.12));
+    }
+    .student-story-page .metric-label { color: var(--text-soft); font-weight: 700; font-size: .92rem; }
+    .student-story-page .metric-value { color: var(--text-main); font-size: clamp(2rem, 4vw, 3.3rem); font-weight: 800; line-height: 1.05; margin: .45rem 0; }
+    .student-story-page .metric-note { color: var(--text-soft); margin: 0; }
+    .student-story-page .trend-layout,
+    .student-story-page .analysis-layout { display:grid; grid-template-columns: 2fr 1fr; gap:.9rem; }
+    .student-story-page .knowledge-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:.9rem; }
+    .student-story-page .info-card,
+    .student-story-page .knowledge-card,
+    .student-story-page .error-card,
+    .student-story-page .detail-card { padding: 1.1rem; }
+    .student-story-page .chart-shell { padding:1rem; }
+    .student-story-page .trend-svg { width:100%; height:360px; display:block; }
+    .student-story-page .trend-stroke { fill:none; stroke:url(#trendGradient); stroke-width:4; stroke-linecap:round; stroke-linejoin:round; }
+    .student-story-page .trend-area { fill:url(#trendAreaGradient); opacity:.18; }
+    .student-story-page .trend-point { fill:#fff; stroke: var(--primary); stroke-width:3; }
+    .student-story-page .trend-grid { stroke: rgba(148, 163, 184, .25); stroke-width:1; }
+    .student-story-page .trend-axis-label,
+    .student-story-page .trend-value-label { fill: #64748b; font-size: 12px; font-weight: 600; }
+    .student-story-page .stat-list, .student-story-page .error-list { display:grid; gap:.75rem; }
+    .student-story-page .stat-pill, .student-story-page .error-pill {
+        display:flex; justify-content:space-between; align-items:center; gap:1rem;
+        background:#f8fafc; border-radius:18px; padding:.85rem 1rem;
+    }
+    .student-story-page .knowledge-card { position:relative; overflow:hidden; }
+    .student-story-page .knowledge-card::before {
+        content:""; position:absolute; inset:0 auto auto 0; width:100%; height:4px;
+        background: linear-gradient(90deg, rgba(37,99,235,.95), rgba(20,184,166,.75));
+    }
+    .student-story-page .knowledge-rate { font-size:2rem; font-weight:800; color:var(--text-main); }
+    .student-story-page .progress { height:10px; border-radius:999px; background: rgba(148,163,184,.18); }
+    .student-story-page .progress-bar { border-radius:999px; background: linear-gradient(90deg, #2563eb, #14b8a6); }
+    .student-story-page .error-card.emphasis { border: 1px solid rgba(239, 68, 68, .18); box-shadow: 0 18px 44px rgba(239, 68, 68, .12); }
+    .student-story-page .error-count { font-size: 2rem; font-weight: 800; color: var(--danger); }
+    .student-story-page .details-table table { margin:0; white-space:nowrap; }
+    .student-story-page .details-table thead th { position:sticky; top:0; background:#f8fafc; z-index:1; }
+    .student-story-page .details-table { max-height: 480px; overflow:auto; border-radius: 20px; border:1px solid rgba(148,163,184,.18); }
+    .student-story-page [data-animate] { opacity: 0; transform: translateY(48px); }
+    @media (max-width: 1199px) {
+        .student-story-page .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .student-story-page .trend-layout, .student-story-page .analysis-layout { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 767px) {
+        .student-story-page { padding: 1rem; border-radius: 24px; gap: 1rem; }
+        .student-story-page .screen { min-height: auto; padding: 0; }
+        .student-story-page .screen-inner, .student-story-page .hero-banner { padding: 1rem; }
+        .student-story-page .metric-grid { grid-template-columns: 1fr; }
+        .student-story-page .trend-svg { height: 300px; }
+    }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+
+{% set correct_rate = (overall_stats.total_correct / overall_stats.total_attempts * 100) if overall_stats.total_attempts > 0 else 0 %}
+<div class="student-story-page">
+    <section class="hero-banner glass-panel">
+        <div>
+            <span class="eyebrow"><i class="bi bi-person-badge"></i> 学生学习画像</span>
+            <h2 class="hero-title">{{ student.name or student.username }} 的答题情况页面</h2>
+            <p class="hero-meta">账号：{{ student.username }} · 班级：{{ student.class_name or '未分班' }} · 自动生成阶段式数据结论</p>
+            <div class="insight-callout">
+                <div class="fw-bold mb-2"><i class="bi bi-stars me-2"></i>自动结论提示</div>
+                <div>{{ insight_summary }}</div>
+            </div>
+        </div>
+        <div class="d-flex gap-2 flex-wrap align-self-start">
+            <a href="{{ url_for('admin_all_problems_stats', paper_id=selected_paper_id) }}" class="btn btn-light"><i class="bi bi-people"></i> 返回学生统计</a>
+            <a href="{{ url_for('admin_dashboard', paper_id=selected_paper_id) }}" class="btn btn-outline-light"><i class="bi bi-arrow-left"></i> 返回后台</a>
+        </div>
+    </section>
+
+    <section class="screen story-screen" id="screen-overview">
+        <div class="screen-inner glass-panel">
+            <div class="section-heading">
+                <div>
+                    <span class="section-eyebrow"><i class="bi bi-1-circle"></i> 第一屏 · 总体数据</span>
+                    <h3>从整体完成度先看学习状态</h3>
+                    <p>大数字卡片配合滚动触发动画，帮助管理员快速把握该学生的答题全貌。</p>
+                </div>
+            </div>
+            <div class="metric-grid">
+                <article class="glass-panel metric-card" data-animate>
+                    <div class="metric-label">已完成题目</div>
+                    <div class="metric-value counter" data-value="{{ completed_problems_count }}">0</div>
+                    <p class="metric-note">共 {{ total_problems }} 道题，已完成比例 {{ '%.1f'|format((completed_problems_count / total_problems * 100) if total_problems else 0) }}%</p>
+                </article>
+                <article class="glass-panel metric-card" data-animate>
+                    <div class="metric-label">总体正确率</div>
+                    <div class="metric-value"><span class="counter" data-value="{{ '%.1f'|format(correct_rate) }}">0</span>%</div>
+                    <p class="metric-note">基于全部作答轮次汇总，越高说明越稳定。</p>
+                </article>
+                <article class="glass-panel metric-card" data-animate>
+                    <div class="metric-label">总答题次数</div>
+                    <div class="metric-value counter" data-value="{{ overall_stats.total_attempts or 0 }}">0</div>
+                    <p class="metric-note">可反映学生的反复尝试和纠错过程。</p>
+                </article>
+                <article class="glass-panel metric-card" data-animate>
+                    <div class="metric-label">累计用时</div>
+                    <div class="metric-value"><span class="counter" data-value="{{ '%.1f'|format(student.total_time or 0) }}">0</span>s</div>
+                    <p class="metric-note">以已完成题目累计时长为主，便于判断专注投入度。</p>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <section class="screen story-screen" id="screen-trend">
+        <div class="screen-inner glass-panel">
+            <div class="section-heading">
+                <div>
+                    <span class="section-eyebrow"><i class="bi bi-2-circle"></i> 第二屏 · 正确率趋势</span>
+                    <h3>滚动出现的动画折线，展示答题稳定度变化</h3>
+                    <p>按题目序号累计计算正确率，越往后越稳，说明后续掌握程度越强。</p>
+                </div>
+            </div>
+            <div class="trend-layout">
+                <div class="glass-panel chart-shell" data-animate>
+                    <svg id="trend-svg" class="trend-svg" viewBox="0 0 900 360" preserveAspectRatio="none"></svg>
+                </div>
+                <div class="stat-list">
+                    <div class="glass-panel info-card" data-animate>
+                        <div class="metric-label">最终累计正确率</div>
+                        <div class="metric-value"><span class="counter" data-value="{{ trend_points[-1].correct_rate if trend_points else 0 }}">0</span>%</div>
+                        <p class="metric-note">最后一个点代表该学生目前的累计正确率。</p>
+                    </div>
+                    <div class="glass-panel info-card" data-animate>
+                        <div class="metric-label">最近一题状态</div>
+                        <div class="metric-value" style="font-size:1.5rem;">{{ '已攻克' if trend_points and trend_points[-1].completed else '待突破' }}</div>
+                        <p class="metric-note">最新题目{{ '已完成' if trend_points and trend_points[-1].completed else '尚未完成' }}，可辅助判断学习节奏。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="screen story-screen" id="screen-knowledge">
+        <div class="screen-inner glass-panel">
+            <div class="section-heading">
+                <div>
+                    <span class="section-eyebrow"><i class="bi bi-3-circle"></i> 第三屏 · 知识点分布</span>
+                    <h3>知识点卡片渐显出现，快速识别优势与短板</h3>
+                    <p>根据题目名称自动归类知识点，并按完成率和尝试情况生成画像。</p>
+                </div>
+            </div>
+            <div class="knowledge-grid">
+                {% for item in knowledge_stats %}
+                <article class="glass-panel knowledge-card" data-animate>
+                    <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                        <div>
+                            <div class="metric-label">{{ item.label }}</div>
+                            <div class="knowledge-rate">{{ '%.1f'|format(item.correct_rate) }}%</div>
+                        </div>
+                        <span class="badge bg-light text-primary">{{ item.completed_templates }}/{{ item.attempted_templates or item.total_templates }} 已掌握</span>
+                    </div>
+                    <div class="progress mb-3">
+                        <div class="progress-bar" role="progressbar" style="width: {{ item.correct_rate }}%;"></div>
+                    </div>
+                    <div class="metric-note mb-1">尝试题目：{{ item.attempted_templates }}/{{ item.total_templates }}</div>
+                    <div class="metric-note">平均攻克轮次：{{ item.avg_attempts if item.avg_attempts is not none else '-' }}</div>
+                </article>
+                {% else %}
+                <article class="glass-panel knowledge-card" data-animate>
+                    <div class="metric-label">暂无知识点数据</div>
+                    <div class="metric-note mt-2">学生尚未形成可分析的知识点分布。</div>
+                </article>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <section class="screen story-screen" id="screen-errors">
+        <div class="screen-inner glass-panel">
+            <div class="section-heading">
+                <div>
+                    <span class="section-eyebrow"><i class="bi bi-4-circle"></i> 第四屏 · 错题分析</span>
+                    <h3>突出最需要复盘的错题与错误类型</h3>
+                    <p>把高频错题、错误类型、详细题目明细集中在同一屏，便于管理员做针对性辅导。</p>
+                </div>
+            </div>
+            <div class="analysis-layout mb-4">
+                <div class="error-list">
+                    {% for item in wrong_problem_stats %}
+                    <article class="glass-panel error-card {% if loop.first %}emphasis{% endif %}" data-animate>
+                        <div class="d-flex justify-content-between gap-3 flex-wrap align-items-start">
+                            <div>
+                                <div class="metric-label">第{{ get_display_number(item.template_id) }}题 · {{ item.knowledge_label }}</div>
+                                <h5 class="mb-2">{{ item.template_name }}</h5>
+                                <div class="metric-note">最近错误时间：{{ item.last_wrong_time.strftime('%m-%d %H:%M') if item.last_wrong_time else '-' }}</div>
+                            </div>
+                            <div class="text-end">
+                                <div class="error-count">{{ item.wrong_count }}</div>
+                                <div class="metric-note">累计错误次数</div>
+                            </div>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap mt-3">
+                            <span class="badge" style="background: rgba(239, 68, 68, 0.12); color: #dc2626;">计算误差 {{ item.calc_error_count or 0 }}</span>
+                            <span class="badge" style="background: rgba(245, 158, 11, 0.16); color: #92400e;">精度/单位偏差 {{ item.unit_error_count or 0 }}</span>
+                            <span class="badge bg-secondary">格式错误 {{ item.format_error_count or 0 }}</span>
+                        </div>
+                    </article>
+                    {% else %}
+                    <article class="glass-panel error-card" data-animate>
+                        <div class="metric-label">暂无错题</div>
+                        <div class="metric-note mt-2">当前没有记录到错误作答，说明近期表现较稳定。</div>
+                    </article>
+                    {% endfor %}
+                </div>
+                <div class="stat-list">
+                    <div class="glass-panel info-card" data-animate>
+                        <div class="metric-label">错误类型分布</div>
+                        {% for item in error_type_stats %}
+                        <div class="error-pill mt-3">
+                            <span>{{ item.error_type }}</span>
+                            <strong>{{ item.count }}</strong>
+                        </div>
+                        {% else %}
+                        <p class="metric-note mt-3 mb-0">暂无错误类型数据。</p>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-panel detail-card" data-animate>
+                <div class="d-flex justify-content-between gap-3 flex-wrap align-items-center mb-3">
+                    <div>
+                        <div class="metric-label">题目详细统计</div>
+                        <div class="metric-note">保留完整明细，便于继续下钻每道题的尝试过程。</div>
+                    </div>
+                </div>
+                <div class="details-table">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>序号</th>
+                                <th>题目名称</th>
+                                <th>知识点</th>
+                                <th>状态</th>
+                                <th>总答题次数</th>
+                                <th>总累计时长</th>
+                                <th>答对次数</th>
+                                <th>答对累计时长</th>
+                                <th>最后答题时间</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stat in problem_stats %}
+                            <tr>
+                                <td>{{ get_display_number(stat.template_id) }}</td>
+                                <td>{{ stat.template_name }}</td>
+                                <td><span class="badge bg-light text-primary">{{ stat.knowledge_label }}</span></td>
+                                <td>
+                                    {% if stat.is_completed and stat.is_completed > 0 %}
+                                    <span class="badge bg-success">已答对</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">未答对</span>
+                                    {% endif %}
+                                </td>
+                                <td><span class="fw-bold">{{ stat.total_attempts or 0 }}</span></td>
+                                <td>{% if stat.total_time_spent %}<span class="text-info">{{ "%.1f"|format(stat.total_time_spent) }}秒</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+                                <td>{% if stat.is_completed and stat.correct_attempts %}<span class="text-success fw-bold">{{ stat.correct_attempts or 0 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+                                <td>{% if stat.is_completed and stat.cumulative_time_to_correct %}<span class="text-primary">{{ "%.1f"|format(stat.cumulative_time_to_correct) }}秒</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+                                <td>{% if stat.last_attempt_time %}<small>{{ stat.last_attempt_time.strftime('%m-%d %H:%M') }}</small>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const trendPoints = {{ trend_points | tojson }};
+        const svg = document.getElementById('trend-svg');
+
+        function renderTrendChart() {
+            if (!svg || !trendPoints.length) {
+                return;
+            }
+
+            const width = 900;
+            const height = 360;
+            const padding = { top: 32, right: 28, bottom: 44, left: 44 };
+            const innerWidth = width - padding.left - padding.right;
+            const innerHeight = height - padding.top - padding.bottom;
+            const maxY = 100;
+            const minY = 0;
+
+            const points = trendPoints.map((item, index) => {
+                const x = padding.left + (trendPoints.length === 1 ? innerWidth / 2 : (innerWidth / (trendPoints.length - 1)) * index);
+                const y = padding.top + innerHeight - ((item.correct_rate - minY) / (maxY - minY || 1)) * innerHeight;
+                return { ...item, x, y };
+            });
+
+            const gridLines = [0, 25, 50, 75, 100].map(value => {
+                const y = padding.top + innerHeight - (value / 100) * innerHeight;
+                return `<line class="trend-grid" x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}"></line>
+                        <text class="trend-value-label" x="8" y="${y + 4}">${value}%</text>`;
+            }).join('');
+
+            const polyline = points.map(point => `${point.x},${point.y}`).join(' ');
+            const areaPath = [`M ${padding.left} ${padding.top + innerHeight}`, ...points.map(point => `L ${point.x} ${point.y}`), `L ${points[points.length - 1].x} ${padding.top + innerHeight} Z`].join(' ');
+
+            const circles = points.map(point => `
+                <circle class="trend-point" cx="${point.x}" cy="${point.y}" r="6"></circle>
+                <text class="trend-axis-label" x="${point.x}" y="${height - 12}" text-anchor="middle">${point.short_label}</text>
+            `).join('');
+
+            svg.innerHTML = `
+                <defs>
+                    <linearGradient id="trendGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stop-color="#2563eb"></stop>
+                        <stop offset="100%" stop-color="#14b8a6"></stop>
+                    </linearGradient>
+                    <linearGradient id="trendAreaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="#2563eb"></stop>
+                        <stop offset="100%" stop-color="#2563eb" stop-opacity="0"></stop>
+                    </linearGradient>
+                </defs>
+                ${gridLines}
+                <path class="trend-area" d="${areaPath}"></path>
+                <polyline class="trend-stroke" points="${polyline}"></polyline>
+                ${circles}
+            `;
+
+            if (window.gsap) {
+                const line = svg.querySelector('.trend-stroke');
+                const area = svg.querySelector('.trend-area');
+                const pointEls = svg.querySelectorAll('.trend-point');
+                const lineLength = line.getTotalLength();
+                gsap.set(line, { strokeDasharray: lineLength, strokeDashoffset: lineLength });
+                gsap.set(area, { opacity: 0 });
+                gsap.set(pointEls, { scale: 0, transformOrigin: 'center center' });
+                ScrollTrigger.create({
+                    trigger: '#screen-trend',
+                    start: 'top center',
+                    once: true,
+                    onEnter: () => {
+                        gsap.timeline()
+                            .to(line, { strokeDashoffset: 0, duration: 1.4, ease: 'power2.out' })
+                            .to(area, { opacity: 0.18, duration: 0.6 }, '-=0.8')
+                            .to(pointEls, { scale: 1, duration: 0.35, stagger: 0.08, ease: 'back.out(1.8)' }, '-=0.7');
+                    }
+                });
+            }
+        }
+
+        if (window.gsap && window.ScrollTrigger) {
+            gsap.registerPlugin(ScrollTrigger);
+            document.querySelectorAll('[data-animate]').forEach((element) => {
+                gsap.fromTo(element,
+                    { autoAlpha: 0, y: 48 },
+                    {
+                        autoAlpha: 1,
+                        y: 0,
+                        duration: 0.9,
+                        ease: 'power2.out',
+                        scrollTrigger: {
+                            trigger: element,
+                            start: 'top 82%',
+                            once: true
+                        }
+                    }
+                );
+            });
+
+            document.querySelectorAll('.counter').forEach((element) => {
+                const targetValue = Number(element.dataset.value || 0);
+                ScrollTrigger.create({
+                    trigger: element,
+                    start: 'top 90%',
+                    once: true,
+                    onEnter: () => {
+                        const state = { value: 0 };
+                        gsap.to(state, {
+                            value: targetValue,
+                            duration: 1.4,
+                            ease: 'power1.out',
+                            onUpdate: () => {
+                                const isInteger = Number.isInteger(targetValue);
+                                element.textContent = isInteger ? Math.round(state.value) : state.value.toFixed(1);
+                            }
+                        });
+                    }
+                });
+            });
+        } else {
+            document.querySelectorAll('[data-animate]').forEach((element) => {
+                element.style.opacity = 1;
+                element.style.transform = 'none';
+            });
+            document.querySelectorAll('.counter').forEach((element) => {
+                const targetValue = Number(element.dataset.value || 0);
+                element.textContent = Number.isInteger(targetValue) ? Math.round(targetValue) : targetValue.toFixed(1);
+            });
+        }
+
+        renderTrendChart();
+        window.addEventListener('resize', renderTrendChart);
+    });
+</script>
+{% endblock %}

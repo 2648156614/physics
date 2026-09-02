@@ -1,0 +1,20 @@
+# ===== Web 框架 =====
+Flask==2.3.3
+Werkzeug==2.3.7
+
+# ===== 生产 WSGI 服务器（start_server.py 依赖，缺失会导致容器启动失败）=====
+waitress==3.0.1
+
+# ===== 配置加载（config.py 依赖，缺失会导致 import 阶段直接崩溃）=====
+python-dotenv==1.0.1
+
+# ===== 数据库 / 缓存 =====
+mysql-connector-python==8.4.0
+redis==5.0.8
+
+# ===== 题目生成（services/question_generation_service.py）=====
+numpy==1.26.4
+sympy==1.13.3
+
+# ===== Excel 导入导出（app.py / routes/admin.py）=====
+openpyxl==3.1.5

@@ -1,0 +1,320 @@
+{% extends "base.html" %}
+
+{% block title %}考试批次管理{% endblock %}
+
+{% block content %}
+<style>
+.assign-checkbox-list {
+    max-height: 220px;
+    overflow-y: auto;
+    background: #fff;
+}
+.assign-checkbox-list .form-check {
+    border-radius: 6px;
+    margin-bottom: 2px;
+    padding-left: 2rem;
+}
+.assign-checkbox-list .form-check:hover {
+    background: #f6f8fa;
+}
+.assign-checkbox-list .form-check-input:checked + .form-check-label {
+    font-weight: 600;
+}
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h2 class="mb-1">考试批次管理</h2>
+        <div class="text-muted">所有考试都通过批次配置，支持按班级、专业、课程号或 Excel 名单分配。</div>
+    </div>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> 返回后台
+    </a>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-calendar-plus me-2"></i>新建 / 分配考试</h5>
+            </div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('admin.admin_create_exam') }}" enctype="multipart/form-data" class="vstack gap-3">
+                    <div>
+                        <label class="form-label">考试名称</label>
+                        <input class="form-control" name="name" required placeholder="例如：2025-2026 学年期末补考">
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-7">
+                            <label class="form-label">题库</label>
+                            <select class="form-select" name="paper_id" required>
+                                {% for paper in exam_papers %}
+                                <option value="{{ paper.id }}">{{ paper.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label">考试类型</label>
+                            <select class="form-select" name="exam_type" id="exam-type">
+                                <option value="normal">正式考试</option>
+                                <option value="retake">补考</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">开始时间</label>
+                            <input class="form-control" type="datetime-local" name="start_time">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">结束时间</label>
+                            <input class="form-control" type="datetime-local" name="end_time">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="form-label">分配方式</label>
+                        <select class="form-select" name="assign_type" id="assign-type" required>
+                            <option value="class">班级</option>
+                            <option value="major">专业</option>
+                            <option value="course">课程号</option>
+                            <option value="student">导入 Excel 名单</option>
+                        </select>
+                    </div>
+                    <div id="assign-value-wrap">
+                        <label class="form-label">分配值</label>
+                        <div class="border rounded p-2 assign-checkbox-list" id="assign-value">
+                            <div data-assign-group="class">
+                            {% for item in class_options %}
+                                <label class="form-check py-1">
+                                    <input class="form-check-input" type="checkbox" name="assign_value" value="{{ item }}">
+                                    <span class="form-check-label">{{ item }}</span>
+                                </label>
+                            {% endfor %}
+                            </div>
+                            <div data-assign-group="major">
+                            {% for item in major_options %}
+                                <label class="form-check py-1">
+                                    <input class="form-check-input" type="checkbox" name="assign_value" value="{{ item }}">
+                                    <span class="form-check-label">{{ item }}</span>
+                                </label>
+                            {% endfor %}
+                            </div>
+                            <div data-assign-group="course">
+                            {% for item in course_options %}
+                                <label class="form-check py-1">
+                                    <input class="form-check-input" type="checkbox" name="assign_value" value="{{ item }}">
+                                    <span class="form-check-label">{{ item }}</span>
+                                </label>
+                            {% endfor %}
+                            </div>
+                        </div>
+                        <div class="form-text">勾选一个或多个范围即可。</div>
+                    </div>
+                    <div id="student-file-wrap" class="d-none">
+                        <label class="form-label">Excel 文件</label>
+                        <input class="form-control" type="file" name="student_file" id="student-file" accept=".xlsx">
+                        <div class="form-text">支持学号或姓名列，系统会匹配账户并自动生成未找到名单文件。</div>
+                    </div>
+                    <button class="btn btn-primary" type="submit">
+                        <i class="bi bi-check2-circle"></i> 创建考试
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        {% if editing_exam %}
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-pencil-square me-2"></i>编辑考试</h5>
+                <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin.admin_exams') }}">关闭</a>
+            </div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('admin.admin_update_exam', exam_id=editing_exam.id) }}" enctype="multipart/form-data" class="vstack gap-3">
+                    <div>
+                        <label class="form-label">考试名称</label>
+                        <input class="form-control" name="name" required value="{{ editing_exam.name }}">
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-7">
+                            <label class="form-label">题库</label>
+                            <select class="form-select" name="paper_id" required>
+                                {% for paper in exam_papers %}
+                                <option value="{{ paper.id }}" {% if editing_exam.paper_id == paper.id %}selected{% endif %}>{{ paper.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label">考试类型</label>
+                            <select class="form-select" name="exam_type" id="edit-exam-type">
+                                <option value="normal" {% if editing_exam.exam_type == 'normal' %}selected{% endif %}>正式考试</option>
+                                <option value="retake" {% if editing_exam.exam_type == 'retake' %}selected{% endif %}>补考</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">开始时间</label>
+                            <input class="form-control" type="datetime-local" name="start_time" value="{{ editing_exam.start_time.strftime('%Y-%m-%dT%H:%M') if editing_exam.start_time else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">结束时间</label>
+                            <input class="form-control" type="datetime-local" name="end_time" value="{{ editing_exam.end_time.strftime('%Y-%m-%dT%H:%M') if editing_exam.end_time else '' }}">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="form-label">当前分配</label>
+                        <div class="form-control bg-light" style="min-height: 2.5rem;">
+                            {% if editing_assignments %}
+                                {% for item in editing_assignments %}
+                                    <span class="badge bg-secondary me-1">{{ item.assign_type }}: {{ item.assign_value }}</span>
+                                {% endfor %}
+                            {% else %}
+                                <span class="text-muted">暂无分配</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div>
+                        <label class="form-label">分配方式</label>
+                        <select class="form-select" name="assign_type" id="edit-assign-type" required>
+                            <option value="class" {% if editing_assign_type == 'class' %}selected{% endif %}>班级</option>
+                            <option value="major" {% if editing_assign_type == 'major' %}selected{% endif %}>专业</option>
+                            <option value="course" {% if editing_assign_type == 'course' %}selected{% endif %}>课程号</option>
+                            <option value="student" {% if editing_assign_type == 'student' %}selected{% endif %}>导入 Excel 名单</option>
+                        </select>
+                    </div>
+                    <div id="edit-assign-value-wrap">
+                        <label class="form-label">分配值</label>
+                        <div class="border rounded p-2 assign-checkbox-list" id="edit-assign-value">
+                            <div data-assign-group="class">
+                            {% for item in class_options %}
+                                <label class="form-check py-1">
+                                    <input class="form-check-input" type="checkbox" name="assign_value" value="{{ item }}" {% if editing_assign_type == 'class' and item in editing_assign_values %}checked{% endif %}>
+                                    <span class="form-check-label">{{ item }}</span>
+                                </label>
+                            {% endfor %}
+                            </div>
+                            <div data-assign-group="major">
+                            {% for item in major_options %}
+                                <label class="form-check py-1">
+                                    <input class="form-check-input" type="checkbox" name="assign_value" value="{{ item }}" {% if editing_assign_type == 'major' and item in editing_assign_values %}checked{% endif %}>
+                                    <span class="form-check-label">{{ item }}</span>
+                                </label>
+                            {% endfor %}
+                            </div>
+                            <div data-assign-group="course">
+                            {% for item in course_options %}
+                                <label class="form-check py-1">
+                                    <input class="form-check-input" type="checkbox" name="assign_value" value="{{ item }}" {% if editing_assign_type == 'course' and item in editing_assign_values %}checked{% endif %}>
+                                    <span class="form-check-label">{{ item }}</span>
+                                </label>
+                            {% endfor %}
+                            </div>
+                        </div>
+                        <div class="form-text">勾选一个或多个范围即可。</div>
+                    </div>
+                    <div id="edit-student-file-wrap" class="d-none">
+                        <label class="form-label">Excel 文件</label>
+                        <input class="form-control" type="file" name="student_file" id="edit-student-file" accept=".xlsx">
+                        <div class="form-text">如果切换成补考名单，请重新上传新的 Excel。</div>
+                    </div>
+                    <button class="btn btn-warning" type="submit">
+                        <i class="bi bi-save"></i> 保存修改
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-7">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-light">
+                <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>考试列表</h5>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                    <tr>
+                        <th>名称</th>
+                        <th>题库</th>
+                        <th>时间</th>
+                        <th>分配数</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for exam in exams %}
+                    <tr>
+                        <td>
+                            <div class="fw-semibold">{{ exam.name }}</div>
+                            <small class="text-muted">{{ '补考' if exam.exam_type == 'retake' else '正式考试' }}</small>
+                        </td>
+                        <td>{{ exam.paper_name }}</td>
+                        <td>
+                            <small>
+                                {% if exam.start_time %}{{ exam.start_time.strftime('%Y-%m-%d %H:%M') }}{% else %}不限开始{% endif %}<br>
+                                {% if exam.end_time %}{{ exam.end_time.strftime('%Y-%m-%d %H:%M') }}{% else %}不限结束{% endif %}
+                            </small>
+                        </td>
+                        <td>{{ exam.assignment_count }}</td>
+                        <td><span class="badge bg-success">{{ exam.status }}</span></td>
+                        <td>
+                            <a class="btn btn-sm btn-outline-success" href="{{ url_for('admin.admin_export_all_student_analytics', exam_id=exam.id) }}">导出答题数据</a>
+                            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.admin_exams', edit_exam_id=exam.id) }}">编辑</a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6" class="text-center text-muted py-4">还没有考试批次</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    function bindAssignToggle(examTypeId, assignTypeId, valueWrapId, valueInputId, fileWrapId, fileInputId, requireFileWhenStudent) {
+        const examType = examTypeId ? document.getElementById(examTypeId) : null;
+        const assignType = document.getElementById(assignTypeId);
+        const assignValueWrap = document.getElementById(valueWrapId);
+        const assignValue = document.getElementById(valueInputId);
+        const fileWrap = document.getElementById(fileWrapId);
+        const fileInput = document.getElementById(fileInputId);
+
+        function syncFields() {
+            const isStudent = assignType.value === 'student';
+            assignValueWrap.classList.toggle('d-none', isStudent);
+            fileWrap.classList.toggle('d-none', !isStudent);
+            fileInput.required = isStudent && requireFileWhenStudent;
+            assignValue.querySelectorAll('[data-assign-group]').forEach(function (group) {
+                const isActive = group.dataset.assignGroup === assignType.value;
+                group.hidden = !isActive;
+                group.querySelectorAll('input[type="checkbox"]').forEach(function (checkbox) {
+                    checkbox.disabled = !isActive || isStudent;
+                    if (!isActive) {
+                        checkbox.checked = false;
+                    }
+                });
+            });
+        }
+
+        if (examType) {
+            examType.addEventListener('change', function () {
+                if (examType.value === 'retake') {
+                    assignType.value = 'student';
+                }
+                syncFields();
+            });
+        }
+        assignType.addEventListener('change', syncFields);
+        syncFields();
+    }
+
+    bindAssignToggle('exam-type', 'assign-type', 'assign-value-wrap', 'assign-value', 'student-file-wrap', 'student-file', true);
+    bindAssignToggle('edit-exam-type', 'edit-assign-type', 'edit-assign-value-wrap', 'edit-assign-value', 'edit-student-file-wrap', 'edit-student-file', false);
+});
+</script>
+{% endblock %}

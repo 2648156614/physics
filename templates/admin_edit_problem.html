@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}编辑题目 - 管理员{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">编辑题目</h2>
+        <div>
+            <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> 返回题目管理
+            </a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-pencil me-2"></i> 编辑题目信息</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="paper_id" class="form-label">所属题库</label>
+                            <select class="form-select" id="paper_id" name="paper_id" required>
+                                {% for paper in exam_papers %}
+                                <option value="{{ paper.id }}" {% if template is defined and template.paper_id == paper.id %}selected{% endif %}>{{ paper.name }} {% if paper.is_enabled %}(已开启){% else %}(已关闭){% endif %}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="template_name" class="form-label">题目名称</label>
+                            <input type="text" class="form-control" id="template_name" name="template_name"
+                                   value="{{ template.template_name }}" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="knowledge_point" class="form-label">知识点（可选，留空自动推断）</label>
+                            <input type="text" class="form-control" id="knowledge_point" name="knowledge_point"
+                                   value="{{ template.knowledge_point or '' }}"
+                                   placeholder="例如：电磁学 / 力学 / 热学 / 光学 / 振动与波 / 综合分析">
+                            <div class="form-text">用于学情画像的薄弱知识点分析；不填则根据题名自动归类。</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="problem_text" class="form-label">题目内容</label>
+                            <textarea class="form-control" id="problem_text" name="problem_text" rows="8" required>{{ template.problem_text }}</textarea>
+                            <div class="form-text">
+                                提示：变量占位符请使用 <code>{% raw %}{{变量名}}{% endraw %}</code>（例如 <code>{% raw %}{{F}}{% endraw %}</code>）。保存时会自动兼容并转换旧格式 <code>__F__</code> 和 <code>{% raw %}{{ problem.var_values.F }}{% endraw %}</code>。
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="problem_image" class="form-label">题目图片</label>
+
+                            {% if template.image_filename %}
+                            <div class="mb-3">
+                                <div class="alert alert-info">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span>当前图片: {{ template.image_filename }}</span>
+                                        <div>
+                                            <button type="button" class="btn btn-sm btn-outline-danger"
+                                                    onclick="document.getElementById('remove_image').value = 'true';
+                                                             document.getElementById('currentImagePreview').style.display = 'none';">
+                                                <i class="bi bi-trash"></i> 删除图片
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="currentImagePreview" class="text-center">
+                                    <img src="{{ url_for('question.problem_image_file', filename=template.image_filename, v=range(1000000, 9999999) | random) }}"
+                                         alt="当前图片" class="img-thumbnail" style="max-height: 200px;">
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <input type="file" class="form-control" id="problem_image" name="problem_image"
+                                   accept=".png,.jpg,.jpeg,.gif,.svg">
+                            <input type="hidden" id="remove_image" name="remove_image" value="false">
+                            <input type="hidden" name="current_image" value="{{ template.image_filename or '' }}">
+                            <div class="form-text">
+                                {% if template.image_filename %}
+                                上传新图片将替换当前图片，或选择删除图片
+                                {% else %}
+                                支持格式：PNG, JPG, GIF, SVG。最大16MB。
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="variables" class="form-label">变量列表</label>
+                            <input type="text" class="form-control" id="variables" name="variables"
+                                   value="{{ template.variables }}" placeholder="例如: r,R,i,B">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="solution_formula" class="form-label">解答公式</label>
+                            <textarea class="form-control" id="solution_formula" name="solution_formula" rows="4" required>{{ template.solution_formula }}</textarea>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="answer_count" class="form-label">答案数量</label>
+                                    <select class="form-select" id="answer_count" name="answer_count">
+                                        <option value="1" {% if template.answer_count == 1 %}selected{% endif %}>1个答案</option>
+                                        <option value="2" {% if template.answer_count == 2 %}selected{% endif %}>2个答案</option>
+                                        <option value="3" {% if template.answer_count == 3 %}selected{% endif %}>3个答案</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="difficulty" class="form-label">难度</label>
+                                    <select class="form-select" id="difficulty" name="difficulty">
+                                        <option value="easy" {% if template.difficulty == 'easy' %}selected{% endif %}>简单</option>
+                                        <option value="medium" {% if template.difficulty == 'medium' %}selected{% endif %}>中等</option>
+                                        <option value="hard" {% if template.difficulty == 'hard' %}selected{% endif %}>困难</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 新增：答案单位字段 -->
+                        <div class="mb-3">
+                            <label for="answer_units" class="form-label">答案单位</label>
+                            <input type="text" class="form-control" id="answer_units" name="answer_units"
+                                   value="{{ template.answer_units or '' }}"
+                                   placeholder="例如：V 或 A,m/s,Ω">
+                            <div class="form-text">
+                                为每个答案指定单位，用逗号分隔。例如：<br>
+                                - 单答案题目：V<br>
+                                - 三个答案的题目：V,A,Ω<br>
+                                - 无量纲答案用减号：- 或 -,-<br>
+                                与答案数量保持一致。
+                            </div>
+                        </div>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-lg me-2"></i> 更新题目
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-eye me-2"></i> 预览</h5>
+                </div>
+                <div class="card-body">
+                    <h6>{{ template.template_name }}</h6>
+                    <div class="math-formula small">
+                        {{ template.problem_text|safe }}
+                    </div>
+                    <hr>
+                    <div class="small">
+                        <strong>变量：</strong> {{ template.variables or '无' }}<br>
+                        <strong>答案数量：</strong> {{ template.answer_count }}<br>
+                        <strong>答案单位：</strong> {{ template.answer_units or '未设置' }}<br>
+                        <strong>难度：</strong>
+                        {% if template.difficulty == 'easy' %}简单
+                        {% elif template.difficulty == 'hard' %}困难
+                        {% else %}中等
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

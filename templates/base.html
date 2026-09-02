@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <!-- 移动端视口设置 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <title>物理微积分习题系统 - {% block title %}{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    <!-- 移动端适配CSS -->
+    <style>
+        /* 移动端基础样式 */
+        @media (max-width: 768px) {
+            .mobile-device .navbar-brand {
+                font-size: 1rem;
+            }
+
+            .mobile-device .navbar-nav .nav-link {
+                padding: 0.5rem 0.75rem;
+                font-size: 0.9rem;
+            }
+
+            .mobile-device .container {
+                padding-left: 10px;
+                padding-right: 10px;
+            }
+
+            .mobile-device .card {
+                margin-bottom: 1rem;
+            }
+
+            .mobile-device .btn {
+                font-size: 0.9rem;
+                padding: 0.5rem 1rem;
+            }
+
+            /* 表格在移动端的响应式处理 */
+            .mobile-device .table-responsive {
+                font-size: 0.8rem;
+            }
+
+            /* 数学公式在移动端的缩放 */
+            .mobile-device .math-formula {
+                font-size: 1rem;
+                overflow-x: auto;
+            }
+
+            /* 页脚移动端优化 */
+            .mobile-device footer .row {
+                text-align: center;
+            }
+
+            .mobile-device footer .text-md-end {
+                text-align: center !important;
+                margin-top: 1rem;
+            }
+
+            /* 导航栏欢迎文字在移动端隐藏 */
+            .mobile-device .nav-item .nav-link span {
+                display: none;
+            }
+        }
+
+        /* 超小屏幕适配 */
+        @media (max-width: 576px) {
+            .mobile-device .display-6 {
+                font-size: 1.5rem;
+            }
+
+            .mobile-device h1 { font-size: 1.75rem; }
+            .mobile-device h2 { font-size: 1.5rem; }
+            .mobile-device h3 { font-size: 1.25rem; }
+            .mobile-device h4 { font-size: 1.1rem; }
+            .mobile-device h5 { font-size: 1rem; }
+
+            .mobile-device .btn-lg {
+                padding: 0.5rem 1rem;
+                font-size: 0.9rem;
+            }
+
+            .mobile-device .card-body {
+                padding: 1rem;
+            }
+
+            /* 导航栏品牌文字简化 */
+            .mobile-device .navbar-brand .d-none-mobile {
+                display: none !important;
+            }
+
+            .mobile-device .navbar-brand .d-inline-mobile {
+                display: inline !important;
+            }
+        }
+
+        /* 触摸设备优化 */
+        @media (hover: none) and (pointer: coarse) {
+            .touch-device .btn,
+            .touch-device .form-control,
+            .touch-device .form-select {
+                min-height: 44px;
+            }
+
+            .touch-device .nav-link {
+                padding: 0.75rem 1rem;
+            }
+
+            /* 增加触摸目标尺寸 */
+            .touch-device .btn-sm {
+                min-height: 36px;
+                padding: 0.5rem 0.75rem;
+            }
+        }
+
+        /* 横屏模式优化 */
+        @media (max-height: 500px) and (orientation: landscape) {
+            .mobile-device .navbar {
+                position: fixed;
+                top: 0;
+                width: 100%;
+                z-index: 1030;
+            }
+
+            .mobile-device .container {
+                margin-top: 60px;
+            }
+
+            .mobile-device .card {
+                margin-bottom: 0.5rem;
+            }
+        }
+
+        /* 数学公式在移动端的响应式处理 */
+        .mobile-device .math-formula mjx-container {
+            max-width: 100% !important;
+            overflow-x: auto !important;
+        }
+
+        /* 高分屏移动设备优化 */
+        @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+            .mobile-device .math-formula {
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+            }
+        }
+
+        /* 移动端特定工具类 */
+        .d-none-mobile {
+            display: none !important;
+        }
+
+        .d-inline-mobile {
+            display: inline !important;
+        }
+
+        @media (min-width: 769px) {
+            .d-none-mobile {
+                display: inline !important;
+            }
+
+            .d-inline-mobile {
+                display: none !important;
+            }
+        }
+    </style>
+
+<!--    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>-->
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<!-- 关键：添加移动端检测类 -->
+<body class="{% if is_mobile %}mobile-device{% else %}desktop-device{% endif %} {% if is_touch %}touch-device{% endif %}">
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-calculator me-2"></i>
+                <span class="d-none-mobile">物理微积分习题系统</span>
+                <span class="d-inline-mobile">物理习题系统</span>
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    {% if 'user_id' in session %}
+                        <!-- 管理员菜单 -->
+                        {% if session.username == 'admin' %}
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="adminDropdown" role="button"
+                               data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-gear me-1"></i>
+                                <span class="d-none-mobile">管理</span>
+                            </a>
+                            <ul class="dropdown-menu" aria-labelledby="adminDropdown">
+                                <li><a class="dropdown-item" href="{{ url_for('admin_dashboard') }}">
+                                    <i class="bi bi-speedometer me-1"></i> 管理后台
+                                </a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('admin_students_by_status', status='completed') }}">
+                                    <i class="bi bi-check-circle me-1"></i> 已完成学生
+                                </a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('admin_students_by_status', status='incomplete') }}">
+                                    <i class="bi bi-exclamation-triangle me-1"></i> 未完成学生
+                                </a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{{ url_for('admin_all_problems_stats') }}">
+                                    <i class="bi bi-graph-up me-1"></i> 题目统计
+                                </a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('admin_analytics') }}">
+                                    <i class="bi bi-bar-chart me-1"></i> 学情看板
+                                </a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('update_all_status') }}">
+                                    <i class="bi bi-arrow-clockwise me-1"></i> 更新状态
+                                </a></li>
+                            </ul>
+                        </li>
+                        {% endif %}
+                        <li class="nav-item dropdown avatar-menu">
+                            <a class="nav-link d-flex align-items-center" href="#" id="avatarMenu" role="button"
+                               data-bs-toggle="dropdown" aria-expanded="false">
+                                <img src="{{ url_for('static', filename='avatars/' ~ avatar_filename) }}"
+                                     class="navbar-avatar" alt="avatar">
+                                <span class="ms-2 d-none d-lg-inline">{{ display_name or session.username }}</span>
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-end shadow" aria-labelledby="avatarMenu">
+                                <li class="dropdown-header">{{ display_name or session.username }}</li>
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#avatarModal">
+                                        <i class="bi bi-person-circle me-1"></i> 切换头像
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#passwordModal">
+                                        <i class="bi bi-key me-1"></i> 修改密码
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#nameModal">
+                                        <i class="bi bi-pencil-square me-1"></i> 修改姓名
+                                    </a>
+                                </li>
+                            </ul>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}">
+                                <i class="bi bi-house me-1 d-none-mobile"></i>
+                                <span class="d-inline-mobile">首页</span>
+                                <span class="d-none-mobile">首页</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {{ 'active' if request.endpoint == 'history' }}" href="{{ url_for('history') }}">
+                                <i class="bi bi-clock-history me-1 d-none-mobile"></i>
+                                <span class="d-inline-mobile">历史</span>
+                                <span class="d-none-mobile">答题历史</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {{ 'active' if request.endpoint == 'student_profile' }}" href="{{ url_for('student_profile') }}">
+                                <i class="bi bi-person-vcard me-1 d-none-mobile"></i>
+                                <span class="d-inline-mobile">学情</span>
+                                <span class="d-none-mobile">我的学情</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {{ 'active' if request.endpoint == 'statistics' }}" href="{{ url_for('statistics') }}">
+                                <i class="bi bi-graph-up me-1 d-none-mobile"></i>
+                                <span class="d-inline-mobile">统计</span>
+                                <span class="d-none-mobile">统计</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('auth.logout') }}">
+                                <i class="bi bi-box-arrow-right me-1 d-none-mobile"></i>
+                                <span class="d-inline-mobile">退出</span>
+                                <span class="d-none-mobile">退出</span>
+                            </a>
+                        </li>
+                    {% else %}
+                        <li class="nav-item">
+                            <a class="nav-link {{ 'active' if request.endpoint in ['auth.login', 'login'] }}" href="{{ url_for('auth.login') }}">
+                                <i class="bi bi-box-arrow-in-right me-1 d-none-mobile"></i>
+                                <span class="d-inline-mobile">登录</span>
+                                <span class="d-none-mobile">登录</span>
+                            </a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-3 mt-md-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+
+    {% if 'user_id' in session %}
+    <!-- 修改密码弹窗 -->
+    <div class="modal fade" id="passwordModal" tabindex="-1" aria-labelledby="passwordModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <form method="POST" action="{{ url_for('auth.update_password') }}" class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="passwordModalLabel">修改密码</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="current-password" class="form-label">当前密码</label>
+                        <input type="password" class="form-control" id="current-password" name="current_password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="new-password" class="form-label">新密码</label>
+                        <input type="password" class="form-control" id="new-password" name="new_password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="confirm-password" class="form-label">确认新密码</label>
+                        <input type="password" class="form-control" id="confirm-password" name="confirm_password" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">确认修改</button>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">暂时不修改</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 修改姓名弹窗 -->
+    <div class="modal fade" id="nameModal" tabindex="-1" aria-labelledby="nameModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <form method="POST" action="{{ url_for('auth.update_name') }}" class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="nameModalLabel">修改姓名</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="user-name" class="form-label">姓名</label>
+                        <input type="text" class="form-control" id="user-name" name="name"
+                               value="{{ display_name or '' }}" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">确认修改</button>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">暂时不修改</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 切换头像弹窗 -->
+    <div class="modal fade" id="avatarModal" tabindex="-1" aria-labelledby="avatarModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <form method="POST" action="{{ url_for('auth.update_avatar') }}" class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="avatarModalLabel">切换头像</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="avatar-grid">
+                        {% for avatar in available_avatars %}
+                        <label class="avatar-option">
+                            <input type="radio" name="avatar_filename" value="{{ avatar }}"
+                                   {% if avatar == avatar_filename %}checked{% endif %}>
+                            <img src="{{ url_for('static', filename='avatars/' ~ avatar) }}" alt="{{ avatar }}">
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">确认修改</button>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">暂时不修改</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 页脚 -->
+    <footer class="bg-dark text-white mt-5 py-3 py-md-4">
+        <div class="container">
+            <div class="row">
+                <div class="col-12 col-md-6 text-center text-md-start">
+                    <h5 class="mb-2"><i class="bi bi-calculator me-2"></i>物理微积分习题系统</h5>
+                    <p class="mb-2 mb-md-0 small">一个帮助学习大学物理微积分习题的在线平台</p>
+                </div>
+                <div class="col-12 col-md-6 text-center text-md-end mt-2 mt-md-0">
+                    <p class="mb-1 small">
+                        <i class="bi bi-clock me-1"></i>系统时间: <span id="current-time"></span>
+                    </p>
+                    <small class="text-muted">© 2024 物理微积分习题系统. 保留所有权利.</small>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+    <script>
+        // 检测设备类型
+        function detectMobileDevice() {
+            return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                   (window.innerWidth <= 768);
+        }
+
+        // 检测触摸设备
+        function detectTouchDevice() {
+            return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        }
+
+        // 设备检测和初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            const isMobile = detectMobileDevice();
+            const isTouch = detectTouchDevice();
+
+            // 添加设备类到body（作为后备，如果服务器端检测失败）
+            if (isMobile && !document.body.classList.contains('mobile-device')) {
+                document.body.classList.add('mobile-device');
+                document.body.classList.remove('desktop-device');
+            }
+            if (isTouch && !document.body.classList.contains('touch-device')) {
+                document.body.classList.add('touch-device');
+            }
+
+            console.log('设备检测:', {
+                mobile: isMobile,
+                touch: isTouch,
+                width: window.innerWidth
+            });
+
+            // 移动端特定初始化
+            if (isMobile) {
+                initMobileFeatures();
+            }
+
+            // 更新时间
+            updateCurrentTime();
+            setInterval(updateCurrentTime, 1000);
+
+            // 高亮当前活动菜单项
+            highlightActiveMenu();
+        });
+
+        // 更新当前时间
+        function updateCurrentTime() {
+            const now = new Date();
+            const timeString = now.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+            document.getElementById('current-time').textContent = timeString;
+        }
+
+        // 高亮当前活动菜单项
+        function highlightActiveMenu() {
+            const currentPath = window.location.pathname;
+            const navLinks = document.querySelectorAll('.nav-link');
+
+            navLinks.forEach(link => {
+                if (link.getAttribute('href') === currentPath) {
+                    link.classList.add('active');
+                }
+            });
+        }
+
+        // 移动端特性初始化
+        function initMobileFeatures() {
+            // 优化数学公式显示
+            if (window.MathJax) {
+                MathJax.Hub.Config({
+                    showProcessingMessages: false,
+                    messageStyle: 'none',
+                    'HTML-CSS': {
+                        scale: 110
+                    }
+                });
+            }
+
+            // 防止双击缩放
+            let lastTouchEnd = 0;
+            document.addEventListener('touchend', function(event) {
+                const now = Date.now();
+                if (now - lastTouchEnd <= 300) {
+                    event.preventDefault();
+                }
+                lastTouchEnd = now;
+            }, false);
+
+            // 优化输入框焦点
+            const inputs = document.querySelectorAll('input, textarea, select');
+            inputs.forEach(input => {
+                input.addEventListener('focus', function() {
+                    setTimeout(() => {
+                        this.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 300);
+                });
+            });
+        }
+
+        // 窗口大小变化时重新检测
+        window.addEventListener('resize', function() {
+            const isMobileNow = detectMobileDevice();
+            if (isMobileNow) {
+                document.body.classList.add('mobile-device');
+                document.body.classList.remove('desktop-device');
+            } else {
+                document.body.classList.remove('mobile-device');
+                document.body.classList.add('desktop-device');
+            }
+        });
+    </script>
+
+    {% if show_password_modal %}
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const passwordModal = document.getElementById('passwordModal');
+            if (passwordModal) {
+                const modal = new bootstrap.Modal(passwordModal);
+                modal.show();
+            }
+        });
+    </script>
+    {% endif %}
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

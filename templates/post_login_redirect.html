@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录成功</title>
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <style>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f6f8fb;
+            color: #2c3e50;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+        }
+        .card {
+            width: min(92vw, 420px);
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+            padding: 24px;
+            text-align: center;
+        }
+        .title {
+            margin: 0 0 8px;
+            font-size: 20px;
+            font-weight: 600;
+        }
+        .desc {
+            margin: 0;
+            font-size: 14px;
+            color: #5f6c7b;
+        }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h1 class="title">登录成功</h1>
+    <p class="desc">正在进入系统首页，请稍候...</p>
+    <noscript>
+        <p><a href="{{ target_url }}">点击继续</a></p>
+    </noscript>
+</div>
+<script>
+    window.location.replace("{{ target_url }}");
+</script>
+</body>
+</html>

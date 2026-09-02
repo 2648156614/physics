@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}学情看板{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2 class="my-4"><i class="bi bi-bar-chart me-2"></i>班级学情看板</h2>
+
+    <!-- 班级错因雷达 -->
+    <div class="row mb-4">
+        <div class="col-lg-5 mb-3">
+            <div class="card shadow h-100">
+                <div class="card-header bg-primary text-white">
+                    <i class="bi bi-shield-shaded me-1"></i> 班级错因雷达
+                </div>
+                <div class="card-body d-flex flex-column align-items-center justify-content-center">
+                    {{ radar_svg | safe }}
+                    <div class="mt-2 small text-muted text-center">汇总全班所有错题，越靠外说明该类错误越集中。</div>
+                </div>
+            </div>
+        </div>
+        <!-- 错因分布条形 -->
+        <div class="col-lg-7 mb-3">
+            <div class="card shadow h-100">
+                <div class="card-header bg-light">
+                    <i class="bi bi-pie-chart me-1"></i> 班级错因类型分布
+                </div>
+                <div class="card-body">
+                    {% set max_cnt = data.category_totals[0].cnt if data.category_totals else 1 %}
+                    {% for c in data.category_totals %}
+                    <div class="mb-2">
+                        <div class="d-flex justify-content-between small">
+                            <span>{{ c.category }}</span>
+                            <span class="text-muted">{{ c.cnt }} 次</span>
+                        </div>
+                        <div class="progress" style="height: 14px;">
+                            <div class="progress-bar bg-primary" role="progressbar"
+                                 style="width: {{ (c.cnt / max_cnt * 100) if max_cnt else 0 }}%;"></div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="text-muted">暂无错题数据。</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 薄弱知识点 -->
+    <div class="card shadow mb-4">
+        <div class="card-header bg-warning text-dark">
+            <i class="bi bi-exclamation-triangle me-1"></i> 班级薄弱知识点（按正确率从低到高，前 10）
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr><th>知识点</th><th>总作答</th><th>正确</th><th>错误</th><th>正确率</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        {% for kp in data.knowledge_stats[:10] %}
+                        <tr>
+                            <td><span class="badge bg-info text-dark">{{ kp.knowledge_point }}</span></td>
+                            <td>{{ kp.total }}</td>
+                            <td>{{ kp.correct }}</td>
+                            <td>{{ kp.wrong }}</td>
+                            <td class="font-weight-bold
+                                {% if kp.correct_rate < 60 %}text-danger
+                                {% elif kp.correct_rate >= 80 %}text-success
+                                {% else %}text-warning{% endif %}">{{ kp.correct_rate }}%</td>
+                            <td style="width: 25%;">
+                                <div class="progress" style="height: 8px;">
+                                    <div class="progress-bar
+                                        {% if kp.correct_rate < 60 %}bg-danger
+                                        {% elif kp.correct_rate >= 80 %}bg-success
+                                        {% else %}bg-warning{% endif %}"
+                                        style="width: {{ kp.correct_rate }}%;"></div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="6" class="text-muted">暂无数据。</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 学生正确率排行 -->
+    <div class="card shadow">
+        <div class="card-header bg-light">
+            <i class="bi bi-trophy me-1"></i> 学生正确率排行（共 {{ data.students | length }} 人）
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr><th>排名</th><th>学号</th><th>姓名</th><th>班级</th><th>作答数</th><th>正确率</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for s in data.students %}
+                        <tr>
+                            <td class="text-muted">{{ loop.index }}</td>
+                            <td>{{ s.username }}</td>
+                            <td>{{ s.name or '—' }}</td>
+                            <td>{{ s.class_name or '—' }}</td>
+                            <td>{{ s.total }}</td>
+                            <td class="font-weight-bold
+                                {% if s.accuracy < 60 %}text-danger
+                                {% elif s.accuracy >= 80 %}text-success
+                                {% else %}text-warning{% endif %}">{{ s.accuracy }}%</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

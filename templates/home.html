@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}欢迎{% endblock %}
+
+{% block content %}
+<div class="jumbotron">
+    <h1 class="display-4">欢迎来到微积分答题系统</h1>
+    <p class="lead">这是一个帮助您练习大学物理微积分习题的在线平台。</p>
+    <hr class="my-4">
+    <p>请登录开始使用，账号由管理员统一导入。</p>
+    <div class="d-grid gap-2 d-md-block">
+        <a href="/login" class="btn btn-primary btn-lg">登录</a>
+        <span class="btn btn-secondary btn-lg disabled">注册已关闭</span>
+    </div>
+</div>
+{% endblock %}

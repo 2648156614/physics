@@ -1,0 +1,455 @@
+{% extends "base.html" %}
+
+{% block title %}统计信息{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2 class="my-4">📊 答题统计面板</h2>
+
+    <!-- 错误提示 -->
+    {% if error %}
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i> {{ error }}
+    </div>
+    {% endif %}
+
+    <!-- 总体统计卡片 -->
+    <div class="row mb-4">
+        <div class="col-xl-3 col-md-6 mb-4">
+            <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                正确率</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ accuracy }}%</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="bi bi-trophy-fill fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-3 col-md-6 mb-4">
+            <div class="card border-left-success shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                总答题数</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ total_count }}</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="bi bi-clipboard-data fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-3 col-md-6 mb-4">
+            <div class="card border-left-info shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                正确答题</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ correct_count }}</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="bi bi-check-circle-fill fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-3 col-md-6 mb-4">
+            <div class="card border-left-warning shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                平均用时</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ avg_time }}秒</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="bi bi-clock-fill fa-2x text-gray-300"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if total_count > 0 %}
+    <!-- 图表区域 -->
+    <div class="row">
+        <!-- 正确率环形图 -->
+        <div class="col-xl-4 col-lg-6 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header bg-primary text-white">
+                    <h6><i class="bi bi-pie-chart-fill"></i> 正确率分布</h6>
+                </div>
+                <div class="card-body">
+                    <canvas id="accuracyChart" width="300" height="300"></canvas>
+                    <div class="text-center mt-3">
+                        <small class="text-muted">
+                            总答题数: {{ total_count }} | 正确: {{ correct_count }} | 错误: {{ total_count - correct_count }}
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 各题目正确率柱状图 -->
+        <div class="col-xl-8 col-lg-6 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header bg-success text-white">
+                    <h6><i class="bi bi-bar-chart-fill"></i> 各题目正确率对比</h6>
+                </div>
+                <div class="card-body">
+                    <canvas id="problemAccuracyChart" height="250"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 第二行图表 -->
+    <div class="row">
+        <!-- 答题时间趋势图 -->
+        <div class="col-xl-12 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header bg-info text-white">
+                    <h6><i class="bi bi-graph-up"></i> 最近答题时间趋势</h6>
+                </div>
+                <div class="card-body">
+                    <canvas id="timeTrendChart" height="100"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 详细数据表格 -->
+    <div class="card shadow mt-4">
+        <div class="card-header bg-dark text-white">
+            <h5><i class="bi bi-table"></i> 详细统计表格</h5>
+        </div>
+        <div class="card-body">
+            {% if problem_stats %}
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover">
+                    <thead class="thead-light">
+                        <tr>
+                            <th>题目类型</th>
+                            <th>答题次数</th>
+                            <th>正确次数</th>
+                            <th>正确率</th>
+                            <th>平均用时</th>
+                            <th>学习状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for stat in problem_stats %}
+                        <tr>
+                            <td><strong>{{ stat.template_name }}</strong></td>
+                            <td>
+                                <span class="badge badge-primary badge-pill">{{ stat.total }}</span>
+                            </td>
+                            <td>
+                                <span class="badge badge-success badge-pill">{{ stat.correct }}</span>
+                            </td>
+                            <td>
+                                {% if stat.total > 0 %}
+                                    {% set progress = (stat.correct/stat.total*100) %}
+                                    <div class="d-flex align-items-center">
+                                        <div class="progress flex-grow-1" style="height: 20px;">
+                                            <div class="progress-bar {% if progress >= 80 %}bg-success{% elif progress >= 60 %}bg-info{% elif progress >= 40 %}bg-warning{% else %}bg-danger{% endif %}"
+                                                 role="progressbar" style="width: {{ progress }}%">
+                                                {{ "%.1f"|format(progress) }}%
+                                            </div>
+                                        </div>
+                                        <small class="text-muted ml-2">{{ "%.1f"|format(progress) }}%</small>
+                                    </div>
+                                {% else %}
+                                    <span class="text-muted">暂无数据</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge badge-secondary badge-pill">{{ stat.avg_time|round(1) }}秒</span>
+                            </td>
+                            <td>
+                                {% if stat.total > 0 %}
+                                    {% set progress = (stat.correct/stat.total*100) %}
+                                    {% if progress >= 80 %}
+                                        <span class="badge badge-success"><i class="bi bi-star-fill"></i> 优秀</span>
+                                    {% elif progress >= 60 %}
+                                        <span class="badge badge-info"><i class="bi bi-check-circle"></i> 良好</span>
+                                    {% elif progress >= 40 %}
+                                        <span class="badge badge-warning"><i class="bi bi-exclamation-circle"></i> 一般</span>
+                                    {% else %}
+                                        <span class="badge badge-danger"><i class="bi bi-lightbulb"></i> 需改进</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="badge badge-secondary"><i class="bi bi-clock"></i> 未开始</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-4">
+                <i class="bi bi-inbox fa-3x text-muted mb-3"></i>
+                <h5 class="text-muted">暂无题目统计数据</h5>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 图表JavaScript -->
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // 正确率环形图
+        const accuracyCtx = document.getElementById('accuracyChart').getContext('2d');
+        const accuracyChart = new Chart(accuracyCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['正确', '错误'],
+                datasets: [{
+                    data: [{{ correct_count }}, {{ total_count - correct_count }}],
+                    backgroundColor: ['#28a745', '#dc3545'],
+                    borderWidth: 3,
+                    borderColor: '#fff',
+                    hoverOffset: 15
+                }]
+            },
+            options: {
+                responsive: true,
+                cutout: '60%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 20,
+                            usePointStyle: true
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = Math.round((context.raw / total) * 100);
+                                return `${context.label}: ${context.raw}次 (${percentage}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // 各题目正确率柱状图
+        const problemCtx = document.getElementById('problemAccuracyChart').getContext('2d');
+
+        // 手动构建数据，避免JSON序列化问题
+        const problemNames = [
+            {% for stat in problem_stats %}
+            '{{ stat.template_name }}'{% if not loop.last %},{% endif %}
+            {% endfor %}
+        ];
+
+        const accuracyData = [
+            {% for stat in problem_stats %}
+            {% if stat.total > 0 %}
+            {{ (stat.correct/stat.total*100)|round(1) }}
+            {% else %}
+            0
+            {% endif %}
+            {% if not loop.last %},{% endif %}
+            {% endfor %}
+        ];
+
+        const problemStats = [
+            {% for stat in problem_stats %}
+            {
+                total: {{ stat.total }},
+                correct: {{ stat.correct }},
+                avg_time: {{ stat.avg_time|round(1) }}
+            }{% if not loop.last %},{% endif %}
+            {% endfor %}
+        ];
+
+        const problemChart = new Chart(problemCtx, {
+            type: 'bar',
+            data: {
+                labels: problemNames,
+                datasets: [{
+                    label: '正确率 (%)',
+                    data: accuracyData,
+                    backgroundColor: [
+                        '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40'
+                    ],
+                    borderColor: [
+                        '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40'
+                    ],
+                    borderWidth: 2,
+                    borderRadius: 5
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        title: {
+                            display: true,
+                            text: '正确率 (%)'
+                        },
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: function(context) {
+                                const index = context.dataIndex;
+                                if (problemStats && problemStats[index]) {
+                                    const stat = problemStats[index];
+                                    return `答题: ${stat.total}次 | 正确: ${stat.correct}次 | 平均用时: ${stat.avg_time}秒`;
+                                }
+                                return '';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // 答题时间趋势图
+        const timeCtx = document.getElementById('timeTrendChart').getContext('2d');
+
+        // 模拟时间数据 - 在实际应用中可以从数据库获取真实数据
+        const timeData = [45, 38, 42, 35, 40, 32, 28, 31, 29, 27];
+        const timeLabels = timeData.map((_, index) => `第${index + 1}次`);
+
+        const timeChart = new Chart(timeCtx, {
+            type: 'line',
+            data: {
+                labels: timeLabels,
+                datasets: [{
+                    label: '答题时间 (秒)',
+                    data: timeData,
+                    borderColor: '#17a2b8',
+                    backgroundColor: 'rgba(23, 162, 184, 0.1)',
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: true,
+                    pointBackgroundColor: '#17a2b8',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                    pointRadius: 6,
+                    pointHoverRadius: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '时间 (秒)'
+                        },
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            color: 'rgba(0,0,0,0.05)'
+                        }
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false
+                    }
+                },
+                interaction: {
+                    intersect: false,
+                    mode: 'nearest'
+                }
+            }
+        });
+    });
+    </script>
+    {% else %}
+    <!-- 没有数据时的显示 -->
+    <div class="card shadow">
+        <div class="card-body text-center py-5">
+            <i class="bi bi-graph-up fa-4x text-muted mb-3"></i>
+            <h3 class="text-muted">暂无答题数据</h3>
+            <p class="text-muted mb-4">您还没有开始答题，统计数据将在您答题后显示</p>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-primary btn-lg">
+                <i class="bi bi-play-circle"></i> 开始答题
+            </a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+.card {
+    border: none;
+    border-radius: 15px;
+    transition: transform 0.2s;
+}
+.card:hover {
+    transform: translateY(-2px);
+}
+.card-header {
+    border-radius: 15px 15px 0 0 !important;
+    font-weight: 600;
+}
+.progress {
+    border-radius: 10px;
+    background-color: #f8f9fa;
+}
+.border-left-primary {
+    border-left: 4px solid #4e73df !important;
+}
+.border-left-success {
+    border-left: 4px solid #1cc88a !important;
+}
+.border-left-info {
+    border-left: 4px solid #36b9cc !important;
+}
+.border-left-warning {
+    border-left: 4px solid #f6c23e !important;
+}
+.badge-pill {
+    border-radius: 50rem;
+    padding: 0.35em 0.65em;
+}
+.table th {
+    border-top: none;
+    font-weight: 600;
+    color: #495057;
+}
+</style>
+{% endblock %}
