@@ -137,7 +137,7 @@
                 </div>
             </div>
             <div class="card-body">
-                <!-- 动态消息显示区域 -->
+                <!-- 动态消息显示区域：答题页使用悬浮层，避免提示挤动题目布局 -->
                 <div id="message-area">
                     {% with messages = get_flashed_messages(with_categories=true) %}
                         {% if messages %}
@@ -151,17 +151,26 @@
                     {% endwith %}
                 </div>
 
-                <!-- 极简点选兜底：答错后学生手动纠正错因（默认隐藏） -->
-                <div id="error-correction-panel" class="alert alert-warning mt-3" style="display:none;">
-                    <div class="fw-semibold mb-2">
-                        <i class="bi bi-lightbulb me-1"></i>这道题你觉得自己主要是哪种错因？
-                        <small class="fw-normal text-muted">（点一下即可更正，帮助系统更懂你）</small>
+                <!-- 答错反馈浮层：脱离文档流，不推动答题界面 -->
+                <div id="error-correction-panel" class="answer-feedback-panel" style="display:none;" role="status" aria-live="polite">
+                    <div class="feedback-title">
+                        <i class="bi bi-x-circle-fill me-1"></i>回答错误
                     </div>
-                    <div class="d-flex flex-wrap gap-2">
+                    <div class="feedback-answer" id="feedback-correct-answer"></div>
+                    <div class="feedback-question">主要错因是？</div>
+                    <div class="feedback-actions">
                         <button type="button" class="btn btn-sm btn-outline-danger" data-cat="公式记错">公式记错</button>
                         <button type="button" class="btn btn-sm btn-outline-primary" data-cat="概念混淆">概念混淆</button>
+                        <button type="button" class="btn btn-sm btn-outline-warning" data-cat="计算粗心">计算粗心</button>
+                        <button type="button" class="btn btn-sm btn-outline-info" data-cat="单位换算">单位换算</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-cat="审题不清">审题不清</button>
                         <button type="button" class="btn btn-sm btn-link text-muted" id="error-correction-skip">不用了</button>
                     </div>
+                    <div class="feedback-countdown">
+                        <span>即将自动换题</span>
+                        <span id="feedback-countdown-seconds">5</span>
+                    </div>
+                    <div class="feedback-progress"><span id="feedback-progress-bar"></span></div>
                 </div>
 
                 <!-- 进度指示器 -->
@@ -1938,7 +1947,7 @@ function getSuperscript(number) {
 }
 
 // 显示消息（不会自动消失）
-function showMessage(message, type = 'info') {
+function showMessage(message, type = 'info', shouldScroll = false) {
     const messageArea = document.getElementById('message-area');
     const alertClass = type === 'error' ? 'alert-danger' :
                       type === 'success' ? 'alert-success' :
@@ -1959,12 +1968,13 @@ function showMessage(message, type = 'info') {
         </div>
     `;
 
-    // 自动滚动到消息区域
-    messageArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (shouldScroll) {
+        messageArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
 }
 
 // 显示临时消息（会自动消失）
-function showTempMessage(message, type = 'info', duration = 3000, shouldScroll = true) {
+function showTempMessage(message, type = 'info', duration = 3000, shouldScroll = false) {
     const messageArea = document.getElementById('message-area');
     const alertClass = type === 'error' ? 'alert-danger' :
                       type === 'success' ? 'alert-success' :
@@ -2625,7 +2635,8 @@ document.getElementById('answer-form').addEventListener('submit', async function
                 totalAttempts = data.total_attempts;
                 updateAttemptsDisplay();
 
-                hideErrorCorrection();
+                const correctAnswerMessage = formatCorrectAnswers(data.correct_answers);
+                showErrorCorrection(data.response_ids || [], correctAnswerMessage);
                 scheduleProblemRegeneration(data);
             }
         } else {
@@ -3013,9 +3024,13 @@ window.toggleInputMode = function() {
     let pendingResponseIds = [];
     let regenTimer = null;
     let regenData = null;
+    let feedbackCountdownTimer = null;
+    let isRegeneratingProblem = false;
+    const FEEDBACK_AUTO_REFRESH_SECONDS = 5;
 
-    // 答错后立即切换到新题；错因点选不再阻塞答题流。
+    // 答错反馈停留片刻后切换新题；学生点选错因/跳过可立即继续。
     function triggerRegeneration() {
+        if (isRegeneratingProblem) return;
         if (regenTimer === null) return;  // 已刷新或从未安排
         clearTimeout(regenTimer);
         hideErrorCorrection();  // 收起纠错面板，避免残留到新题
@@ -3023,6 +3038,7 @@ window.toggleInputMode = function() {
         const data = regenData;
         regenData = null;
         if (!data) return;
+        isRegeneratingProblem = true;
         if (data.new_problem_generated && data.new_var_values) {
             disableInputs();
             updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text)
@@ -3031,8 +3047,9 @@ window.toggleInputMode = function() {
                     resetSwitchTracking();
                     timerInitialized = false;
                     initTimer();
-                    showTempMessage('答案不正确，已换新题。', 'warning', 1800, false);
+                    showTempMessage('题目已刷新，请继续作答。', 'success', 1800, false);
                     resetFormState();
+                    isRegeneratingProblem = false;
                 })
                 .catch(error => reloadProblemPageAfterUpdateFailure(error));
         } else {
@@ -3040,19 +3057,47 @@ window.toggleInputMode = function() {
         }
     }
 
-    // 安排新题刷新：下一轮事件循环立即执行，让按钮状态先完成渲染。
+    // 安排新题刷新：保留短暂停顿，让学生看清正确答案并可选择错因。
     function scheduleProblemRegeneration(data) {
         regenData = data;
-        regenTimer = setTimeout(triggerRegeneration, 0);
+        regenTimer = setTimeout(triggerRegeneration, FEEDBACK_AUTO_REFRESH_SECONDS * 1000);
     }
 
-    function showErrorCorrection(ids) {
+    function startFeedbackCountdown() {
+        const secondsEl = document.getElementById('feedback-countdown-seconds');
+        const progressBar = document.getElementById('feedback-progress-bar');
+        const startedAt = Date.now();
+        const durationMs = FEEDBACK_AUTO_REFRESH_SECONDS * 1000;
+
+        clearInterval(feedbackCountdownTimer);
+        if (secondsEl) secondsEl.textContent = FEEDBACK_AUTO_REFRESH_SECONDS;
+        if (progressBar) progressBar.style.width = '100%';
+
+        feedbackCountdownTimer = setInterval(() => {
+            const elapsed = Date.now() - startedAt;
+            const remainingMs = Math.max(0, durationMs - elapsed);
+            const remainingSeconds = Math.ceil(remainingMs / 1000);
+            if (secondsEl) secondsEl.textContent = remainingSeconds;
+            if (progressBar) progressBar.style.width = `${Math.max(0, remainingMs / durationMs * 100)}%`;
+            if (remainingMs <= 0) {
+                clearInterval(feedbackCountdownTimer);
+                feedbackCountdownTimer = null;
+            }
+        }, 100);
+    }
+
+    function showErrorCorrection(ids, correctAnswerMessage) {
         pendingResponseIds = ids || [];
+        const answerEl = document.getElementById('feedback-correct-answer');
+        if (answerEl) answerEl.innerHTML = correctAnswerMessage || '';
         const panel = document.getElementById('error-correction-panel');
         if (panel) panel.style.display = 'block';
+        startFeedbackCountdown();
     }
 
     function hideErrorCorrection() {
+        clearInterval(feedbackCountdownTimer);
+        feedbackCountdownTimer = null;
         const panel = document.getElementById('error-correction-panel');
         if (panel) panel.style.display = 'none';
     }
@@ -3071,20 +3116,21 @@ window.toggleInputMode = function() {
     async function correctErrorCategory(category) {
         if (!pendingResponseIds.length) {
             hideErrorCorrection();
+            triggerRegeneration();
             return;
         }
+        const responseIds = pendingResponseIds.slice();
+        pendingResponseIds = [];
+        hideErrorCorrection();
+        triggerRegeneration();
         try {
             const resp = await fetch('/api/correct_error_category', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ response_ids: pendingResponseIds, error_category: category })
+                body: JSON.stringify({ response_ids: responseIds, error_category: category })
             });
             const d = await resp.json();
-            if (d.success) {
-                hideErrorCorrection();
-                showTempMessage('已记录错因：' + category, 'success', 2500);
-                triggerRegeneration();  // 记录成功后立即生成新题
-            } else {
+            if (!d.success) {
                 showTempMessage('更新失败：' + (d.message || '未知错误'), 'error', 2500);
             }
         } catch (e) {
@@ -3105,6 +3151,136 @@ window.toggleInputMode = function() {
     }
     to {
         opacity: 1;
+    }
+}
+
+/* 答题反馈浮层：不占文档流，避免答题界面上下跳动 */
+#message-area {
+    position: fixed;
+    top: 76px;
+    right: 20px;
+    z-index: 1090;
+    width: min(420px, calc(100vw - 32px));
+    pointer-events: none;
+}
+
+#message-area .alert {
+    pointer-events: auto;
+    margin-bottom: 0.75rem;
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+}
+
+.answer-feedback-panel {
+    position: fixed;
+    top: 76px;
+    right: 20px;
+    z-index: 1100;
+    width: min(430px, calc(100vw - 32px));
+    padding: 14px;
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    border-radius: 8px;
+    background: rgba(255, 251, 235, 0.98);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.22);
+    color: #1f2937;
+}
+
+.feedback-title {
+    font-weight: 700;
+    color: #b42318;
+    margin-bottom: 6px;
+}
+
+.feedback-answer {
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.82);
+    font-size: 0.94rem;
+    line-height: 1.45;
+}
+
+.feedback-question {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.feedback-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.feedback-actions .btn {
+    margin-bottom: 0;
+    white-space: nowrap;
+}
+
+.feedback-countdown {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 0.78rem;
+    color: #64748b;
+}
+
+.feedback-progress {
+    height: 3px;
+    margin-top: 5px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.28);
+}
+
+.feedback-progress span {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    background: #f59e0b;
+    transition: width 0.1s linear;
+}
+
+@media (max-width: 768px) {
+    #message-area,
+    .answer-feedback-panel {
+        top: auto;
+        right: 10px;
+        bottom: 12px;
+        left: 10px;
+        width: auto;
+    }
+
+    .answer-feedback-panel {
+        padding: 12px;
+        max-height: 46vh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .feedback-answer {
+        font-size: 0.88rem;
+    }
+
+    .feedback-actions {
+        gap: 6px;
+    }
+
+    .feedback-actions .btn {
+        flex: 1 1 calc(33.333% - 6px);
+        min-height: 38px;
+        padding: 0.35rem 0.45rem;
+        font-size: 0.82rem;
+    }
+
+    #error-correction-skip {
+        flex-basis: 100%;
+    }
+}
+
+@media (max-width: 420px) {
+    .feedback-actions .btn {
+        flex-basis: calc(50% - 6px);
     }
 }
 
