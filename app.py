@@ -760,6 +760,43 @@ def generate_and_cache_problem(template_id):
     return token, problem_data
 
 
+def _problem_var_fingerprint(problem_data):
+    var_values = (problem_data or {}).get('var_values') or {}
+    if not var_values:
+        return None
+    return json.dumps(var_values, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+
+
+def fetch_distinct_problem(template_id, previous_problem_data=None, max_attempts=5):
+    """Fetch a retry problem and avoid returning the same variable set when possible."""
+    previous_fingerprint = _problem_var_fingerprint(previous_problem_data)
+    if previous_fingerprint is None:
+        return fetch_problem_from_pool(template_id)
+
+    last_token = None
+    last_problem_data = None
+    for attempt in range(max_attempts):
+        if attempt == 0:
+            token, problem_data = fetch_problem_from_pool(template_id)
+        else:
+            token, problem_data = generate_and_cache_problem(template_id)
+
+        if not problem_data:
+            continue
+
+        last_token = token
+        last_problem_data = problem_data
+        if _problem_var_fingerprint(problem_data) != previous_fingerprint:
+            return token, problem_data
+
+    logger.warning(
+        "未能生成变量不同的新题，使用最后一次结果: template_id=%s previous_vars=%s",
+        template_id,
+        previous_fingerprint,
+    )
+    return last_token, last_problem_data
+
+
 def prewarm_pools(paper_id=None, enabled_only=True):
     print(f"[PREWARM] 开始预热题目池 paper_id={paper_id or 'enabled'}")
     conn = get_db_connection()

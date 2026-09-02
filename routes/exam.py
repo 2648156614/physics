@@ -419,27 +419,39 @@ def create_exam_blueprint(deps):
             if actual_id is None:
                 return jsonify({'success': False, 'message': '无效的题目编号'})
     
-            token, problem_data = fetch_problem_from_pool(actual_id)
-            if not problem_data:
-                token, problem_data = generate_and_cache_problem(actual_id)
+            current_problem_data = None
+            current_problem_state = session.get('current_problem') or {}
+            if current_problem_state.get('display_number') == problem_id:
+                current_problem_data = get_problem_by_token(current_problem_state.get('token'))
+
+            token, problem_data = fetch_distinct_problem(actual_id, current_problem_data)
     
             if not problem_data or not token:
                 return jsonify({'success': False, 'message': '题目生成失败'})
     
-            # 更新session中的题目状态
-            if 'current_problem' in session and session['current_problem']['display_number'] == problem_id:
-                session['current_problem'].update({
-                    'token': token,
-                    'total_attempts': 0,
-                    'answered_correctly': False,
-                    'start_time': time.time(),
-                    'actual_id': actual_id,
-                    'paper_id': paper_id,
-                    'exam_id': selected_exam_id,
-                    'user_id': session['user_id']
-                })
+            # 更新session中的题目状态，确保前端显示的新题和下次提交校验使用同一个token。
+            session['current_problem'] = {
+                'display_number': problem_id,
+                'actual_id': actual_id,
+                'paper_id': paper_id,
+                'exam_id': selected_exam_id,
+                'user_id': session['user_id'],
+                'token': token,
+                'total_attempts': 0,
+                'answered_correctly': False,
+                'start_time': time.time(),
+            }
+            session.modified = True
     
-            return jsonify({'success': True, 'message': '题目刷新成功', 'token': token})
+            return jsonify({
+                'success': True,
+                'message': '题目刷新成功',
+                'token': token,
+                'new_var_values': problem_data.get('var_values', {}),
+                'new_correct_answers': problem_data.get('correct_answers', []),
+                'new_problem_text': problem_data.get('problem_text', ''),
+                'answer_units': problem_data.get('answer_units', []),
+            })
         except Exception as e:
             return jsonify({'success': False, 'message': str(e)})
     
@@ -771,9 +783,7 @@ def create_exam_blueprint(deps):
                 next_problem_id = problem_id
     
                 # 答错时生成新题目（不再限制尝试次数）
-                new_token, new_problem_data = fetch_problem_from_pool(actual_id)
-                if not new_problem_data:
-                    new_token, new_problem_data = generate_and_cache_problem(actual_id)
+                new_token, new_problem_data = fetch_distinct_problem(actual_id, problem_data)
     
                 if new_problem_data:
                     # 更新session中的题目数据和正确答案

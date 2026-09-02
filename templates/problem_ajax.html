@@ -2202,7 +2202,6 @@ function resetFormState() {
 
 function reloadProblemPageAfterUpdateFailure(error) {
     console.error('题目参数更新失败，准备自动刷新页面:', error);
-    showMessage('题目更新失败，正在自动刷新页面...', 'error');
     disableInputs();
 
     const submitBtn = document.getElementById('submit-btn');
@@ -2220,10 +2219,8 @@ function reloadProblemPageAfterUpdateFailure(error) {
         forceResumeShield(0);
     }
 
-    setTimeout(() => {
-        markExpectedPageTransition();
-        window.location.reload();
-    }, 1000);
+    markExpectedPageTransition();
+    window.location.reload();
 }
 
 // 异步刷新题目参数
@@ -2236,7 +2233,6 @@ async function refreshProblemParams() {
         const submitBtn = document.getElementById('submit-btn');
         const originalText = submitBtn.innerHTML;
 
-        showMessage('正在刷新题目...', 'info');
         submitBtn.disabled = true;
         submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>刷新中...';
 
@@ -2261,13 +2257,13 @@ async function refreshProblemParams() {
             timerInitialized = false;
             initTimer();
 
-            showMessage('题目已刷新，计时器已重置！', 'success');
-
-            // 重新加载页面以获取新题目
-            setTimeout(() => {
+            if (data.new_problem_text) {
+                await updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text);
+                resetFormState();
+            } else {
                 markExpectedPageTransition();
                 window.location.reload();
-            }, 1000);
+            }
         } else {
             throw new Error(data.message);
         }
@@ -2276,7 +2272,7 @@ async function refreshProblemParams() {
 
     } catch (error) {
         console.error('刷新题目参数失败:', error);
-        showMessage('刷新失败: ' + error.message, 'error');
+        reloadProblemPageAfterUpdateFailure(error);
         return false;
     } finally {
         // 恢复按钮状态
@@ -2336,9 +2332,9 @@ async function updateProblemParameters(newVarValues, newCorrectAnswers, newProbl
                 valueCell.classList.add('param-updating');
                 setTimeout(() => {
                     let displayValue = value;
-                    if (key in ['i', 'A', 'l']) {
+                    if (['i', 'A', 'l'].includes(key)) {
                         displayValue = parseFloat(value).toFixed(3);
-                    } else if (key in ['B', 'B0', 'v', 'dBdt', 'alpha', 'm']) {
+                    } else if (['B', 'B0', 'v', 'dBdt', 'alpha', 'm'].includes(key)) {
                         displayValue = parseFloat(value).toFixed(2);
                     }
                     valueCell.innerHTML = `<strong>${displayValue}</strong>`;
@@ -2629,16 +2625,7 @@ document.getElementById('answer-form').addEventListener('submit', async function
                 totalAttempts = data.total_attempts;
                 updateAttemptsDisplay();
 
-                // 使用科学计数法格式的正确答案显示（稳定显示，先不立即刷新新题）
-                const correctAnswerMessage = formatCorrectAnswers(data.correct_answers);
-                showMessage(`❌ 答案不正确！${correctAnswerMessage}。可先选择下方错因，稍后将自动生成新题供你重试。`, 'error');
-
-                // 极简点选兜底：弹出错因纠正面板（在刷新新题之前，先给学生时间）
-                if (data.response_ids && data.response_ids.length) {
-                    showErrorCorrection(data.response_ids);
-                }
-
-                // 延迟刷新新题目：用户点选/跳过 或 超时后 才生成新题（自适应重试仍生效）
+                hideErrorCorrection();
                 scheduleProblemRegeneration(data);
             }
         } else {
@@ -2668,12 +2655,7 @@ document.getElementById('next-btn').addEventListener('click', function() {
 document.getElementById('refresh-btn').addEventListener('click', function() {
     markExpectedUiAction(3000);
     if (confirm('确定要刷新题目吗？这将生成新的题目参数，但不会增加尝试次数。')) {
-        refreshProblemParams()
-            .then(success => {
-                if (success) {
-                    resetFormState();
-                }
-            });
+        refreshProblemParams();
     }
 });
 
@@ -3032,7 +3014,7 @@ window.toggleInputMode = function() {
     let regenTimer = null;
     let regenData = null;
 
-    // 用户点选/跳过错因后，或等待超时后，才真正刷新生成新题
+    // 答错后立即切换到新题；错因点选不再阻塞答题流。
     function triggerRegeneration() {
         if (regenTimer === null) return;  // 已刷新或从未安排
         clearTimeout(regenTimer);
@@ -3042,27 +3024,26 @@ window.toggleInputMode = function() {
         regenData = null;
         if (!data) return;
         if (data.new_problem_generated && data.new_var_values) {
-            showMessage('正在生成新题目，请重新作答...', 'info');
+            disableInputs();
             updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text)
                 .then(() => {
                     startTime = Date.now();
                     resetSwitchTracking();
                     timerInitialized = false;
                     initTimer();
-                    showMessage('新题目已生成！请重新作答。', 'success');
+                    showTempMessage('答案不正确，已换新题。', 'warning', 1800, false);
                     resetFormState();
                 })
                 .catch(error => reloadProblemPageAfterUpdateFailure(error));
         } else {
-            resetSwitchTracking();
-            resetFormState();
+            reloadProblemPageAfterUpdateFailure(new Error(data.message || '题目生成失败'));
         }
     }
 
-    // 安排新题刷新：默认 6 秒后自动刷新；若用户先点选/跳过，则立即刷新
+    // 安排新题刷新：下一轮事件循环立即执行，让按钮状态先完成渲染。
     function scheduleProblemRegeneration(data) {
         regenData = data;
-        regenTimer = setTimeout(triggerRegeneration, 6000);
+        regenTimer = setTimeout(triggerRegeneration, 0);
     }
 
     function showErrorCorrection(ids) {
