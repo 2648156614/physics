@@ -483,6 +483,7 @@
                             </tr>
                         </thead>
                         <tbody id="variables-body">
+                            {% set display_var_values = problem.display_var_values if problem.display_var_values is defined and problem.display_var_values else {} %}
                             {% for key, value in problem.var_values.items() %}
                             <tr data-var-key="{{ key }}">
                                 <td>
@@ -516,11 +517,11 @@
                                 <td class="var-value">
                                     <strong>
                                         {% if key in ['i', 'A', 'l'] %}
-                                            {{ "%.3f"|format(value) if value is number else value }}
+                                            {{ display_var_values.get(key, "%.3f"|format(value) if value is number else value) }}
                                         {% elif key in ['B', 'B0', 'v', 'dBdt', 'alpha', 'm'] %}
-                                            {{ "%.2f"|format(value) if value is number else value }}
+                                            {{ display_var_values.get(key, "%.2f"|format(value) if value is number else value) }}
                                         {% else %}
-                                            {{ value }}
+                                            {{ display_var_values.get(key, value) }}
                                         {% endif %}
                                     </strong>
                                 </td>
@@ -2268,7 +2269,7 @@ async function refreshProblemParams() {
             initTimer();
 
             if (data.new_problem_text) {
-                await updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text);
+                await updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text, data.new_display_var_values);
                 resetFormState();
             } else {
                 markExpectedPageTransition();
@@ -2325,7 +2326,7 @@ async function updateProblemText(newProblemText) {
 }
 
 // 更新题目参数和正确答案
-async function updateProblemParameters(newVarValues, newCorrectAnswers, newProblemText) {
+async function updateProblemParameters(newVarValues, newCorrectAnswers, newProblemText, newDisplayVarValues = {}) {
     console.log('更新题目参数:', newVarValues);
     console.log('更新正确答案:', newCorrectAnswers);
 
@@ -2341,11 +2342,17 @@ async function updateProblemParameters(newVarValues, newCorrectAnswers, newProbl
                 // 添加更新动画
                 valueCell.classList.add('param-updating');
                 setTimeout(() => {
-                    let displayValue = value;
+                    let displayValue = Object.prototype.hasOwnProperty.call(newDisplayVarValues, key)
+                        ? newDisplayVarValues[key]
+                        : value;
                     if (['i', 'A', 'l'].includes(key)) {
-                        displayValue = parseFloat(value).toFixed(3);
+                        displayValue = Object.prototype.hasOwnProperty.call(newDisplayVarValues, key)
+                            ? displayValue
+                            : parseFloat(value).toFixed(3);
                     } else if (['B', 'B0', 'v', 'dBdt', 'alpha', 'm'].includes(key)) {
-                        displayValue = parseFloat(value).toFixed(2);
+                        displayValue = Object.prototype.hasOwnProperty.call(newDisplayVarValues, key)
+                            ? displayValue
+                            : parseFloat(value).toFixed(2);
                     }
                     valueCell.innerHTML = `<strong>${displayValue}</strong>`;
                     valueCell.classList.remove('param-updating');
@@ -3041,7 +3048,7 @@ window.toggleInputMode = function() {
         isRegeneratingProblem = true;
         if (data.new_problem_generated && data.new_var_values) {
             disableInputs();
-            updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text)
+            updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text, data.new_display_var_values || {})
                 .then(() => {
                     startTime = Date.now();
                     resetSwitchTracking();

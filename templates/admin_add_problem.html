@@ -139,6 +139,15 @@
                             </div>
                         </div>
 
+                        <div class="mb-3">
+                            <label for="generation_strategy" class="form-label">漂亮题生成策略（可选）</label>
+                            <textarea class="form-control font-monospace" id="generation_strategy" name="generation_strategy" rows="7"
+                                      placeholder="留空时系统会根据变量和公式自动生成。把 enabled 改为 false 可让该题回退旧随机生成规则。"></textarea>
+                            <div class="form-text">
+                                用于控制“整数变量 + 整数答案 + 反推变量”的生成方式；策略失败时会自动回退到旧生成规则。
+                            </div>
+                        </div>
+
                         <div class="d-grid gap-2">
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-check-lg me-2"></i> 添加题目
@@ -254,7 +263,8 @@ document.addEventListener('DOMContentLoaded', function () {
         text: 'problem_text',
         variables: 'variables',
         formula: 'solution_formula',
-        answer_units: 'answer_units'
+        answer_units: 'answer_units',
+        generation_strategy: 'generation_strategy'
     };
 
     function setStatus(message, type) {

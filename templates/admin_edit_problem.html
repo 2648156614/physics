@@ -138,6 +138,15 @@
                             </div>
                         </div>
 
+                        <div class="mb-3">
+                            <label for="generation_strategy" class="form-label">漂亮题生成策略（可选）</label>
+                            <textarea class="form-control font-monospace" id="generation_strategy" name="generation_strategy" rows="7"
+                                      placeholder="留空时系统会根据变量和公式自动生成。把 enabled 改为 false 可让该题回退旧随机生成规则。">{{ template.generation_strategy or '' }}</textarea>
+                            <div class="form-text">
+                                用于控制“整数变量 + 整数答案 + 反推变量”的生成方式；策略失败时会自动回退到旧生成规则。
+                            </div>
+                        </div>
+
                         <div class="d-grid gap-2">
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-check-lg me-2"></i> 更新题目
@@ -163,6 +172,7 @@
                         <strong>变量：</strong> {{ template.variables or '无' }}<br>
                         <strong>答案数量：</strong> {{ template.answer_count }}<br>
                         <strong>答案单位：</strong> {{ template.answer_units or '未设置' }}<br>
+                        <strong>生成策略：</strong> {% if template.generation_strategy %}已启用{% else %}旧规则{% endif %}<br>
                         <strong>难度：</strong>
                         {% if template.difficulty == 'easy' %}简单
                         {% elif template.difficulty == 'hard' %}困难

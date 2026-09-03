@@ -1755,6 +1755,33 @@ def repair_database():
                                (infer_knowledge_label(tname), tid))
             print("已回填 knowledge_point 历史数据")
 
+        cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'generation_strategy'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE problem_templates ADD COLUMN generation_strategy TEXT DEFAULT NULL")
+            print("已添加 problem_templates.generation_strategy 列")
+        cursor.execute("""
+            SELECT id, template_name, problem_text, variables, solution_formula, answer_count
+            FROM problem_templates
+            WHERE generation_strategy IS NULL OR generation_strategy = ''
+        """)
+        templates_without_strategy = cursor.fetchall()
+        for template_row in templates_without_strategy:
+            template_id, template_name, problem_text, variables, solution_formula, answer_count = template_row
+            generation_strategy = question_generation_service.infer_generation_strategy(
+                template_name,
+                problem_text,
+                variables,
+                solution_formula,
+                answer_count,
+            )
+            if generation_strategy:
+                cursor.execute(
+                    "UPDATE problem_templates SET generation_strategy = %s WHERE id = %s",
+                    (generation_strategy, template_id),
+                )
+        if templates_without_strategy:
+            print(f"已为 {len(templates_without_strategy)} 道题补充 generation_strategy")
+
         # 高频错因字典表（系统种子标签，第二步 AI 追加 is_system=0 的行）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS error_tags_library (
@@ -1885,6 +1912,7 @@ def initialize_database():
         image_filename VARCHAR(255) NULL,
         paper_id INT DEFAULT NULL,
         knowledge_point VARCHAR(50) DEFAULT NULL,
+        generation_strategy TEXT DEFAULT NULL,
         FOREIGN KEY (paper_id) REFERENCES exam_papers(id)
     )
     """)
@@ -2131,8 +2159,8 @@ def initialize_database():
             cursor.execute("""
                 INSERT INTO problem_templates 
                 (template_name, problem_text, variables, solution_formula, 
-                 answer_count, answer_units, image_filename, paper_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 answer_count, answer_units, image_filename, paper_id, generation_strategy)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 template['name'],
                 problem_text,
@@ -2141,7 +2169,14 @@ def initialize_database():
                 template['answer_count'],
                 template.get('answer_units', ''),
                 template.get('image_filename'),
-                default_paper_id
+                default_paper_id,
+                question_generation_service.infer_generation_strategy(
+                    template['name'],
+                    problem_text,
+                    question_generation_service.normalize_variable_specs(template['variables']),
+                    template['formula'],
+                    template['answer_count'],
+                )
             ))
             print(f"✅ 插入题目: {template['name']}, 答案单位: {template.get('answer_units', '无')}")
 

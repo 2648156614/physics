@@ -361,6 +361,15 @@ def create_question_blueprint(deps):
                 knowledge_point = request.form.get('knowledge_point', '').strip()
                 if not knowledge_point:
                     knowledge_point = infer_knowledge_label(template_name)
+                generation_strategy = request.form.get('generation_strategy', '').strip()
+                if not generation_strategy:
+                    generation_strategy = question_generation_service.infer_generation_strategy(
+                        template_name,
+                        problem_text,
+                        variables,
+                        solution_formula,
+                        answer_count,
+                    )
 
                 # 处理图片上传
                 image_filename = None
@@ -377,9 +386,9 @@ def create_question_blueprint(deps):
                 # 插入新题目模板
                 cursor.execute("""
                     INSERT INTO problem_templates 
-                    (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id, knowledge_point)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id, knowledge_point))
+                    (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id, knowledge_point, generation_strategy)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id, knowledge_point, generation_strategy))
                 new_template_id = cursor.lastrowid
     
                 conn.commit()
@@ -463,6 +472,15 @@ def create_question_blueprint(deps):
                 knowledge_point = request.form.get('knowledge_point', '').strip()
                 if not knowledge_point:
                     knowledge_point = infer_knowledge_label(template_name)
+                generation_strategy = request.form.get('generation_strategy', '').strip()
+                if not generation_strategy:
+                    generation_strategy = question_generation_service.infer_generation_strategy(
+                        template_name,
+                        problem_text,
+                        variables,
+                        solution_formula,
+                        answer_count,
+                    )
                 remove_image = request.form.get('remove_image') == 'true'
                 current_image = request.form.get('current_image', '')
                 cursor.execute("SELECT image_filename FROM problem_templates WHERE id = %s", (template_id,))
@@ -491,9 +509,9 @@ def create_question_blueprint(deps):
                 cursor.execute("""
                     UPDATE problem_templates 
                     SET template_name = %s, problem_text = %s, variables = %s, 
-                        solution_formula = %s, answer_count = %s, answer_units = %s, difficulty = %s, image_filename = %s, paper_id = %s, knowledge_point = %s
+                        solution_formula = %s, answer_count = %s, answer_units = %s, difficulty = %s, image_filename = %s, paper_id = %s, knowledge_point = %s, generation_strategy = %s
                     WHERE id = %s
-                """, (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id, knowledge_point,
+                """, (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id, knowledge_point, generation_strategy,
                       template_id))
     
                 conn.commit()

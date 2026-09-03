@@ -448,6 +448,7 @@ def create_exam_blueprint(deps):
                 'message': '题目刷新成功',
                 'token': token,
                 'new_var_values': problem_data.get('var_values', {}),
+                'new_display_var_values': problem_data.get('display_var_values', {}),
                 'new_correct_answers': problem_data.get('correct_answers', []),
                 'new_problem_text': problem_data.get('problem_text', ''),
                 'answer_units': problem_data.get('answer_units', []),
@@ -801,6 +802,7 @@ def create_exam_blueprint(deps):
                         'next_problem': next_problem_id,
                         'new_problem_generated': True,
                         'new_var_values': new_problem_data['var_values'],
+                        'new_display_var_values': new_problem_data.get('display_var_values', {}),
                         'new_correct_answers': new_problem_data['correct_answers'],
                         'new_problem_text': new_problem_data['problem_text'],
                         'token': new_token

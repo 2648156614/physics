@@ -1,6 +1,8 @@
+import json
 import random
 import re
 import time
+from fractions import Fraction
 from math import log, pi
 from urllib.parse import quote, unquote
 
@@ -101,6 +103,202 @@ def coerce_formula_answers(raw_answer, current_vars, depth=0):
     return [float(raw_answer)]
 
 
+def parse_generation_strategy(template):
+    raw_strategy = (template or {}).get('generation_strategy')
+    if not raw_strategy:
+        return None
+    if isinstance(raw_strategy, dict):
+        return raw_strategy
+    try:
+        strategy = json.loads(raw_strategy)
+    except (TypeError, ValueError):
+        return None
+    return strategy if isinstance(strategy, dict) else None
+
+
+def format_display_number(value, max_denominator=12):
+    if not isinstance(value, (int, float)) or not np.isfinite(value):
+        return value
+    if abs(value - round(value)) < 1e-9:
+        return int(round(value))
+    fraction = Fraction(float(value)).limit_denominator(max_denominator)
+    if abs(float(fraction) - value) < 1e-8 and abs(fraction.denominator) > 1:
+        return f"{fraction.numerator}/{fraction.denominator}"
+    if abs(value) >= 1:
+        return round(value, 3)
+    return round(value, 4)
+
+
+def _rand_from_spec(spec, fallback_range):
+    spec = spec or {}
+    min_val, max_val = spec.get('range', fallback_range)
+    step = spec.get('step', 1)
+    value_type = spec.get('type', 'integer')
+    if value_type == 'choice' and spec.get('values'):
+        return random.choice(spec['values'])
+    if value_type == 'fraction':
+        denominator = int(spec.get('denominator', 2) or 2)
+        low = int(round(float(min_val) * denominator))
+        high = int(round(float(max_val) * denominator))
+        return random.randint(low, high) / denominator
+    if value_type == 'decimal':
+        precision = int(spec.get('precision', 2) or 2)
+        return round(random.uniform(float(min_val), float(max_val)), precision)
+
+    step = int(step or 1)
+    low = int(round(float(min_val)))
+    high = int(round(float(max_val)))
+    if high < low:
+        low, high = high, low
+    choices = list(range(low, high + 1, max(1, step)))
+    return random.choice(choices or [low])
+
+
+def _solve_formula_for_var(solution_formula, variables, solve_for, assigned_vars, target_answer):
+    symbols = {name: sp.symbols(name) for name in variables}
+    context = build_formula_context()
+    context.update(symbols)
+    expr = eval(solution_formula, {}, context)
+    if isinstance(expr, (tuple, list)):
+        expr = expr[0]
+
+    equation = sp.Eq(expr, target_answer)
+    solutions = sp.solve(equation, symbols[solve_for], dict=True)
+    if not solutions:
+        return None
+
+    for solution in solutions:
+        solved_expr = solution.get(symbols[solve_for])
+        if solved_expr is None:
+            continue
+        try:
+            substitutions = {
+                symbols[name]: value
+                for name, value in assigned_vars.items()
+                if name in symbols
+            }
+            value = float(solved_expr.subs(substitutions).evalf())
+        except Exception:
+            continue
+        if np.isfinite(value):
+            return value
+    return None
+
+
+def generate_inverse_problem(template, variables, configured_ranges, local_vars, answer_units, answer_constraints):
+    strategy = parse_generation_strategy(template)
+    if not strategy or not strategy.get('enabled', True) or strategy.get('mode') != 'inverse_v1':
+        return None
+    if template.get('answer_count', 1) != 1:
+        return None
+
+    solve_for = strategy.get('solve_for')
+    if solve_for not in variables:
+        return None
+
+    target_spec = strategy.get('target_answer') or {}
+    key_vars = strategy.get('key_vars') or {}
+    free_vars = strategy.get('free_vars') or {}
+    max_attempts = int(strategy.get('max_attempts', 30) or 30)
+    var_units = infer_variable_units(template.get('problem_text', ''), variables)
+    answer_count = template.get('answer_count', 1)
+    if len(answer_units) < answer_count:
+        answer_units.extend([''] * (answer_count - len(answer_units)))
+    elif len(answer_units) > answer_count:
+        answer_units = answer_units[:answer_count]
+
+    for attempt in range(max_attempts):
+        target_answer = _rand_from_spec(target_spec, target_spec.get('range', (1, 50)))
+        var_values = {}
+        for var in variables:
+            if var == solve_for:
+                continue
+            spec = key_vars.get(var) or free_vars.get(var) or {}
+            fallback_range = configured_ranges.get(var, get_adaptive_default_range(var))
+            var_values[var] = _rand_from_spec(spec, fallback_range)
+
+        solved_value = _solve_formula_for_var(
+            template['solution_formula'],
+            variables,
+            solve_for,
+            var_values,
+            target_answer,
+        )
+        if solved_value is None:
+            continue
+
+        min_val, max_val = configured_ranges.get(solve_for, get_adaptive_default_range(solve_for))
+        relaxed_min = min_val * 0.2
+        relaxed_max = max_val * 5
+        if solved_value <= 0 or solved_value < relaxed_min or solved_value > relaxed_max:
+            continue
+
+        var_values[solve_for] = round(solved_value, 4)
+        current_vars = local_vars.copy()
+        current_vars.update(var_values)
+        try:
+            correct_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
+        except Exception:
+            continue
+        if len(correct_answers) != 1:
+            continue
+        if not is_answer_reasonable_dynamic(correct_answers, var_values, attempt, answer_constraints):
+            continue
+        if abs(correct_answers[0] - float(target_answer)) > max(1e-6, abs(float(target_answer)) * 1e-6):
+            continue
+
+        display_values = {
+            key: format_display_number(value, strategy.get('max_denominator', 12))
+            for key, value in var_values.items()
+        }
+        problem_content = format_problem_text(template['problem_text'], display_values)
+        return {
+            'problem_text': problem_content,
+            'var_values': var_values,
+            'display_var_values': display_values,
+            'var_units': var_units,
+            'correct_answers': [float(target_answer)],
+            'answer_units': answer_units,
+            'template_id': template['id'],
+            'answer_count': template.get('answer_count', 1),
+            'template_name': template['template_name'],
+            'image_filename': template.get('image_filename'),
+            'generation_mode': 'inverse_v1'
+        }
+
+    return None
+
+
+def infer_generation_strategy(template_name, problem_text, variables_text, solution_formula, answer_count=1):
+    variables, configured_ranges = parse_variable_specs(variables_text or '')
+    if int(answer_count or 1) != 1 or len(variables) < 2:
+        return ''
+
+    preferred_solve_order = ['i', 'I', 'R', 'B', 'v', 'L', 'l', 'r', 'a', 'x', 'AC', 'omega']
+    solve_for = next((name for name in preferred_solve_order if name in variables), variables[-1])
+    key_vars = {}
+    free_vars = {}
+    for var in variables:
+        if var == solve_for:
+            continue
+        min_val, max_val = configured_ranges.get(var, get_adaptive_default_range(var))
+        low = max(1, int(round(min_val)))
+        high = max(low, int(round(min(max_val, 50))))
+        key_vars[var] = {'type': 'integer', 'range': [low, high], 'step': 1}
+
+    strategy = {
+        'enabled': True,
+        'mode': 'inverse_v1',
+        'solve_for': solve_for,
+        'target_answer': {'type': 'integer', 'range': [1, 80], 'step': 1},
+        'key_vars': key_vars,
+        'free_vars': free_vars,
+        'max_attempts': 30,
+        'max_denominator': 12
+    }
+    return json.dumps(strategy, ensure_ascii=False, indent=2)
+
+
 def generate_problem_from_template(template_id, max_attempts=10):
     template = get_template(template_id)
 
@@ -117,6 +315,20 @@ def generate_problem_from_template(template_id, max_attempts=10):
     answer_units = parse_answer_units(template)
     answer_constraints = infer_answer_constraints(answer_units)
     var_units = infer_variable_units(template.get('problem_text', ''), variables)
+
+    inverse_problem = generate_inverse_problem(
+        template,
+        variables,
+        configured_ranges,
+        local_vars,
+        answer_units[:],
+        answer_constraints,
+    )
+    if inverse_problem:
+        print(f"Inverse problem generated - template: {template['template_name']}")
+        print(f"   Variable values: {inverse_problem['var_values']}")
+        print(f"   Correct answers: {inverse_problem['correct_answers']}")
+        return inverse_problem
 
     for attempt in range(max_attempts):
         var_values = {}
