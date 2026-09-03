@@ -152,7 +152,7 @@
                 </div>
 
                 <!-- 答错反馈浮层：脱离文档流，不推动答题界面 -->
-                <div id="error-correction-panel" class="answer-feedback-panel" style="display:none;" role="status" aria-live="polite">
+                <div id="error-correction-panel" class="answer-feedback-panel" data-answer-flow-version="2026-09-03-feedback-v3" style="display:none;" role="status" aria-live="polite">
                     <div class="feedback-title">
                         <i class="bi bi-x-circle-fill me-1"></i>回答错误
                     </div>
@@ -1850,7 +1850,9 @@ function showSwitchWarning() {
 }
 
 // 初始化全局正确答案变量
+const ANSWER_FLOW_VERSION = '2026-09-03-feedback-v3';
 let currentCorrectAnswers = {{ problem.correct_answers | tojson }};
+console.log('答题流程版本:', ANSWER_FLOW_VERSION);
 console.log('Ajax问题页面初始化 - 问题ID:', problemId, '答案数量:', answerCount, '累计尝试:', totalAttempts, '总题目数:', totalProblems);
 console.log('初始正确答案:', currentCorrectAnswers);
 console.log('页面加载时间:', new Date().toLocaleTimeString());
@@ -2673,6 +2675,7 @@ document.getElementById('refresh-btn').addEventListener('click', function() {
 // 页面初始化
 document.addEventListener('DOMContentLoaded', function() {
     console.log('动态问题页面加载完成');
+    console.log('当前答题流程版本:', ANSWER_FLOW_VERSION);
     console.log('页面加载时间:', new Date().toLocaleTimeString());
     console.log('开始计时时间:', new Date(startTime).toLocaleTimeString());
 
