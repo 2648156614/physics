@@ -1917,6 +1917,13 @@ def initialize_database():
     )
     """)
 
+    # 兼容旧库：CREATE TABLE IF NOT EXISTS 不会给已存在的表补新列。
+    # 种子题插入会使用 generation_strategy，因此必须在插入前确保字段存在。
+    cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'generation_strategy'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE problem_templates ADD COLUMN generation_strategy TEXT DEFAULT NULL")
+        print("已添加 problem_templates.generation_strategy 列")
+
     # 创建用户答题记录表（确保包含所有必要字段）
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS user_responses (
