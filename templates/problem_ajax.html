@@ -122,6 +122,7 @@
                 <div class="d-flex justify-content-between align-items-center">
                     <h4 class="mb-0">
                         <i class="bi bi-calculator me-2"></i> 第{{ problem_id }}题：{{ problem.template_name }}
+                        <span id="answer-flow-inline-badge" class="badge bg-warning text-dark ms-2">答题页 v3</span>
                     </h4>
                     <div class="d-flex align-items-center">
                         <span class="badge bg-light text-dark me-2" id="timer-display">
@@ -3258,6 +3259,12 @@ window.toggleInputMode = function() {
     user-select: none;
 }
 
+#answer-flow-inline-badge {
+    vertical-align: middle;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
 @media (max-width: 768px) {
     #message-area,
     .answer-feedback-panel {
@@ -3299,6 +3306,13 @@ window.toggleInputMode = function() {
         bottom: 6px;
         font-size: 0.66rem;
         opacity: 0.72;
+    }
+
+    #answer-flow-inline-badge {
+        display: inline-block;
+        margin-top: 4px;
+        margin-left: 0 !important;
+        font-size: 0.66rem;
     }
 }
 
