@@ -122,7 +122,6 @@
                 <div class="d-flex justify-content-between align-items-center">
                     <h4 class="mb-0">
                         <i class="bi bi-calculator me-2"></i> 第{{ problem_id }}题：{{ problem.template_name }}
-                        <span id="answer-flow-inline-badge" class="badge bg-warning text-dark ms-2">答题页 v3</span>
                     </h4>
                     <div class="d-flex align-items-center">
                         <span class="badge bg-light text-dark me-2" id="timer-display">
@@ -173,8 +172,6 @@
                     </div>
                     <div class="feedback-progress"><span id="feedback-progress-bar"></span></div>
                 </div>
-
-                <div id="answer-flow-badge" aria-label="答题流程版本">答题页 v3</div>
 
                 <!-- 进度指示器 -->
                 <div class="progress mb-4" style="height: 8px;">
@@ -3244,27 +3241,6 @@ window.toggleInputMode = function() {
     transition: width 0.1s linear;
 }
 
-#answer-flow-badge {
-    position: fixed;
-    right: 12px;
-    bottom: 10px;
-    z-index: 1060;
-    padding: 3px 7px;
-    border-radius: 999px;
-    background: rgba(15, 23, 42, 0.58);
-    color: rgba(255, 255, 255, 0.82);
-    font-size: 0.72rem;
-    line-height: 1.2;
-    pointer-events: none;
-    user-select: none;
-}
-
-#answer-flow-inline-badge {
-    vertical-align: middle;
-    font-size: 0.72rem;
-    font-weight: 600;
-}
-
 @media (max-width: 768px) {
     #message-area,
     .answer-feedback-panel {
@@ -3301,19 +3277,6 @@ window.toggleInputMode = function() {
         flex-basis: 100%;
     }
 
-    #answer-flow-badge {
-        right: 8px;
-        bottom: 6px;
-        font-size: 0.66rem;
-        opacity: 0.72;
-    }
-
-    #answer-flow-inline-badge {
-        display: inline-block;
-        margin-top: 4px;
-        margin-left: 0 !important;
-        font-size: 0.66rem;
-    }
 }
 
 @media (max-width: 420px) {
