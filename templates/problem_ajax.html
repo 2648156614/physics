@@ -185,22 +185,26 @@
                     <small class="text-muted">累计尝试: <span id="total-attempts">{{ total_attempts }}</span> 次</small>
                 </div>
 
-                <!-- 题目内容区域 - 添加单独的容器 -->
-                <div id="problem-content-container">
-                    <div id="exam-initial-shield" aria-hidden="true">
-                        <div>
-                            <div class="shield-title">题目已遮挡</div>
-                            <p class="shield-text">题目将在 1 秒后加载，并保持遮挡显示。</p>
+                <div class="exam-workbench">
+                    <section class="question-pane" aria-label="题目内容">
+                        <!-- 题目内容区域 - 添加单独的容器 -->
+                        <div id="problem-content-container">
+                            <div id="exam-initial-shield" aria-hidden="true">
+                                <div>
+                                    <div class="shield-title">题目已遮挡</div>
+                                    <p class="shield-text">题目将在 1 秒后加载，并保持遮挡显示。</p>
+                                </div>
+                            </div>
+                            <!-- 题目内容 -->
+                            <div class="math-formula mb-0 p-3 border rounded bg-light" id="problem-content">
+                                {{ problem.problem_text|safe }}
+                            </div>
                         </div>
-                    </div>
-                    <!-- 题目内容 -->
-                    <div class="math-formula mb-4 p-3 border rounded bg-light" id="problem-content">
-                        {{ problem.problem_text|safe }}
-                    </div>
-                </div>
+                    </section>
 
+                    <section class="answer-pane" aria-label="答题区">
                 <!-- 动态答题表单 - 双模式切换方案 -->
-                <form id="answer-form" class="mt-4">
+                <form id="answer-form">
                     <!-- 输入模式切换按钮 -->
                     <div class="mb-3">
                         <div class="d-flex justify-content-between align-items-center">
@@ -459,6 +463,8 @@
                         {% endif %}
                     </div>
                 </form>
+                    </section>
+                </div>
             </div>
         </div>
 
@@ -467,11 +473,11 @@
             <div class="card-header bg-light d-flex justify-content-between align-items-center">
                 <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 题目参数表</h5>
                 <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse"
-                        data-bs-target="#variablesTable" aria-expanded="true" aria-controls="variablesTable">
+                        data-bs-target="#variablesTable" aria-expanded="false" aria-controls="variablesTable">
                     <i class="bi bi-chevron-down"></i>
                 </button>
             </div>
-            <div class="collapse show" id="variablesTable">
+            <div class="collapse" id="variablesTable">
                 <div class="card-body">
                     <table class="table table-bordered variable-table table-hover" id="variables-table">
                         <thead class="table-light">
@@ -3177,10 +3183,64 @@ window.toggleInputMode = function() {
     box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
 }
 
+.exam-workbench {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+    gap: 16px;
+    align-items: start;
+}
+
+.question-pane,
+.answer-pane {
+    min-width: 0;
+}
+
+.question-pane {
+    position: sticky;
+    top: 76px;
+}
+
+#problem-content-container {
+    max-height: calc(100vh - 210px);
+    min-height: 260px;
+    overflow: auto;
+    border-radius: 8px;
+    background: #f8f9fa;
+    -webkit-overflow-scrolling: touch;
+}
+
+.answer-pane {
+    position: sticky;
+    top: 76px;
+    padding: 14px;
+    border: 1px solid rgba(13, 110, 253, 0.16);
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.answer-pane .alert-light {
+    padding: 0.65rem 0.75rem;
+    margin-bottom: 0;
+    background: #f8fafc;
+}
+
+.answer-pane .form-text,
+.answer-pane .alert-light small {
+    font-size: 0.82rem;
+}
+
+.answer-pane .btn-lg {
+    min-height: 46px;
+    padding: 0.55rem 0.9rem;
+    font-size: 1rem;
+}
+
 .answer-feedback-panel {
     position: fixed;
-    top: 76px;
-    right: 20px;
+    top: 50%;
+    right: 24px;
+    transform: translateY(-50%);
     z-index: 1100;
     width: min(430px, calc(100vw - 32px));
     padding: 14px;
@@ -3249,12 +3309,103 @@ window.toggleInputMode = function() {
 }
 
 @media (max-width: 768px) {
+    .col-lg-3.col-md-4.mb-4 {
+        margin-bottom: 0.6rem !important;
+    }
+
+    .col-lg-3.col-md-4.mb-4 .card-header,
+    .col-lg-3.col-md-4.mb-4 .card-footer {
+        display: none;
+    }
+
+    #problem-sidebar {
+        display: flex;
+        overflow-x: auto;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    #problem-sidebar .list-group-item {
+        flex: 0 0 auto;
+        width: 54px;
+        justify-content: center !important;
+        padding: 0.45rem 0.35rem;
+        border-right: 1px solid #e9ecef;
+        border-bottom: none;
+    }
+
+    #problem-sidebar .problem-title,
+    #problem-sidebar .problem-status-badge {
+        display: none;
+    }
+
+    #problem-sidebar .problem-number {
+        margin-right: 0 !important;
+    }
+
+    .card-header.bg-primary .d-flex.justify-content-between {
+        display: block !important;
+    }
+
+    .card-header.bg-primary h4 {
+        margin-bottom: 0.5rem !important;
+    }
+
+    .exam-workbench {
+        display: block;
+    }
+
+    .question-pane {
+        position: static;
+    }
+
+    #problem-content-container {
+        max-height: 42svh;
+        min-height: 180px;
+        margin-bottom: 12px;
+    }
+
+    .answer-pane {
+        position: sticky;
+        top: auto;
+        bottom: 0;
+        z-index: 1020;
+        padding: 12px;
+        margin-left: -0.25rem;
+        margin-right: -0.25rem;
+        border-color: rgba(13, 110, 253, 0.22);
+        box-shadow: 0 -10px 28px rgba(15, 23, 42, 0.12);
+    }
+
+    .answer-pane .mb-3 {
+        margin-bottom: 0.65rem !important;
+    }
+
+    .answer-pane .form-text,
+    .answer-pane .alert-light {
+        display: none;
+    }
+
+    .answer-pane .d-flex.justify-content-between.align-items-center {
+        display: block !important;
+    }
+
+    .answer-pane .btn-lg {
+        min-height: 44px;
+        padding: 0.5rem 0.75rem;
+    }
+
+    #answer-form .d-grid {
+        margin-top: 0.75rem !important;
+    }
+
     #message-area,
     .answer-feedback-panel {
         top: auto;
         right: 10px;
         bottom: 12px;
         left: 10px;
+        transform: none;
         width: auto;
     }
 
