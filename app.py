@@ -2846,16 +2846,27 @@ def inject_device_status():
 @app.route('/health')
 def health_check():
     """健康检查端点"""
+    payload = {
+        'status': 'healthy',
+        'database': 'unknown',
+        'version': os.getenv('APP_VERSION', 'unknown'),
+        'build_time': os.getenv('APP_BUILD_TIME', 'unknown'),
+    }
     try:
         # 检查数据库连接
         conn = get_db_connection()
         if conn and conn.is_connected():
             conn.close()
-            return jsonify({'status': 'healthy', 'database': 'connected'})
+            payload['database'] = 'connected'
+            return jsonify(payload)
         else:
-            return jsonify({'status': 'unhealthy', 'database': 'disconnected'}), 500
+            payload['status'] = 'unhealthy'
+            payload['database'] = 'disconnected'
+            return jsonify(payload), 500
     except Exception as e:
-        return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
+        payload['status'] = 'unhealthy'
+        payload['error'] = str(e)
+        return jsonify(payload), 500
 
 
 @app.route('/api/exam/status')

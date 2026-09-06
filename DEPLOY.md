@@ -80,28 +80,10 @@ docker compose logs -f --tail=100 web
 
 ## 3. 一键更新脚本
 
-可以在服务器项目目录创建 `deploy.sh`：
+项目已经内置 `deploy.sh`。首次拉取到服务器后赋予执行权限：
 
 ```bash
-vi deploy.sh
-```
-
-写入：
-
-```bash
-#!/bin/bash
-set -e
-
-cd /opt/physics
-git pull
-docker compose up -d --build
-docker compose ps
-docker compose logs --tail=80 web
-```
-
-保存后赋予执行权限：
-
-```bash
+cd /root/physics_project
 chmod +x deploy.sh
 ```
 
@@ -110,6 +92,20 @@ chmod +x deploy.sh
 ```bash
 ./deploy.sh
 ```
+
+脚本会自动完成这些动作：
+
+```text
+1. 从 GitHub 获取最新代码
+2. 强制对齐 origin/main
+3. 把当前 Git 提交号写入 APP_VERSION
+4. 重建并重启 web 容器
+5. 打印 docker compose ps
+6. 通过容器环境变量和 /health 接口确认线上版本
+7. 输出最近 web 日志
+```
+
+如果部署完成后 `Git HEAD`、`Container APP_VERSION`、`/health` 里的 `version` 三者一致，就说明当前运行中的容器确实是最新代码。
 
 ## 4. 重要数据说明
 
