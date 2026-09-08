@@ -206,7 +206,7 @@
                 <!-- 动态答题表单 - 双模式切换方案 -->
                 <form id="answer-form">
                     <!-- 输入模式切换按钮 -->
-                    <div class="mb-3">
+                    <div class="answer-toolbar">
                         <div class="d-flex justify-content-between align-items-center">
                             <label class="form-label">
                                 <strong><i class="bi bi-input-cursor-text me-1"></i>请输入答案：</strong>
@@ -220,9 +220,6 @@
                                 </button>
                             </div>
                         </div>
-                        <small class="text-muted">
-                            <i class="bi bi-info-circle me-1"></i>科学计数法模式适合输入极大或极小的数值
-                        </small>
                     </div>
 
                     <div id="answer-inputs">
@@ -230,7 +227,7 @@
                         <!-- 单答案题目 -->
                         <div class="normal-input-container">
                             <!-- 普通模式输入框 -->
-                            <div class="mb-3 normal-mode">
+                            <div class="normal-mode">
                                 <div class="input-group input-group-lg">
                                     <input type="number" step="any" class="form-control"
                                            id="answer-normal" name="answer-normal"
@@ -240,13 +237,10 @@
                                     <span class="input-group-text unit-display">{{ problem.answer_units[0] }}</span>
                                     {% endif %}
                                 </div>
-                                <div class="form-text">
-                                    <i class="bi bi-lightbulb me-1"></i>也可以输入科学计数法格式，如：1.6e-19 表示 1.6×10⁻¹⁹
-                                </div>
                             </div>
 
                             <!-- 科学计数法模式输入框（默认隐藏） -->
-                            <div class="mb-3 scientific-mode" style="display: none;">
+                            <div class="scientific-mode" style="display: none;">
                                 <div class="scientific-notation-input">
                                     <!-- 符号选择 -->
                                     <div class="btn-group btn-group-sm me-2" role="group" aria-label="符号选择">
@@ -289,24 +283,6 @@
                                     {% endif %}
                                 </div>
 
-                                <!-- 实时计算结果和示例 -->
-                                <div class="mt-2">
-                                    <small id="calc-result1" class="text-primary">
-                                        当前值: 1.00 × 10⁰ = 1.00
-                                        {% if problem.answer_units and problem.answer_units[0] %}
-                                        {{ problem.answer_units[0] }}
-                                        {% endif %}
-                                    </small>
-                                </div>
-
-                                <!-- 科学计数法示例 -->
-                                <div class="scientific-example mt-2">
-                                    <small>
-                                        <strong><i class="bi bi-lightbulb me-1"></i>示例：</strong>
-                                        电子电量：<kbd>+</kbd> <kbd>1.60</kbd> <kbd>×10</kbd> <kbd>-19</kbd> 表示 1.60×10⁻¹⁹<br>
-                                        光速：<kbd>+</kbd> <kbd>3.00</kbd> <kbd>×10</kbd> <kbd>8</kbd> 表示 3.00×10⁸
-                                    </small>
-                                </div>
                             </div>
 
                             <!-- 隐藏的真实输入框 -->
@@ -319,12 +295,9 @@
                         <!-- 多答案题目 -->
                         <div class="row">
                             {% for i in range(answer_count) %}
-                            <div class="col-md-6 mb-4">
+                            <div class="col-md-6 mb-2">
                                 <label class="form-label">
                                     <strong><i class="bi bi-input-cursor-text me-1"></i>答案 {{ i+1 }}：</strong>
-                                    {% if problem.answer_units and problem.answer_units[i] %}
-                                    <small class="text-muted">(单位: {{ problem.answer_units[i] }})</small>
-                                    {% endif %}
                                 </label>
 
                                 <div class="normal-input-container">
@@ -385,15 +358,6 @@
                                             {% endif %}
                                         </div>
 
-                                        <!-- 实时计算结果 -->
-                                        <div class="mt-1">
-                                            <small id="calc-result{{ i+1 }}" class="text-primary">
-                                                当前值: 1.00 × 10⁰ = 1.00
-                                                {% if problem.answer_units and problem.answer_units[i] %}
-                                                {{ problem.answer_units[i] }}
-                                                {% endif %}
-                                            </small>
-                                        </div>
                                     </div>
 
                                     <!-- 隐藏的真实输入框 -->
@@ -404,63 +368,21 @@
                             </div>
                             {% endfor %}
                         </div>
-
-                        <!-- 多答案题目提示 -->
-                        <div class="alert alert-info mt-2">
-                            <small>
-                                <i class="bi bi-info-circle me-1"></i>
-                                <strong>多答案填写提示：</strong>
-                                每个答案可以使用不同输入模式，系统会自动进行容错判断（±1%）
-                                {% if problem.answer_units %}
-                                <br><i class="bi bi-rulers me-1"></i>
-                                <strong>单位说明：</strong>
-                                {% for i in range(answer_count) %}
-                                {% if problem.answer_units[i] %}
-                                答案{{ i+1 }}的单位为 {{ problem.answer_units[i] }}{% if not loop.last %}, {% endif %}
-                                {% endif %}
-                                {% endfor %}
-                                {% endif %}
-                            </small>
-                        </div>
                         {% endif %}
                     </div>
 
-                    <!-- 统一提示 -->
-                    <div class="alert alert-light mt-3">
-                        <small class="text-muted">
-                            <i class="bi bi-shield-check me-1"></i>
-                            <strong>容错说明：</strong>系统会自动进行容错判断（±1%），您可以直接输入最终数值，无需精确匹配。
-                            <span class="d-block mt-1">
-                                <i class="bi bi-arrow-repeat me-1"></i>
-                                <strong>模式切换：</strong>点击上方的按钮可以在普通模式和科学计数法模式之间切换。
-                            </span>
-                            {% if problem.answer_units %}
-                            <span class="d-block mt-1">
-                                <i class="bi bi-rulers me-1"></i>
-                                <strong>单位说明：</strong>输入数值时不需要输入单位，系统已显示正确答案的单位。
-                            </span>
-                            {% endif %}
-                        </small>
-                    </div>
-
-                    <div class="d-grid gap-2 d-md-flex justify-content-md-start mt-4">
-                        <button type="submit" class="btn btn-primary me-md-2 btn-lg" id="submit-btn">
+                    <div class="answer-actions">
+                        <button type="submit" class="btn btn-primary" id="submit-btn">
                             <i class="bi bi-send-fill me-1"></i> 提交答案
                         </button>
 
-                        <button type="button" class="btn btn-success btn-lg me-md-2" id="next-btn" style="display: none;">
+                        <button type="button" class="btn btn-success" id="next-btn" style="display: none;">
                             <i class="bi bi-arrow-right me-1"></i> 下一题
                         </button>
 
-                        <button type="button" class="btn btn-warning btn-lg me-md-2" id="refresh-btn">
+                        <button type="button" class="btn btn-warning" id="refresh-btn">
                             <i class="bi bi-arrow-clockwise me-1"></i> 刷新题目
                         </button>
-
-                        {% if total_attempts > 0 %}
-                        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-danger btn-lg">
-                            <i class="bi bi-x-circle me-1"></i> 退出答题
-                        </a>
-                        {% endif %}
                     </div>
                 </form>
                     </section>
@@ -3184,10 +3106,7 @@ window.toggleInputMode = function() {
 }
 
 .exam-workbench {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
-    gap: 16px;
-    align-items: start;
+    display: block;
 }
 
 .question-pane,
@@ -3196,44 +3115,43 @@ window.toggleInputMode = function() {
 }
 
 .question-pane {
-    position: sticky;
-    top: 76px;
+    position: static;
 }
 
 #problem-content-container {
-    max-height: calc(100vh - 210px);
-    min-height: 260px;
-    overflow: auto;
+    min-height: 160px;
     border-radius: 8px;
     background: #f8f9fa;
-    -webkit-overflow-scrolling: touch;
 }
 
 .answer-pane {
-    position: sticky;
-    top: 76px;
-    padding: 14px;
+    position: static;
+    padding: 12px;
+    margin-top: 12px;
     border: 1px solid rgba(13, 110, 253, 0.16);
     border-radius: 8px;
     background: #ffffff;
-    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
 }
 
-.answer-pane .alert-light {
-    padding: 0.65rem 0.75rem;
+.answer-toolbar {
+    margin-bottom: 10px;
+}
+
+.answer-toolbar .form-label {
     margin-bottom: 0;
-    background: #f8fafc;
 }
 
-.answer-pane .form-text,
-.answer-pane .alert-light small {
-    font-size: 0.82rem;
+.answer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
 }
 
-.answer-pane .btn-lg {
-    min-height: 46px;
-    padding: 0.55rem 0.9rem;
-    font-size: 1rem;
+.answer-actions .btn {
+    min-height: 40px;
+    margin: 0;
 }
 
 .answer-feedback-panel {
@@ -3360,43 +3278,37 @@ window.toggleInputMode = function() {
     }
 
     #problem-content-container {
-        max-height: 42svh;
-        min-height: 180px;
-        margin-bottom: 12px;
+        min-height: 140px;
     }
 
     .answer-pane {
-        position: sticky;
-        top: auto;
-        bottom: 0;
-        z-index: 1020;
+        position: static;
         padding: 12px;
-        margin-left: -0.25rem;
-        margin-right: -0.25rem;
+        margin: 10px -0.25rem 0;
         border-color: rgba(13, 110, 253, 0.22);
-        box-shadow: 0 -10px 28px rgba(15, 23, 42, 0.12);
-    }
-
-    .answer-pane .mb-3 {
-        margin-bottom: 0.65rem !important;
-    }
-
-    .answer-pane .form-text,
-    .answer-pane .alert-light {
-        display: none;
+        box-shadow: 0 3px 10px rgba(15, 23, 42, 0.07);
     }
 
     .answer-pane .d-flex.justify-content-between.align-items-center {
-        display: block !important;
+        gap: 8px;
     }
 
-    .answer-pane .btn-lg {
-        min-height: 44px;
-        padding: 0.5rem 0.75rem;
+    .answer-toolbar .form-label {
+        display: none;
     }
 
-    #answer-form .d-grid {
-        margin-top: 0.75rem !important;
+    .answer-toolbar .btn-group[aria-label="输入模式切换"] {
+        width: 100%;
+        margin-top: 0;
+    }
+
+    .answer-actions .btn {
+        flex: 1 1 0;
+        min-width: 120px;
+    }
+
+    #answer-inputs .row .col-md-6 {
+        margin-bottom: 0.5rem !important;
     }
 
     #message-area,
