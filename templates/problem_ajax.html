@@ -91,6 +91,15 @@
             <div class="card-header bg-light">
                 <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>题目导航</h5>
             </div>
+            <button type="button"
+                    class="mobile-problem-nav-toggle"
+                    id="mobile-problem-nav-toggle"
+                    aria-controls="problem-sidebar"
+                    aria-expanded="false"
+                    aria-label="展开题目导航">
+                <i class="bi bi-chevron-up" aria-hidden="true"></i>
+                <span>- {{ problem_id }} -</span>
+            </button>
             <div class="card-body p-0">
                 <div class="list-group list-group-flush" id="problem-sidebar">
                     {% for i in range(1, total_problems + 1) %}
@@ -2409,18 +2418,6 @@ async function updateProblemSidebar() {
         }
     });
 
-    if (window.matchMedia('(max-width: 768px)').matches) {
-        const currentItem = sidebar.querySelector('.list-group-item.active');
-        if (currentItem) {
-            requestAnimationFrame(() => {
-                sidebar.scrollLeft = Math.max(
-                    0,
-                    currentItem.offsetLeft - (sidebar.clientWidth - currentItem.offsetWidth) / 2
-                );
-            });
-        }
-    }
-
     if (completionStatus[currentProblemId]) {
         handleCompletedProblem();
     }
@@ -2430,6 +2427,21 @@ async function updateProblemSidebar() {
 function initProblemSidebar() {
     const sidebar = document.getElementById('problem-sidebar');
     if (!sidebar) return;
+
+    const navCard = sidebar.closest('.card');
+    const mobileToggle = document.getElementById('mobile-problem-nav-toggle');
+    if (navCard && mobileToggle) {
+        mobileToggle.addEventListener('click', () => {
+            const isOpen = navCard.classList.toggle('is-open');
+            mobileToggle.setAttribute('aria-expanded', String(isOpen));
+            mobileToggle.setAttribute('aria-label', isOpen ? '收起题目导航' : '展开题目导航');
+
+            const icon = mobileToggle.querySelector('i');
+            if (icon) {
+                icon.className = isOpen ? 'bi bi-chevron-down' : 'bi bi-chevron-up';
+            }
+        });
+    }
 
     // 更新完成状态显示
     updateProblemSidebar();
@@ -3166,6 +3178,10 @@ window.toggleInputMode = function() {
 .answer-actions .btn {
     min-height: 40px;
     margin: 0;
+}
+
+.mobile-problem-nav-toggle {
+    display: none;
 }
 
 .answer-feedback-panel {
@@ -3963,16 +3979,27 @@ body {
 
     .problem-navigation-column > .card {
         position: fixed;
-        right: 8px;
         bottom: max(8px, env(safe-area-inset-bottom));
-        left: 8px;
+        left: 50%;
         z-index: 1060;
         margin: 0;
+        overflow: visible;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        box-shadow: none;
+        transform: translateX(-50%);
+    }
+
+    .problem-navigation-column > .card.is-open {
+        right: 8px;
+        left: 8px;
+        padding: 6px;
         overflow: hidden;
         border: 1px solid rgba(15, 23, 42, 0.16);
-        border-radius: 8px;
         background: rgba(255, 255, 255, 0.97);
         box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
+        transform: none;
         backdrop-filter: blur(8px);
         -webkit-backdrop-filter: blur(8px);
     }
@@ -3982,15 +4009,46 @@ body {
         display: none;
     }
 
-    #problem-sidebar {
+    .problem-navigation-column .card-body {
+        display: none;
+    }
+
+    .problem-navigation-column > .card.is-open .card-body {
+        display: block;
+    }
+    .mobile-problem-nav-toggle {
         display: flex;
+        min-width: 72px;
+        min-height: 40px;
+        margin: 0 auto;
+        padding: 0.35rem 0.65rem;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        border: 1px solid rgba(15, 23, 42, 0.22);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.97);
+        color: #111827;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.2);
+        font-size: 0.9rem;
+        font-weight: 700;
+    }
+
+    .problem-navigation-column > .card.is-open .mobile-problem-nav-toggle {
+        box-shadow: none;
+    }
+
+    #problem-sidebar {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, 42px);
+        grid-auto-rows: 42px;
         gap: 6px;
-        padding: 7px;
-        overflow-x: auto;
-        overflow-y: hidden;
-        scroll-behavior: smooth;
+        justify-content: center;
+        max-height: min(42vh, 240px);
+        padding: 6px 0 0;
+        overflow-x: hidden;
+        overflow-y: auto;
         scrollbar-width: none;
-        white-space: nowrap;
         -webkit-overflow-scrolling: touch;
     }
 
