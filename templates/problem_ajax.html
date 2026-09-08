@@ -86,7 +86,7 @@
 
 <div class="row">
     <!-- 题目跳转侧边栏 -->
-    <div class="col-lg-3 col-md-4 mb-4">
+    <div class="col-lg-3 col-md-4 mb-4 problem-navigation-column">
         <div class="card">
             <div class="card-header bg-light">
                 <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>题目导航</h5>
@@ -2375,6 +2375,8 @@ async function getProblemCompletionStatus() {
 // 更新题目侧边栏的状态显示
 async function updateProblemSidebar() {
     const completionStatus = await getProblemCompletionStatus();
+    const sidebar = document.getElementById('problem-sidebar');
+    if (!sidebar) return;
     const sidebarItems = document.querySelectorAll('#problem-sidebar .list-group-item');
 
     const currentProblemId = {{ problem_id }};
@@ -2406,6 +2408,18 @@ async function updateProblemSidebar() {
             item.classList.remove('completed');
         }
     });
+
+    if (window.matchMedia('(max-width: 768px)').matches) {
+        const currentItem = sidebar.querySelector('.list-group-item.active');
+        if (currentItem) {
+            requestAnimationFrame(() => {
+                sidebar.scrollLeft = Math.max(
+                    0,
+                    currentItem.offsetLeft - (sidebar.clientWidth - currentItem.offsetWidth) / 2
+                );
+            });
+        }
+    }
 
     if (completionStatus[currentProblemId]) {
         handleCompletedProblem();
@@ -3936,6 +3950,113 @@ body {
 
 /* 手机答题区最终覆盖：抵消上方历史响应式规则，保持紧凑且可触控 */
 @media (max-width: 768px) {
+    body {
+        padding-bottom: calc(68px + env(safe-area-inset-bottom));
+    }
+
+    .problem-navigation-column {
+        height: 0;
+        min-height: 0;
+        margin: 0 !important;
+        padding: 0;
+    }
+
+    .problem-navigation-column > .card {
+        position: fixed;
+        right: 8px;
+        bottom: max(8px, env(safe-area-inset-bottom));
+        left: 8px;
+        z-index: 1060;
+        margin: 0;
+        overflow: hidden;
+        border: 1px solid rgba(15, 23, 42, 0.16);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.97);
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+    }
+
+    .problem-navigation-column .card-header,
+    .problem-navigation-column .card-footer {
+        display: none;
+    }
+
+    #problem-sidebar {
+        display: flex;
+        gap: 6px;
+        padding: 7px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scroll-behavior: smooth;
+        scrollbar-width: none;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    #problem-sidebar::-webkit-scrollbar {
+        display: none;
+    }
+
+    #problem-sidebar .list-group-item {
+        display: flex !important;
+        flex: 0 0 42px;
+        width: 42px;
+        height: 42px;
+        min-height: 42px;
+        padding: 0;
+        align-items: center;
+        justify-content: center !important;
+        border: 0 !important;
+        border-radius: 6px !important;
+        background: #e5e7eb;
+        color: #374151;
+        box-shadow: none;
+        transform: none;
+    }
+
+    #problem-sidebar .list-group-item.completed {
+        background: #198754;
+        color: #ffffff;
+    }
+
+    #problem-sidebar .list-group-item.active {
+        background: #e5e7eb;
+        color: #111827;
+        box-shadow: inset 0 0 0 3px #111827;
+    }
+
+    #problem-sidebar .list-group-item.completed.active {
+        background: #198754;
+        color: #ffffff;
+        box-shadow: inset 0 0 0 3px #0b3d24;
+    }
+
+    #problem-sidebar .list-group-item:hover,
+    #problem-sidebar .list-group-item:active {
+        transform: none;
+    }
+
+    #problem-sidebar .problem-title,
+    #problem-sidebar .problem-status-badge {
+        display: none;
+    }
+
+    #problem-sidebar .problem-number {
+        width: auto;
+        height: auto;
+        margin: 0 !important;
+        background: transparent !important;
+        color: inherit !important;
+        font-size: 0.9rem;
+        font-weight: 700;
+    }
+
+    #message-area,
+    .answer-feedback-panel {
+        bottom: calc(66px + env(safe-area-inset-bottom));
+    }
+
     #problem-content-container {
         min-height: 140px;
     }
