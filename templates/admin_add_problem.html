@@ -144,7 +144,7 @@
                             <textarea class="form-control font-monospace" id="generation_strategy" name="generation_strategy" rows="7"
                                       placeholder="留空时系统会根据变量和公式自动生成。把 enabled 改为 false 可让该题回退旧随机生成规则。"></textarea>
                             <div class="form-text">
-                                用于控制“整数变量 + 整数答案 + 反推变量”的生成方式；策略失败时会自动回退到旧生成规则。
+                                支持单答案和多答案反推；多答案会识别独立目标并在可行时联立求解，失败时自动回退旧生成规则。
                             </div>
                         </div>
 

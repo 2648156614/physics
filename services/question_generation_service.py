@@ -3,6 +3,8 @@ import random
 import re
 import time
 from fractions import Fraction
+from functools import lru_cache
+from itertools import combinations
 from math import log, pi
 from urllib.parse import quote, unquote
 
@@ -129,21 +131,22 @@ def format_display_number(value, max_denominator=12):
     return round(value, 4)
 
 
-def _rand_from_spec(spec, fallback_range):
+def _rand_from_spec(spec, fallback_range, rng=None):
+    rng = rng or random
     spec = spec or {}
     min_val, max_val = spec.get('range', fallback_range)
     step = spec.get('step', 1)
     value_type = spec.get('type', 'integer')
     if value_type == 'choice' and spec.get('values'):
-        return random.choice(spec['values'])
+        return rng.choice(spec['values'])
     if value_type == 'fraction':
         denominator = int(spec.get('denominator', 2) or 2)
         low = int(round(float(min_val) * denominator))
         high = int(round(float(max_val) * denominator))
-        return random.randint(low, high) / denominator
+        return rng.randint(low, high) / denominator
     if value_type == 'decimal':
         precision = int(spec.get('precision', 2) or 2)
-        return round(random.uniform(float(min_val), float(max_val)), precision)
+        return round(rng.uniform(float(min_val), float(max_val)), precision)
 
     step = int(step or 1)
     low = int(round(float(min_val)))
@@ -151,100 +154,299 @@ def _rand_from_spec(spec, fallback_range):
     if high < low:
         low, high = high, low
     choices = list(range(low, high + 1, max(1, step)))
-    return random.choice(choices or [low])
+    return rng.choice(choices or [low])
 
 
-def _solve_formula_for_var(solution_formula, variables, solve_for, assigned_vars, target_answer):
+def _get_symbolic_formula_parts(solution_formula, variables):
     symbols = {name: sp.symbols(name) for name in variables}
     context = build_formula_context()
     context.update(symbols)
-    expr = eval(solution_formula, {}, context)
-    if isinstance(expr, (tuple, list)):
-        expr = expr[0]
+    raw_expressions = eval(solution_formula, {}, context)
+    expressions = list(raw_expressions) if isinstance(raw_expressions, (tuple, list)) else [raw_expressions]
+    return [sp.sympify(expr) for expr in expressions], symbols
 
-    equation = sp.Eq(expr, target_answer)
-    solutions = sp.solve(equation, symbols[solve_for], dict=True)
+
+@lru_cache(maxsize=256)
+def _prepare_inverse_solver(solution_formula, variables, solve_for, target_indices):
+    expressions, symbols = _get_symbolic_formula_parts(solution_formula, variables)
+    solve_symbols = [symbols[name] for name in solve_for]
+    target_symbols = sp.symbols(f'_inverse_target_0:{len(target_indices)}')
+    equations = [
+        sp.Eq(expressions[answer_index], target_symbol)
+        for answer_index, target_symbol in zip(target_indices, target_symbols)
+    ]
+    solutions = sp.solve(equations, solve_symbols, dict=True)
+    if isinstance(solutions, dict):
+        solutions = [solutions]
+    return symbols, solve_symbols, target_symbols, tuple(solutions or [])
+
+
+def _solve_formula_for_vars(solution_formula, variables, solve_for, assigned_vars, target_answers):
+    target_indices = tuple(sorted(target_answers))
+    if not target_indices or len(target_indices) != len(solve_for):
+        return None
+
+    try:
+        symbols, solve_symbols, target_symbols, solutions = _prepare_inverse_solver(
+            solution_formula,
+            tuple(variables),
+            tuple(solve_for),
+            target_indices,
+        )
+    except Exception:
+        return None
     if not solutions:
         return None
 
+    assigned_substitutions = {
+        symbols[name]: value
+        for name, value in assigned_vars.items()
+        if name in symbols
+    }
+    assigned_substitutions.update({
+        target_symbol: target_answers[answer_index]
+        for answer_index, target_symbol in zip(target_indices, target_symbols)
+    })
     for solution in solutions:
-        solved_expr = solution.get(symbols[solve_for])
-        if solved_expr is None:
-            continue
+        solved_values = {}
+        substitutions = dict(assigned_substitutions)
+        substitutions.update(solution)
+        valid_solution = True
+        for name, symbol in zip(solve_for, solve_symbols):
+            solved_expr = solution.get(symbol)
+            if solved_expr is None:
+                valid_solution = False
+                break
+            try:
+                evaluated = sp.N(solved_expr.subs(substitutions))
+                if evaluated.is_real is False:
+                    valid_solution = False
+                    break
+                value = float(evaluated)
+            except Exception:
+                valid_solution = False
+                break
+            if not np.isfinite(value):
+                valid_solution = False
+                break
+            solved_values[name] = value
+
+        if valid_solution and len(solved_values) == len(solve_for):
+            return solved_values
+    return None
+
+
+def _normalize_solve_for(strategy, variables):
+    raw_solve_for = strategy.get('solve_for')
+    if isinstance(raw_solve_for, str):
+        solve_for = [raw_solve_for]
+    elif isinstance(raw_solve_for, (tuple, list)):
+        solve_for = [name for name in raw_solve_for if isinstance(name, str)]
+    else:
+        return []
+
+    unique_solve_for = []
+    for name in solve_for:
+        if name in variables and name not in unique_solve_for:
+            unique_solve_for.append(name)
+    return unique_solve_for
+
+
+def _normalize_target_specs(strategy, answer_count):
+    target_specs = {}
+    raw_target_answers = strategy.get('target_answers')
+    if isinstance(raw_target_answers, (tuple, list)):
+        for answer_index, spec in enumerate(raw_target_answers[:answer_count]):
+            if isinstance(spec, dict):
+                target_specs[answer_index] = spec
+    elif isinstance(raw_target_answers, dict):
+        for raw_index, spec in raw_target_answers.items():
+            if not isinstance(spec, dict):
+                continue
+            try:
+                parsed_index = int(raw_index)
+            except (TypeError, ValueError):
+                continue
+            answer_index = parsed_index - 1 if parsed_index >= 1 else parsed_index
+            if 0 <= answer_index < answer_count:
+                target_specs[answer_index] = spec
+
+    if not target_specs and isinstance(strategy.get('target_answer'), dict):
+        target_specs[0] = strategy['target_answer']
+    return target_specs
+
+
+def _solved_value_is_reasonable(name, value, configured_ranges):
+    min_val, max_val = configured_ranges.get(name, get_adaptive_default_range(name))
+    relaxed_min = min_val * 0.2
+    relaxed_max = max_val * 5
+    return value > 0 and relaxed_min <= value <= relaxed_max
+
+
+def _find_solve_vars(expressions, symbols, variables, preferred_solve_order, target_indices):
+    ordered_variables = []
+    for name in preferred_solve_order + variables:
+        if name in variables and name not in ordered_variables:
+            ordered_variables.append(name)
+
+    target_expressions = [expressions[index] for index in target_indices]
+    for solve_for in combinations(ordered_variables, len(target_indices)):
+        solve_symbols = [symbols[name] for name in solve_for]
         try:
-            substitutions = {
-                symbols[name]: value
-                for name, value in assigned_vars.items()
-                if name in symbols
-            }
-            value = float(solved_expr.subs(substitutions).evalf())
+            determinant = sp.simplify(
+                sp.Matrix(target_expressions).jacobian(solve_symbols).det()
+            )
         except Exception:
             continue
-        if np.isfinite(value):
-            return value
-    return None
+        if determinant != 0:
+            return list(solve_for)
+    return []
+
+
+def _select_inverse_targets_and_vars(expressions, symbols, variables, preferred_solve_order):
+    variable_symbols = [symbols[name] for name in variables]
+    target_indices = []
+    current_rank = 0
+
+    for answer_index, expression in enumerate(expressions):
+        if not expression.free_symbols.intersection(variable_symbols):
+            continue
+        candidate_expressions = [expressions[index] for index in target_indices] + [expression]
+        try:
+            candidate_rank = sp.Matrix(candidate_expressions).jacobian(variable_symbols).rank()
+        except Exception:
+            continue
+        if candidate_rank > current_rank:
+            target_indices.append(answer_index)
+            current_rank = candidate_rank
+
+    if not target_indices:
+        return [], []
+
+    solve_for = _find_solve_vars(
+        expressions,
+        symbols,
+        variables,
+        preferred_solve_order,
+        target_indices,
+    )
+    return (target_indices, solve_for) if solve_for else ([], [])
+
+
+def _build_inferred_key_vars(variables, solve_for, configured_ranges):
+    key_vars = {}
+    for var in variables:
+        if var in solve_for:
+            continue
+        min_val, max_val = configured_ranges.get(var, get_adaptive_default_range(var))
+        low = max(1, int(round(min_val)))
+        high = max(low, int(round(min(max_val, 50))))
+        key_vars[var] = {'type': 'integer', 'range': [low, high], 'step': 1}
+    return key_vars
+
+
+def _inverse_plan_is_feasible(
+    solution_formula,
+    variables,
+    configured_ranges,
+    solve_for,
+    target_indices,
+    key_vars,
+    target_spec,
+    attempts=24,
+):
+    rng = random.Random(0)
+    for _ in range(attempts):
+        targets = {
+            answer_index: _rand_from_spec(target_spec, (1, 80), rng)
+            for answer_index in target_indices
+        }
+        assigned_vars = {}
+        for var in variables:
+            if var in solve_for:
+                continue
+            fallback_range = configured_ranges.get(var, get_adaptive_default_range(var))
+            assigned_vars[var] = _rand_from_spec(key_vars.get(var), fallback_range, rng)
+        solved_values = _solve_formula_for_vars(
+            solution_formula,
+            variables,
+            solve_for,
+            assigned_vars,
+            targets,
+        )
+        if solved_values and all(
+            _solved_value_is_reasonable(name, value, configured_ranges)
+            for name, value in solved_values.items()
+        ):
+            return True
+    return False
 
 
 def generate_inverse_problem(template, variables, configured_ranges, local_vars, answer_units, answer_constraints):
     strategy = parse_generation_strategy(template)
     if not strategy or not strategy.get('enabled', True) or strategy.get('mode') != 'inverse_v1':
         return None
-    if template.get('answer_count', 1) != 1:
+
+    answer_count = int(template.get('answer_count', 1) or 1)
+    solve_for = _normalize_solve_for(strategy, variables)
+    target_specs = _normalize_target_specs(strategy, answer_count)
+    if not solve_for or len(solve_for) != len(target_specs):
         return None
 
-    solve_for = strategy.get('solve_for')
-    if solve_for not in variables:
-        return None
-
-    target_spec = strategy.get('target_answer') or {}
     key_vars = strategy.get('key_vars') or {}
     free_vars = strategy.get('free_vars') or {}
     max_attempts = int(strategy.get('max_attempts', 30) or 30)
     var_units = infer_variable_units(template.get('problem_text', ''), variables)
-    answer_count = template.get('answer_count', 1)
     if len(answer_units) < answer_count:
         answer_units.extend([''] * (answer_count - len(answer_units)))
     elif len(answer_units) > answer_count:
         answer_units = answer_units[:answer_count]
 
     for attempt in range(max_attempts):
-        target_answer = _rand_from_spec(target_spec, target_spec.get('range', (1, 50)))
+        target_answers = {
+            answer_index: _rand_from_spec(spec, spec.get('range', (1, 50)))
+            for answer_index, spec in target_specs.items()
+        }
         var_values = {}
         for var in variables:
-            if var == solve_for:
+            if var in solve_for:
                 continue
             spec = key_vars.get(var) or free_vars.get(var) or {}
             fallback_range = configured_ranges.get(var, get_adaptive_default_range(var))
             var_values[var] = _rand_from_spec(spec, fallback_range)
 
-        solved_value = _solve_formula_for_var(
+        solved_values = _solve_formula_for_vars(
             template['solution_formula'],
             variables,
             solve_for,
             var_values,
-            target_answer,
+            target_answers,
         )
-        if solved_value is None:
+        if not solved_values:
+            continue
+        if any(
+            not _solved_value_is_reasonable(name, value, configured_ranges)
+            for name, value in solved_values.items()
+        ):
             continue
 
-        min_val, max_val = configured_ranges.get(solve_for, get_adaptive_default_range(solve_for))
-        relaxed_min = min_val * 0.2
-        relaxed_max = max_val * 5
-        if solved_value <= 0 or solved_value < relaxed_min or solved_value > relaxed_max:
-            continue
-
-        var_values[solve_for] = round(solved_value, 4)
+        var_values.update({name: round(value, 8) for name, value in solved_values.items()})
         current_vars = local_vars.copy()
         current_vars.update(var_values)
         try:
             correct_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
         except Exception:
             continue
-        if len(correct_answers) != 1:
+        if len(correct_answers) != answer_count:
             continue
         if not is_answer_reasonable_dynamic(correct_answers, var_values, attempt, answer_constraints):
             continue
-        if abs(correct_answers[0] - float(target_answer)) > max(1e-6, abs(float(target_answer)) * 1e-6):
+        targets_match = all(
+            abs(correct_answers[answer_index] - float(target_answer))
+            <= max(1e-6, abs(float(target_answer)) * 1e-6)
+            for answer_index, target_answer in target_answers.items()
+        )
+        if not targets_match:
             continue
 
         display_values = {
@@ -257,10 +459,10 @@ def generate_inverse_problem(template, variables, configured_ranges, local_vars,
             'var_values': var_values,
             'display_var_values': display_values,
             'var_units': var_units,
-            'correct_answers': [float(target_answer)],
+            'correct_answers': correct_answers,
             'answer_units': answer_units,
             'template_id': template['id'],
-            'answer_count': template.get('answer_count', 1),
+            'answer_count': answer_count,
             'template_name': template['template_name'],
             'image_filename': template.get('image_filename'),
             'generation_mode': 'inverse_v1'
@@ -271,31 +473,80 @@ def generate_inverse_problem(template, variables, configured_ranges, local_vars,
 
 def infer_generation_strategy(template_name, problem_text, variables_text, solution_formula, answer_count=1):
     variables, configured_ranges = parse_variable_specs(variables_text or '')
-    if int(answer_count or 1) != 1 or len(variables) < 2:
+    answer_count = int(answer_count or 1)
+    if answer_count < 1 or not variables:
         return ''
 
     preferred_solve_order = ['i', 'I', 'R', 'B', 'v', 'L', 'l', 'r', 'a', 'x', 'AC', 'omega']
-    solve_for = next((name for name in preferred_solve_order if name in variables), variables[-1])
-    key_vars = {}
-    free_vars = {}
-    for var in variables:
-        if var == solve_for:
-            continue
-        min_val, max_val = configured_ranges.get(var, get_adaptive_default_range(var))
-        low = max(1, int(round(min_val)))
-        high = max(low, int(round(min(max_val, 50))))
-        key_vars[var] = {'type': 'integer', 'range': [low, high], 'step': 1}
+    try:
+        expressions, symbols = _get_symbolic_formula_parts(solution_formula, variables)
+    except Exception:
+        return ''
+    if len(expressions) != answer_count:
+        return ''
 
+    independent_target_indices, _ = _select_inverse_targets_and_vars(
+        expressions,
+        symbols,
+        variables,
+        preferred_solve_order,
+    )
+    if not independent_target_indices:
+        return ''
+
+    target_spec = {'type': 'integer', 'range': [1, 80], 'step': 1}
+    target_answer_indices = []
+    solve_for = []
+    key_vars = {}
+    for target_count in range(len(independent_target_indices), 0, -1):
+        candidate_targets = independent_target_indices[:target_count]
+        candidate_solve_for = _find_solve_vars(
+            expressions,
+            symbols,
+            variables,
+            preferred_solve_order,
+            candidate_targets,
+        )
+        if not candidate_solve_for:
+            continue
+        candidate_key_vars = _build_inferred_key_vars(
+            variables,
+            candidate_solve_for,
+            configured_ranges,
+        )
+        if _inverse_plan_is_feasible(
+            solution_formula,
+            variables,
+            configured_ranges,
+            candidate_solve_for,
+            candidate_targets,
+            candidate_key_vars,
+            target_spec,
+        ):
+            target_answer_indices = candidate_targets
+            solve_for = candidate_solve_for
+            key_vars = candidate_key_vars
+            break
+    if not target_answer_indices or not solve_for:
+        return ''
+
+    free_vars = {}
     strategy = {
         'enabled': True,
         'mode': 'inverse_v1',
-        'solve_for': solve_for,
-        'target_answer': {'type': 'integer', 'range': [1, 80], 'step': 1},
+        'solve_for': solve_for[0] if len(solve_for) == 1 else solve_for,
         'key_vars': key_vars,
         'free_vars': free_vars,
         'max_attempts': 30,
         'max_denominator': 12
     }
+    if answer_count == 1:
+        strategy['target_answer'] = target_spec
+    else:
+        strategy['target_answers'] = [
+            target_spec if answer_index in target_answer_indices else None
+            for answer_index in range(answer_count)
+        ]
     return json.dumps(strategy, ensure_ascii=False, indent=2)
 
 
@@ -557,6 +808,8 @@ def check_dynamic_consistency(answer, var_values, attempt_num):
         return True
 
     abs_answer = abs(answer)
+    if abs_answer == 0:
+        return True
     var_values_list = [abs(v) for v in var_values.values() if isinstance(v, (int, float))]
 
     if not var_values_list:
