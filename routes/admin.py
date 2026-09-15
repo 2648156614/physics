@@ -504,10 +504,32 @@ def create_admin_blueprint(deps):
             ) if student.get('answer_rows') else None
             status_counts[status] += 1
 
+        batch_class_options = sorted({
+            str(student.get('class_name') or '').strip()
+            for student in students
+            if str(student.get('class_name') or '').strip()
+        })
+        batch_major_options = sorted({
+            str(student.get('major') or '').strip()
+            for student in students
+            if str(student.get('major') or '').strip()
+        })
+        batch_course_options = sorted({
+            str(student.get('teacher_name') or '').strip()
+            for student in students
+            if str(student.get('teacher_name') or '').strip()
+        })
+
         selected_status = (request.args.get('status') or '').strip()
+        selected_class_name = (request.args.get('class_name') or '').strip()
+        selected_major = (request.args.get('major') or '').strip()
+        selected_course = (request.args.get('course') or '').strip()
         visible_students = [
             student for student in students
-            if not selected_status or student['exam_status'] == selected_status
+            if (not selected_status or student['exam_status'] == selected_status)
+            and (not selected_class_name or (student.get('class_name') or '').strip() == selected_class_name)
+            and (not selected_major or (student.get('major') or '').strip() == selected_major)
+            and (not selected_course or (student.get('teacher_name') or '').strip() == selected_course)
         ]
         class_options, major_options, course_options = _get_exam_setup_options()
         return render_template(
@@ -522,6 +544,12 @@ def create_admin_blueprint(deps):
             status_counts=status_counts,
             status_labels=status_labels,
             selected_status=selected_status,
+            selected_class_name=selected_class_name,
+            selected_major=selected_major,
+            selected_course=selected_course,
+            batch_class_options=batch_class_options,
+            batch_major_options=batch_major_options,
+            batch_course_options=batch_course_options,
             class_options=class_options,
             major_options=major_options,
             course_options=course_options,

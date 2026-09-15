@@ -26,14 +26,33 @@
     flex-wrap: wrap;
     gap: 8px;
 }
+.student-filter-bar {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    padding: 12px;
+}
+.student-table-scroll {
+    max-height: min(58vh, 620px);
+    overflow: auto;
+    border: 1px solid #dee2e6;
+}
+.student-table-scroll .student-table {
+    min-width: 940px;
+}
+.student-table-scroll .student-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f8f9fa;
+    box-shadow: inset 0 -1px 0 #dee2e6;
+}
 .assign-checkbox-list {
     max-height: 190px;
     overflow-y: auto;
 }
 @media (max-width: 767.98px) {
     .exam-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .student-table th:nth-child(4), .student-table td:nth-child(4),
-    .student-table th:nth-child(6), .student-table td:nth-child(6) { display: none; }
+    .student-table-scroll { max-height: 52vh; }
 }
 </style>
 
@@ -158,16 +177,51 @@
     </div>
 
     <div class="status-filters mb-3">
-        <a class="btn btn-sm {{ 'btn-dark' if not selected_status else 'btn-outline-dark' }}" href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id, batch_id=selected_batch.id) }}">全部 {{ total_students }}</a>
+        <a class="btn btn-sm {{ 'btn-dark' if not selected_status else 'btn-outline-dark' }}" href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id, batch_id=selected_batch.id, class_name=selected_class_name, major=selected_major, course=selected_course) }}">全部 {{ total_students }}</a>
         {% for status, label in status_labels.items() %}
-        <a class="btn btn-sm {{ 'btn-dark' if selected_status == status else 'btn-outline-dark' }}" href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id, batch_id=selected_batch.id, status=status) }}">{{ label }} {{ status_counts[status] }}</a>
+        <a class="btn btn-sm {{ 'btn-dark' if selected_status == status else 'btn-outline-dark' }}" href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id, batch_id=selected_batch.id, status=status, class_name=selected_class_name, major=selected_major, course=selected_course) }}">{{ label }} {{ status_counts[status] }}</a>
         {% endfor %}
     </div>
 
-    <div class="table-responsive">
-        <table class="table table-hover align-middle student-table">
+    <form method="get" action="{{ url_for('admin.admin_exam_detail', exam_id=exam.id) }}" class="student-filter-bar row g-2 align-items-end mb-3">
+        <input type="hidden" name="batch_id" value="{{ selected_batch.id }}">
+        {% if selected_status %}<input type="hidden" name="status" value="{{ selected_status }}">{% endif %}
+        <div class="col-md-3">
+            <label class="form-label small mb-1" for="student-class-filter">班级</label>
+            <select class="form-select" id="student-class-filter" name="class_name">
+                <option value="">全部班级</option>
+                {% for item in batch_class_options %}<option value="{{ item }}" {% if selected_class_name == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-1" for="student-major-filter">专业</label>
+            <select class="form-select" id="student-major-filter" name="major">
+                <option value="">全部专业</option>
+                {% for item in batch_major_options %}<option value="{{ item }}" {% if selected_major == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-1" for="student-course-filter">课程号</label>
+            <select class="form-select" id="student-course-filter" name="course">
+                <option value="">全部课程号</option>
+                {% for item in batch_course_options %}<option value="{{ item }}" {% if selected_course == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3 d-flex gap-2">
+            <button class="btn btn-primary flex-grow-1" type="submit"><i class="bi bi-funnel"></i> 筛选</button>
+            <a class="btn btn-outline-secondary" href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id, batch_id=selected_batch.id, status=selected_status) }}" title="清除班级、专业和课程号筛选"><i class="bi bi-x-lg"></i></a>
+        </div>
+    </form>
+
+    <div class="d-flex justify-content-between align-items-center mb-2 small text-muted">
+        <span>筛选结果</span>
+        <span>共 {{ students|length }} 人</span>
+    </div>
+
+    <div class="student-table-scroll">
+        <table class="table table-hover align-middle mb-0 student-table">
             <thead>
-                <tr><th>学号</th><th>姓名</th><th>班级</th><th>专业</th><th>状态</th><th>完成题数</th><th>正确率</th><th>最后作答</th></tr>
+                <tr><th>学号</th><th>姓名</th><th>班级</th><th>专业</th><th>课程号</th><th>状态</th><th>完成题数</th><th>正确率</th><th>最后作答</th></tr>
             </thead>
             <tbody>
                 {% for student in students %}
@@ -176,13 +230,14 @@
                     <td>{{ student.name or '-' }}</td>
                     <td>{{ student.class_name or '-' }}</td>
                     <td>{{ student.major or '-' }}</td>
+                    <td>{{ student.teacher_name or '-' }}</td>
                     <td><span class="badge {{ 'bg-success' if student.exam_status == 'completed' else 'bg-primary' if student.exam_status == 'in_progress' else 'bg-danger' if student.exam_status in ['absent', 'ended_incomplete'] else 'bg-secondary' }}">{{ student.exam_status_label }}</span></td>
                     <td>{{ student.completed_count }}/{{ total_problems }}</td>
                     <td>{% if student.accuracy is not none %}{{ student.accuracy }}%{% else %}-{% endif %}</td>
                     <td>{{ student.last_response_time.strftime('%m-%d %H:%M') if student.last_response_time else '-' }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="8" class="text-center text-muted py-4">当前筛选条件下没有学生</td></tr>
+                <tr><td colspan="9" class="text-center text-muted py-4">当前筛选条件下没有学生</td></tr>
                 {% endfor %}
             </tbody>
         </table>
