@@ -1692,7 +1692,7 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
 def repair_database():
     """修复数据库表结构"""
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(buffered=True)
 
     try:
         # 检查并添加缺失的列
@@ -1719,10 +1719,11 @@ def repair_database():
             """)
             print("已创建 exam_papers 表")
 
-        cursor = conn.cursor(dictionary=True)
+        cursor.close()
+        cursor = conn.cursor(dictionary=True, buffered=True)
         default_paper_id = get_or_create_default_exam_paper(cursor)
         cursor.close()
-        cursor = conn.cursor()
+        cursor = conn.cursor(buffered=True)
 
         cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'paper_id'")
         if not cursor.fetchone():
@@ -1916,7 +1917,7 @@ def repair_database():
 def initialize_database():
     """初始化数据库 - 使用新的图片管理方式，包含答案单位字段"""
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(buffered=True)
 
     # 创建用户表（如果不存在）- 添加完成状态字段
     cursor.execute("""

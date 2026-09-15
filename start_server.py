@@ -105,6 +105,6 @@ if __name__ == '__main__':
         )
 
     except Exception as e:
-        logging.error(f"服务器启动失败: {e}")
+        logging.exception("服务器启动失败")
         print(f"❌ 服务器启动失败: {e}")
         sys.exit(1)
