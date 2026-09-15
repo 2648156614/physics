@@ -1017,12 +1017,12 @@ def get_problem_display_info(paper_id=None, enabled_only=True):
     return display_mapping
 
 
-def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None):
+def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=True):
     """Get the persisted, shuffled question list assigned to one student."""
     if not exam_id:
         return get_problem_display_info(paper_id)
 
-    cache_key = ('user_exam_problem_display_info', int(exam_id), int(user_id))
+    cache_key = ('user_exam_problem_display_info', int(exam_id), int(user_id), bool(persist))
     cached = get_exam_metadata_cache(cache_key)
     if cached is not None:
         return {int(actual_id): dict(info) for actual_id, info in cached.items()}
@@ -1061,7 +1061,7 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None):
         cursor.execute(query, (exam_id, user_id, paper_id))
         rows = cursor.fetchall()
 
-        if not rows:
+        if not rows and persist:
             cursor.executemany(
                 """
                 INSERT IGNORE INTO exam_user_questions
@@ -1076,6 +1076,17 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None):
             conn.commit()
             cursor.execute(query, (exam_id, user_id, paper_id))
             rows = cursor.fetchall()
+
+        if not rows:
+            rows = [
+                {
+                    'template_id': template_id,
+                    'display_number': display_number,
+                    'template_name': template_lookup[template_id]['template_name'],
+                    'paper_id': paper_id,
+                }
+                for display_number, template_id in enumerate(selected_ids, 1)
+            ]
 
         mapping = {
             int(row['template_id']): {

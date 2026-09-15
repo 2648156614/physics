@@ -32,7 +32,9 @@ def create_exam_blueprint(deps):
                 flash('当前暂无可用题库，请联系管理员开启试卷。', 'warning')
     
             display_mapping = (
-                get_user_exam_problem_display_info(session['user_id'], selected_exam_id, selected_paper_id)
+                get_user_exam_problem_display_info(
+                    session['user_id'], selected_exam_id, selected_paper_id, persist=False
+                )
                 if selected_paper_id else {}
             )
             total_problems = len(display_mapping)

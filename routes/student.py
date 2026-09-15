@@ -1133,7 +1133,9 @@ def create_student_blueprint(deps):
             selected_exam = get_exam_by_id(selected_exam_id) if selected_exam_id else None
             selected_paper_id = selected_exam['paper_id'] if selected_exam else resolve_selected_exam_paper_id()
             display_mapping = (
-                get_user_exam_problem_display_info(session['user_id'], selected_exam_id, selected_paper_id)
+                get_user_exam_problem_display_info(
+                    session['user_id'], selected_exam_id, selected_paper_id, persist=False
+                )
                 if selected_paper_id else {}
             )
             actual_ids = list(display_mapping.keys())

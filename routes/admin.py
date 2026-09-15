@@ -480,12 +480,17 @@ def create_admin_blueprint(deps):
             )
             if question_config_changed:
                 cursor.execute(
-                    "SELECT EXISTS(SELECT 1 FROM user_responses WHERE exam_id = %s LIMIT 1) AS started",
-                    (exam_id,),
+                    """
+                    SELECT (
+                        EXISTS(SELECT 1 FROM exam_user_questions WHERE exam_id = %s LIMIT 1)
+                        OR EXISTS(SELECT 1 FROM user_responses WHERE exam_id = %s LIMIT 1)
+                    ) AS started
+                    """,
+                    (exam_id, exam_id),
                 )
                 if (cursor.fetchone() or {}).get('started'):
                     conn.rollback()
-                    flash('已有学生开始作答，不能再修改题库或抽题数量。', 'danger')
+                    flash('已有学生进入过答题页面，不能再修改题库或抽题数量。', 'danger')
                     return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
                 cursor.execute('DELETE FROM exam_user_questions WHERE exam_id = %s', (exam_id,))
 
@@ -808,7 +813,46 @@ def create_admin_blueprint(deps):
         selected_exam = get_exam_by_id(selected_exam_id) if selected_exam_id else None
         if selected_exam_id and not selected_exam:
             flash('考试不存在，无法导出答题数据。', 'danger')
-            return redirect(url_for('admin.admin_exams'))
+        return redirect(url_for('admin.admin_exams'))
+
+
+    @bp.route('/admin/exams/<int:exam_id>/delete', methods=['POST'])
+    @login_required(db_check=True)
+    def admin_delete_exam(exam_id):
+        if session.get('username') != 'admin':
+            flash('权限不足', 'danger')
+            return redirect(url_for('dashboard'))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT name FROM exams WHERE id = %s FOR UPDATE', (exam_id,))
+            exam = cursor.fetchone()
+            if not exam:
+                flash('考试不存在或已被删除。', 'warning')
+                return redirect(url_for('admin.admin_exams'))
+
+            cursor.execute('DELETE FROM user_responses WHERE exam_id = %s', (exam_id,))
+            deleted_responses = cursor.rowcount
+            cursor.execute('DELETE FROM exam_user_questions WHERE exam_id = %s', (exam_id,))
+            deleted_question_lists = cursor.rowcount
+            cursor.execute('DELETE FROM exam_assignments WHERE exam_id = %s', (exam_id,))
+            cursor.execute('DELETE FROM exams WHERE id = %s', (exam_id,))
+            conn.commit()
+            clear_exam_metadata_cache()
+            flash(
+                f"考试《{exam['name']}》已删除，同时清理 {deleted_responses} 条作答记录和 "
+                f"{deleted_question_lists} 条个人题单记录。",
+                'success',
+            )
+        except mysql.connector.Error as err:
+            conn.rollback()
+            flash(f'删除考试失败：{err}', 'danger')
+        finally:
+            cursor.close()
+            conn.close()
+
+        return redirect(url_for('admin.admin_exams'))
 
         if selected_exam:
             selected_paper_id = selected_exam['paper_id']

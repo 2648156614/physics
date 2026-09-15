@@ -274,6 +274,11 @@
                         <td>
                             <a class="btn btn-sm btn-outline-success" href="{{ url_for('admin.admin_export_all_student_analytics', exam_id=exam.id) }}">导出答题数据</a>
                             <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.admin_exams', edit_exam_id=exam.id) }}">编辑</a>
+                            <form method="post" action="{{ url_for('admin.admin_delete_exam', exam_id=exam.id) }}" class="d-inline" onsubmit="return confirm('确定删除这场考试吗？相关作答记录和个人题单也会永久删除，此操作无法撤销。');">
+                                <button class="btn btn-sm btn-outline-danger" type="submit">
+                                    <i class="bi bi-trash"></i> 删除
+                                </button>
+                            </form>
                         </td>
                     </tr>
                     {% else %}
