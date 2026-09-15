@@ -1129,10 +1129,17 @@ def create_student_blueprint(deps):
     def api_user_completion_status():
         """获取用户所有题目的完成状态"""
         try:
-            selected_paper_id = resolve_selected_exam_paper_id()
-            display_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
+            selected_exam_id = resolve_selected_exam_id()
+            selected_exam = get_exam_by_id(selected_exam_id) if selected_exam_id else None
+            selected_paper_id = selected_exam['paper_id'] if selected_exam else resolve_selected_exam_paper_id()
+            display_mapping = (
+                get_user_exam_problem_display_info(session['user_id'], selected_exam_id, selected_paper_id)
+                if selected_paper_id else {}
+            )
             actual_ids = list(display_mapping.keys())
-            completion_map = get_completion_status_map(session['user_id'], selected_paper_id, actual_ids)
+            completion_map = get_completion_status_map(
+                session['user_id'], selected_paper_id, actual_ids, selected_exam_id
+            )
             completion_status = {
                 display_info['display_number']: completion_map.get(actual_id, False)
                 for actual_id, display_info in display_mapping.items()

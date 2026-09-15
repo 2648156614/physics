@@ -37,6 +37,7 @@ from services.redis_cache_service import (
     push_problem_to_pool,
 )
 from services import question_generation_service
+from services.exam_assignment_service import select_exam_template_ids
 from routes.auth import auth_bp, get_avatar_choices, login_required
 from routes.admin import create_admin_blueprint
 from routes.exam import create_exam_blueprint
@@ -113,11 +114,17 @@ def get_exam_papers(include_disabled=True):
         return []
     cursor = conn.cursor(dictionary=True)
     try:
-        query = "SELECT id, name, description, is_enabled, created_at FROM exam_papers"
+        query = """
+            SELECT ep.id, ep.name, ep.description, ep.is_enabled, ep.created_at,
+                   COUNT(pt.id) AS template_count
+            FROM exam_papers ep
+            LEFT JOIN problem_templates pt ON pt.paper_id = ep.id
+        """
         params = []
         if not include_disabled:
-            query += " WHERE is_enabled = TRUE"
-        query += " ORDER BY created_at DESC, id DESC"
+            query += " WHERE ep.is_enabled = TRUE"
+        query += " GROUP BY ep.id, ep.name, ep.description, ep.is_enabled, ep.created_at"
+        query += " ORDER BY ep.created_at DESC, ep.id DESC"
         cursor.execute(query, params)
         papers = cursor.fetchall()
         set_exam_metadata_cache(cache_key, [dict(paper) for paper in papers])
@@ -1010,6 +1017,82 @@ def get_problem_display_info(paper_id=None, enabled_only=True):
     return display_mapping
 
 
+def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None):
+    """Get the persisted, shuffled question list assigned to one student."""
+    if not exam_id:
+        return get_problem_display_info(paper_id)
+
+    cache_key = ('user_exam_problem_display_info', int(exam_id), int(user_id))
+    cached = get_exam_metadata_cache(cache_key)
+    if cached is not None:
+        return {int(actual_id): dict(info) for actual_id, info in cached.items()}
+
+    exam = get_exam_by_id(exam_id)
+    if not exam:
+        return {}
+    paper_id = int(exam['paper_id'])
+    templates = get_problem_templates_by_paper(paper_id)
+    template_lookup = {int(item['id']): item for item in templates}
+    if not template_lookup:
+        return {}
+
+    configured_count = exam.get('question_count')
+    if configured_count is None:
+        selected_ids = list(template_lookup)
+    else:
+        selected_ids = select_exam_template_ids(
+            template_lookup,
+            configured_count,
+            exam_id,
+            user_id,
+            app.config.get('SECRET_KEY'),
+        )
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        query = """
+            SELECT q.template_id, q.display_number, pt.template_name, pt.paper_id
+            FROM exam_user_questions q
+            JOIN problem_templates pt ON pt.id = q.template_id
+            WHERE q.exam_id = %s AND q.user_id = %s AND pt.paper_id = %s
+            ORDER BY q.display_number
+        """
+        cursor.execute(query, (exam_id, user_id, paper_id))
+        rows = cursor.fetchall()
+
+        if not rows:
+            cursor.executemany(
+                """
+                INSERT IGNORE INTO exam_user_questions
+                    (exam_id, user_id, template_id, display_number)
+                VALUES (%s, %s, %s, %s)
+                """,
+                [
+                    (exam_id, user_id, template_id, display_number)
+                    for display_number, template_id in enumerate(selected_ids, 1)
+                ],
+            )
+            conn.commit()
+            cursor.execute(query, (exam_id, user_id, paper_id))
+            rows = cursor.fetchall()
+
+        mapping = {
+            int(row['template_id']): {
+                'display_number': int(row['display_number']),
+                'template_name': row['template_name'],
+                'actual_id': int(row['template_id']),
+                'paper_id': int(row['paper_id']),
+            }
+            for row in rows
+        }
+        set_exam_metadata_cache(cache_key, mapping)
+        return mapping
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def build_display_to_actual_map(paper_id=None):
     """生成显示序号到实际ID的映射，便于前端查找"""
     mapping = get_problem_display_info(paper_id)
@@ -1663,6 +1746,7 @@ def repair_database():
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 name VARCHAR(150) NOT NULL,
                 paper_id INT NOT NULL,
+                question_count INT DEFAULT NULL,
                 exam_type VARCHAR(20) DEFAULT 'normal',
                 start_time DATETIME NULL,
                 end_time DATETIME NULL,
@@ -1671,6 +1755,10 @@ def repair_database():
                 FOREIGN KEY (paper_id) REFERENCES exam_papers(id)
             )
         """)
+        cursor.execute("SHOW COLUMNS FROM exams LIKE 'question_count'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE exams ADD COLUMN question_count INT DEFAULT NULL AFTER paper_id")
+            print("已添加 exams.question_count 列")
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS exam_assignments (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1680,6 +1768,19 @@ def repair_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE,
                 UNIQUE KEY uq_exam_assignment (exam_id, assign_type, assign_value)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS exam_user_questions (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                exam_id INT NOT NULL,
+                user_id INT NOT NULL,
+                template_id INT NOT NULL,
+                display_number INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_exam_user_display (exam_id, user_id, display_number),
+                UNIQUE KEY uq_exam_user_template (exam_id, user_id, template_id),
+                INDEX idx_exam_user_questions_user (user_id, exam_id)
             )
         """)
 
@@ -1875,6 +1976,7 @@ def initialize_database():
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(150) NOT NULL,
         paper_id INT NOT NULL,
+        question_count INT DEFAULT NULL,
         exam_type VARCHAR(20) DEFAULT 'normal',
         start_time DATETIME NULL,
         end_time DATETIME NULL,
@@ -1893,6 +1995,20 @@ def initialize_database():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE,
         UNIQUE KEY uq_exam_assignment (exam_id, assign_type, assign_value)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS exam_user_questions (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        exam_id INT NOT NULL,
+        user_id INT NOT NULL,
+        template_id INT NOT NULL,
+        display_number INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_exam_user_display (exam_id, user_id, display_number),
+        UNIQUE KEY uq_exam_user_template (exam_id, user_id, template_id),
+        INDEX idx_exam_user_questions_user (user_id, exam_id)
     )
     """)
 
@@ -2522,7 +2638,10 @@ def update_user_completion_status(user_id, exam_id=None):
         if not selected_paper_id:
             return False
 
-        total_problems = get_total_problem_count(selected_paper_id)
+        total_problems = (
+            len(get_user_exam_problem_display_info(user_id, exam_id, selected_paper_id))
+            if exam_id else get_total_problem_count(selected_paper_id)
+        )
         response_scope = "ur.exam_id = %s" if exam_id else "COALESCE(ur.paper_id, t.paper_id) = %s"
         response_scope_2 = "ur2.exam_id = %s" if exam_id else "COALESCE(ur2.paper_id, t2.paper_id) = %s"
         scope_param = exam_id if exam_id else selected_paper_id

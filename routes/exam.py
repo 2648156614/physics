@@ -31,7 +31,10 @@ def create_exam_blueprint(deps):
             elif session.get('username') != 'admin' and not selected_paper_id:
                 flash('当前暂无可用题库，请联系管理员开启试卷。', 'warning')
     
-            display_mapping = get_problem_display_info(selected_paper_id) if selected_paper_id else {}
+            display_mapping = (
+                get_user_exam_problem_display_info(session['user_id'], selected_exam_id, selected_paper_id)
+                if selected_paper_id else {}
+            )
             total_problems = len(display_mapping)
             actual_ids = [item['actual_id'] for item in display_mapping.values()]
             completion_map = (
@@ -410,7 +413,7 @@ def create_exam_blueprint(deps):
     
             # 根据显示序号获取实际ID
             paper_id = exam_access.get('paper_id') or resolve_selected_exam_paper_id()
-            display_mapping = get_problem_display_info(paper_id)
+            display_mapping = get_user_exam_problem_display_info(session['user_id'], selected_exam_id, paper_id)
             display_to_actual = {
                 info['display_number']: actual_id
                 for actual_id, info in display_mapping.items()
@@ -473,7 +476,7 @@ def create_exam_blueprint(deps):
     
         # 根据显示序号获取实际ID
         paper_id = exam_access.get('paper_id') or resolve_selected_exam_paper_id()
-        display_mapping = get_problem_display_info(paper_id)
+        display_mapping = get_user_exam_problem_display_info(session['user_id'], selected_exam_id, paper_id)
         display_to_actual = {
             info['display_number']: actual_id
             for actual_id, info in display_mapping.items()
@@ -616,7 +619,7 @@ def create_exam_blueprint(deps):
     
             # 根据显示序号获取实际ID
             paper_id = exam_access.get('paper_id') or resolve_selected_exam_paper_id()
-            display_mapping = get_problem_display_info(paper_id)
+            display_mapping = get_user_exam_problem_display_info(session['user_id'], selected_exam_id, paper_id)
             total_problems = len(display_mapping)
             display_to_actual = {
                 info['display_number']: actual_id

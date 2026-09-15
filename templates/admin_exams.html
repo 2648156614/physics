@@ -47,9 +47,9 @@
                     <div class="row g-3">
                         <div class="col-md-7">
                             <label class="form-label">题库</label>
-                            <select class="form-select" name="paper_id" required>
+                            <select class="form-select exam-paper-select" name="paper_id" required>
                                 {% for paper in exam_papers %}
-                                <option value="{{ paper.id }}">{{ paper.name }}</option>
+                                <option value="{{ paper.id }}" data-template-count="{{ paper.template_count }}">{{ paper.name }}（{{ paper.template_count }}题）</option>
                                 {% endfor %}
                             </select>
                         </div>
@@ -60,6 +60,11 @@
                                 <option value="retake">补考</option>
                             </select>
                         </div>
+                    </div>
+                    <div>
+                        <label class="form-label">每名学生抽取题数</label>
+                        <input class="form-control exam-question-count" type="number" name="question_count" min="1" required>
+                        <div class="form-text exam-question-count-hint"></div>
                     </div>
                     <div class="row g-3">
                         <div class="col-md-6">
@@ -137,9 +142,9 @@
                     <div class="row g-3">
                         <div class="col-md-7">
                             <label class="form-label">题库</label>
-                            <select class="form-select" name="paper_id" required>
+                            <select class="form-select exam-paper-select" name="paper_id" required>
                                 {% for paper in exam_papers %}
-                                <option value="{{ paper.id }}" {% if editing_exam.paper_id == paper.id %}selected{% endif %}>{{ paper.name }}</option>
+                                <option value="{{ paper.id }}" data-template-count="{{ paper.template_count }}" {% if editing_exam.paper_id == paper.id %}selected{% endif %}>{{ paper.name }}（{{ paper.template_count }}题）</option>
                                 {% endfor %}
                             </select>
                         </div>
@@ -150,6 +155,11 @@
                                 <option value="retake" {% if editing_exam.exam_type == 'retake' %}selected{% endif %}>补考</option>
                             </select>
                         </div>
+                    </div>
+                    <div>
+                        <label class="form-label">每名学生抽取题数</label>
+                        <input class="form-control exam-question-count" type="number" name="question_count" min="1" required value="{{ editing_exam.question_count or '' }}">
+                        <div class="form-text exam-question-count-hint"></div>
                     </div>
                     <div class="row g-3">
                         <div class="col-md-6">
@@ -237,6 +247,7 @@
                     <tr>
                         <th>名称</th>
                         <th>题库</th>
+                        <th>题数</th>
                         <th>时间</th>
                         <th>分配数</th>
                         <th>状态</th>
@@ -251,6 +262,7 @@
                             <small class="text-muted">{{ '补考' if exam.exam_type == 'retake' else '正式考试' }}</small>
                         </td>
                         <td>{{ exam.paper_name }}</td>
+                        <td>{{ exam.question_count if exam.question_count else '全部' }}</td>
                         <td>
                             <small>
                                 {% if exam.start_time %}{{ exam.start_time.strftime('%Y-%m-%d %H:%M') }}{% else %}不限开始{% endif %}<br>
@@ -265,7 +277,7 @@
                         </td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="6" class="text-center text-muted py-4">还没有考试批次</td></tr>
+                    <tr><td colspan="7" class="text-center text-muted py-4">还没有考试批次</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>
@@ -276,6 +288,26 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('form').forEach(function (form) {
+        const paperSelect = form.querySelector('.exam-paper-select');
+        const countInput = form.querySelector('.exam-question-count');
+        const hint = form.querySelector('.exam-question-count-hint');
+        if (!paperSelect || !countInput || !hint) return;
+
+        function syncQuestionCount() {
+            const option = paperSelect.options[paperSelect.selectedIndex];
+            const available = Number(option ? option.dataset.templateCount : 0);
+            countInput.max = String(available);
+            if (!countInput.value || Number(countInput.value) > available) {
+                countInput.value = available ? String(available) : '';
+            }
+            hint.textContent = available ? `该题库共有 ${available} 道题` : '该题库暂无题目';
+        }
+
+        paperSelect.addEventListener('change', syncQuestionCount);
+        syncQuestionCount();
+    });
+
     function bindAssignToggle(examTypeId, assignTypeId, valueWrapId, valueInputId, fileWrapId, fileInputId, requireFileWhenStudent) {
         const examType = examTypeId ? document.getElementById(examTypeId) : null;
         const assignType = document.getElementById(assignTypeId);
