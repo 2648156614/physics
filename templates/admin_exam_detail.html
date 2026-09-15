@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+
+{% block title %}{{ exam.name }} - 考试数据{% endblock %}
+
+{% block content %}
+<style>
+.exam-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+    gap: 12px;
+}
+.summary-item {
+    border-left: 3px solid #0d6efd;
+    padding: 8px 12px;
+    background: #f8f9fa;
+}
+.batch-tabs {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+}
+.batch-tab { white-space: nowrap; }
+.status-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.assign-checkbox-list {
+    max-height: 190px;
+    overflow-y: auto;
+}
+@media (max-width: 767.98px) {
+    .exam-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .student-table th:nth-child(4), .student-table td:nth-child(4),
+    .student-table th:nth-child(6), .student-table td:nth-child(6) { display: none; }
+}
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+        <a href="{{ url_for('admin.admin_exams') }}" class="text-decoration-none small">
+            <i class="bi bi-arrow-left"></i> 返回考试列表
+        </a>
+        <h2 class="mt-2 mb-1">{{ exam.name }}</h2>
+        <div class="text-muted">{{ exam.paper_name }} · 每人 {{ total_problems }} 题 · {{ '补考' if exam.exam_type == 'retake' else '正式考试' }}</div>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-success" href="{{ url_for('admin.admin_export_all_student_analytics', exam_id=exam.id) }}">
+            <i class="bi bi-download"></i> 导出答题数据
+        </a>
+        {% if exam.status != 'archived' %}<a class="btn btn-outline-primary" href="{{ url_for('admin.admin_exams', edit_exam_id=exam.id) }}">
+            <i class="bi bi-pencil"></i> 编辑考试
+        </a>{% else %}<span class="badge bg-secondary align-self-center">考试已归档，只读</span>{% endif %}
+    </div>
+</div>
+
+<section class="border-top border-bottom py-3 mb-4">
+    <div class="exam-summary-grid">
+        <div class="summary-item"><div class="text-muted small">当前批次人数</div><strong>{{ total_students }}</strong></div>
+        <div class="summary-item"><div class="text-muted small">已完成</div><strong class="text-success">{{ status_counts.completed }}</strong></div>
+        <div class="summary-item"><div class="text-muted small">答题中</div><strong class="text-primary">{{ status_counts.in_progress }}</strong></div>
+        <div class="summary-item"><div class="text-muted small">未完成/缺考</div><strong class="text-danger">{{ status_counts.ended_incomplete + status_counts.absent }}</strong></div>
+    </div>
+</section>
+
+<section class="mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <h4 class="mb-0">考试批次</h4>
+        {% if exam.status != 'archived' %}<button class="btn btn-primary" type="button" data-bs-toggle="collapse" data-bs-target="#new-batch-form">
+            <i class="bi bi-plus-lg"></i> 添加批次
+        </button>{% endif %}
+    </div>
+
+    <div class="batch-tabs mb-3">
+        {% for batch in batches %}
+        <a class="btn batch-tab {{ 'btn-primary' if batch.id == selected_batch_id else 'btn-outline-secondary' }}"
+           href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id, batch_id=batch.id) }}">
+            {{ batch.name }} · {{ batch.student_count }}人{% if batch.status == 'archived' %} · 已归档{% endif %}
+        </a>
+        {% else %}
+        <span class="text-muted">尚未设置批次</span>
+        {% endfor %}
+    </div>
+
+    {% if exam.status != 'archived' %}<div class="collapse border-top pt-3" id="new-batch-form">
+        <form method="post" action="{{ url_for('admin.admin_create_exam_batch', exam_id=exam.id) }}" enctype="multipart/form-data" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">批次名称</label>
+                <input class="form-control" name="batch_name" required placeholder="例如：机电二班下午场">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">开始时间</label>
+                <input class="form-control" type="datetime-local" name="start_time">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">结束时间</label>
+                <input class="form-control" type="datetime-local" name="end_time">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">分配方式</label>
+                <select class="form-select" name="assign_type" id="batch-assign-type" required>
+                    <option value="class">班级</option>
+                    <option value="major">专业</option>
+                    <option value="course">课程号</option>
+                    <option value="student">导入 Excel 名单</option>
+                </select>
+            </div>
+            <div class="col-md-8" id="batch-assign-values">
+                <label class="form-label">学生范围</label>
+                <div class="border p-2 assign-checkbox-list">
+                    <div data-assign-group="class">
+                        {% for item in class_options %}<label class="form-check"><input class="form-check-input" type="checkbox" name="assign_value" value="{{ item }}"> {{ item }}</label>{% endfor %}
+                    </div>
+                    <div data-assign-group="major">
+                        {% for item in major_options %}<label class="form-check"><input class="form-check-input" type="checkbox" name="assign_value" value="{{ item }}"> {{ item }}</label>{% endfor %}
+                    </div>
+                    <div data-assign-group="course">
+                        {% for item in course_options %}<label class="form-check"><input class="form-check-input" type="checkbox" name="assign_value" value="{{ item }}"> {{ item }}</label>{% endfor %}
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-8 d-none" id="batch-student-file-wrap">
+                <label class="form-label">学生名单</label>
+                <input class="form-control" type="file" name="student_file" id="batch-student-file" accept=".xlsx">
+            </div>
+            <div class="col-12">
+                <button class="btn btn-primary" type="submit"><i class="bi bi-check2"></i> 创建批次</button>
+            </div>
+        </form>
+    </div>{% endif %}
+</section>
+
+{% if selected_batch %}
+<section class="border-top pt-4">
+    <div class="d-flex flex-wrap justify-content-between gap-3 mb-3">
+        <div>
+            <h4 class="mb-1">{{ selected_batch.name }}</h4>
+            <div class="text-muted small">
+                {{ selected_batch.start_time.strftime('%Y-%m-%d %H:%M') if selected_batch.start_time else '不限开始时间' }}
+                至
+                {{ selected_batch.end_time.strftime('%Y-%m-%d %H:%M') if selected_batch.end_time else '不限结束时间' }}
+            </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            {% if exam.status != 'archived' and selected_batch.status == 'active' %}
+            <form method="post" action="{{ url_for('admin.admin_extend_exam_batch', exam_id=exam.id, batch_id=selected_batch.id) }}" class="d-flex gap-2">
+                <input class="form-control" type="datetime-local" name="end_time" required aria-label="新的结束时间">
+                <button class="btn btn-outline-primary text-nowrap" type="submit">延长时间</button>
+            </form>
+            {% endif %}
+            {% if exam.status != 'archived' %}<form method="post" action="{{ url_for('admin.admin_delete_exam_batch', exam_id=exam.id, batch_id=selected_batch.id) }}" onsubmit="return confirm('未开始的批次会删除；已有考试数据的批次会归档。确定继续吗？');">
+                <button class="btn btn-outline-danger" type="submit">
+                    <i class="bi bi-archive"></i> 删除或归档批次
+                </button>
+            </form>{% endif %}
+        </div>
+    </div>
+
+    <div class="status-filters mb-3">
+        <a class="btn btn-sm {{ 'btn-dark' if not selected_status else 'btn-outline-dark' }}" href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id, batch_id=selected_batch.id) }}">全部 {{ total_students }}</a>
+        {% for status, label in status_labels.items() %}
+        <a class="btn btn-sm {{ 'btn-dark' if selected_status == status else 'btn-outline-dark' }}" href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id, batch_id=selected_batch.id, status=status) }}">{{ label }} {{ status_counts[status] }}</a>
+        {% endfor %}
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle student-table">
+            <thead>
+                <tr><th>学号</th><th>姓名</th><th>班级</th><th>专业</th><th>状态</th><th>完成题数</th><th>正确率</th><th>最后作答</th></tr>
+            </thead>
+            <tbody>
+                {% for student in students %}
+                <tr>
+                    <td>{{ student.username }}</td>
+                    <td>{{ student.name or '-' }}</td>
+                    <td>{{ student.class_name or '-' }}</td>
+                    <td>{{ student.major or '-' }}</td>
+                    <td><span class="badge {{ 'bg-success' if student.exam_status == 'completed' else 'bg-primary' if student.exam_status == 'in_progress' else 'bg-danger' if student.exam_status in ['absent', 'ended_incomplete'] else 'bg-secondary' }}">{{ student.exam_status_label }}</span></td>
+                    <td>{{ student.completed_count }}/{{ total_problems }}</td>
+                    <td>{% if student.accuracy is not none %}{{ student.accuracy }}%{% else %}-{% endif %}</td>
+                    <td>{{ student.last_response_time.strftime('%m-%d %H:%M') if student.last_response_time else '-' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="8" class="text-center text-muted py-4">当前筛选条件下没有学生</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const typeSelect = document.getElementById('batch-assign-type');
+    const valuesWrap = document.getElementById('batch-assign-values');
+    const fileWrap = document.getElementById('batch-student-file-wrap');
+    const fileInput = document.getElementById('batch-student-file');
+    if (!typeSelect) return;
+
+    function syncBatchAssignment() {
+        const isStudent = typeSelect.value === 'student';
+        valuesWrap.classList.toggle('d-none', isStudent);
+        fileWrap.classList.toggle('d-none', !isStudent);
+        fileInput.required = isStudent;
+        valuesWrap.querySelectorAll('[data-assign-group]').forEach(function (group) {
+            const active = group.dataset.assignGroup === typeSelect.value;
+            group.hidden = !active;
+            group.querySelectorAll('input').forEach(function (input) {
+                input.disabled = !active;
+                if (!active) input.checked = false;
+            });
+        });
+    }
+    typeSelect.addEventListener('change', syncBatchAssignment);
+    syncBatchAssignment();
+});
+</script>
+{% endblock %}

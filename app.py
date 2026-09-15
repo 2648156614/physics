@@ -226,6 +226,7 @@ def get_user_exam_access(user_id, exam_id=None):
 
     session['selected_exam_id'] = selected_exam_id
     session['selected_exam_paper_id'] = selected_exam['paper_id']
+    session['selected_exam_batch_id'] = selected_exam.get('batch_id')
 
     if not selected_exam.get('access_allowed'):
         return {
@@ -237,6 +238,8 @@ def get_user_exam_access(user_id, exam_id=None):
             'exam_id': selected_exam_id,
             'paper_id': selected_exam.get('paper_id'),
             'exam_name': selected_exam.get('name'),
+            'batch_id': selected_exam.get('batch_id'),
+            'batch_name': selected_exam.get('batch_name'),
             'status': selected_exam.get('access_status', 'error'),
             'message': '当前考试暂不可进入，请返回考试列表重新选择。',
         }
@@ -250,6 +253,8 @@ def get_user_exam_access(user_id, exam_id=None):
         'exam_id': selected_exam_id,
         'paper_id': selected_exam.get('paper_id'),
         'exam_name': selected_exam.get('name'),
+        'batch_id': selected_exam.get('batch_id'),
+        'batch_name': selected_exam.get('batch_name'),
         'status': 'open',
         'message': None,
     }
@@ -376,6 +381,12 @@ def get_all_exams(limit=100):
                        FROM exam_assignments a
                        WHERE a.exam_id = e.id
                    ) AS assignment_count
+                   ,(
+                       SELECT COUNT(*) FROM exam_batches b WHERE b.exam_id = e.id
+                   ) AS batch_count
+                   ,(
+                       SELECT COUNT(*) FROM exam_batch_students s WHERE s.exam_id = e.id
+                   ) AS student_count
             FROM exams e
             JOIN exam_papers ep ON ep.id = e.paper_id
             ORDER BY e.created_at DESC, e.id DESC
@@ -394,48 +405,37 @@ def get_all_exams(limit=100):
 
 
 def get_user_available_exams(user_id, include_unavailable=True):
-    """Return exams assigned to this user by student, class, major, or course number."""
+    """Return exams assigned to the user's materialized exam batch."""
     conn = get_db_connection()
     if not conn:
         return []
     cursor = conn.cursor(dictionary=True)
     try:
-        cursor.execute(
-            "SELECT id, class_name, major, teacher_name FROM users WHERE id = %s",
-            (user_id,)
-        )
-        user = cursor.fetchone()
-        if not user:
-            return []
-
         now = datetime.now()
         cursor.execute(
             """
-            SELECT DISTINCT e.*, ep.name AS paper_name, ep.description AS paper_description
+            SELECT e.*, ep.name AS paper_name, ep.description AS paper_description,
+                   b.id AS batch_id, b.name AS batch_name,
+                   b.start_time AS batch_start_time, b.end_time AS batch_end_time,
+                   b.status AS batch_status
             FROM exams e
             JOIN exam_papers ep ON ep.id = e.paper_id
-            JOIN exam_assignments a ON a.exam_id = e.id
+            JOIN exam_batch_students s ON s.exam_id = e.id
+            JOIN exam_batches b ON b.id = s.batch_id AND b.exam_id = e.id
             WHERE e.status = 'published'
+              AND b.status = 'active'
               AND ep.is_enabled = TRUE
-              AND (
-                    (a.assign_type = 'student' AND a.assign_value = %s)
-                 OR (a.assign_type = 'class' AND a.assign_value = %s)
-                 OR (a.assign_type = 'major' AND a.assign_value = %s)
-                 OR (a.assign_type = 'course' AND a.assign_value = %s)
-              )
-            ORDER BY e.start_time DESC, e.id DESC
+              AND s.user_id = %s
+            ORDER BY b.start_time DESC, e.id DESC
             """,
-            (
-                str(user_id),
-                (user.get('class_name') or '').strip(),
-                (user.get('major') or '').strip(),
-                (user.get('teacher_name') or '').strip(),
-            )
+            (user_id,)
         )
         exams = [dict(row) for row in cursor.fetchall()]
         for exam in exams:
-            start_time = exam.get('start_time')
-            end_time = exam.get('end_time')
+            exam['start_time'] = exam.get('batch_start_time')
+            exam['end_time'] = exam.get('batch_end_time')
+            start_time = exam['start_time']
+            end_time = exam['end_time']
             if start_time and now < start_time:
                 exam['access_status'] = 'not_started'
                 exam['access_allowed'] = False
@@ -481,11 +481,13 @@ def resolve_selected_exam_id(preferred_exam_id=None):
         session['selected_exam_id'] = exam_id
         selected = next(exam for exam in available_exams if int(exam['id']) == exam_id)
         session['selected_exam_paper_id'] = selected['paper_id']
+        session['selected_exam_batch_id'] = selected.get('batch_id')
         return exam_id
 
     open_exam = next((exam for exam in available_exams if exam.get('access_allowed')), available_exams[0])
     session['selected_exam_id'] = open_exam['id']
     session['selected_exam_paper_id'] = open_exam['paper_id']
+    session['selected_exam_batch_id'] = open_exam.get('batch_id')
     return open_exam['id']
 
 
@@ -1051,6 +1053,15 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        cursor.execute(
+            "SELECT batch_id FROM exam_batch_students WHERE exam_id = %s AND user_id = %s",
+            (exam_id, user_id),
+        )
+        membership = cursor.fetchone() or {}
+        batch_id = membership.get('batch_id')
+        if not batch_id:
+            return {}
+
         query = """
             SELECT q.template_id, q.display_number, pt.template_name, pt.paper_id
             FROM exam_user_questions q
@@ -1065,11 +1076,11 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
             cursor.executemany(
                 """
                 INSERT IGNORE INTO exam_user_questions
-                    (exam_id, user_id, template_id, display_number)
-                VALUES (%s, %s, %s, %s)
+                    (exam_id, batch_id, user_id, template_id, display_number)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 [
-                    (exam_id, user_id, template_id, display_number)
+                    (exam_id, batch_id, user_id, template_id, display_number)
                     for display_number, template_id in enumerate(selected_ids, 1)
                 ],
             )
@@ -1608,6 +1619,15 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
         cursor = conn.cursor()
         print("✅ 数据库连接成功")
 
+        batch_id = None
+        if exam_id is not None:
+            cursor.execute(
+                "SELECT batch_id FROM exam_batch_students WHERE exam_id = %s AND user_id = %s",
+                (exam_id, user_id),
+            )
+            batch_row = cursor.fetchone()
+            batch_id = batch_row[0] if batch_row else None
+
         # 2. 验证用户和模板是否存在
         cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
         user_exists = cursor.fetchone()
@@ -1649,10 +1669,10 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
                 cursor.execute("""
                     INSERT INTO user_responses
                     (user_id, template_id, problem_text, user_answer,
-                     correct_answer, is_correct, error_type, error_category, attempt_count, time_taken, answer_index, paper_id, switch_count, exam_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     correct_answer, is_correct, error_type, error_category, attempt_count, time_taken, answer_index, paper_id, switch_count, exam_id, batch_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (user_id, template_id, truncated_problem_text, user_answer,
-                      correct_answer, is_correct, error_type, error_category, attempt_count, time_taken, i, paper_id, switch_count, exam_id))
+                      correct_answer, is_correct, error_type, error_category, attempt_count, time_taken, i, paper_id, switch_count, exam_id, batch_id))
 
                 saved_count += 1
                 saved_ids.append(cursor.lastrowid)
@@ -1698,6 +1718,98 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
             conn.close()
             print("✅ 数据库连接已关闭")
         print("=== 保存答题记录结束 ===\n")
+
+
+def ensure_exam_batch_schema(cursor):
+    """Create exam batch tables and migrate legacy exam schedules idempotently."""
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS exam_batches (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            exam_id INT NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            start_time DATETIME NULL,
+            end_time DATETIME NULL,
+            status VARCHAR(20) DEFAULT 'active',
+            is_default BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE,
+            UNIQUE KEY uq_exam_batch_name (exam_id, name),
+            INDEX idx_exam_batches_schedule (exam_id, status, start_time, end_time)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS exam_batch_assignments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            batch_id INT NOT NULL,
+            assign_type VARCHAR(20) NOT NULL,
+            assign_value VARCHAR(100) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (batch_id) REFERENCES exam_batches(id) ON DELETE CASCADE,
+            UNIQUE KEY uq_batch_assignment (batch_id, assign_type, assign_value)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS exam_batch_students (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            exam_id INT NOT NULL,
+            batch_id INT NOT NULL,
+            user_id INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (batch_id) REFERENCES exam_batches(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE KEY uq_exam_batch_student (exam_id, user_id),
+            UNIQUE KEY uq_batch_student (batch_id, user_id),
+            INDEX idx_exam_batch_students_batch (batch_id, user_id)
+        )
+    """)
+
+    cursor.execute("SHOW COLUMNS FROM exam_user_questions LIKE 'batch_id'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE exam_user_questions ADD COLUMN batch_id INT DEFAULT NULL AFTER exam_id")
+        print("已添加 exam_user_questions.batch_id 列")
+    cursor.execute("SHOW COLUMNS FROM user_responses LIKE 'batch_id'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE user_responses ADD COLUMN batch_id INT DEFAULT NULL AFTER exam_id")
+        print("已添加 user_responses.batch_id 列")
+
+    cursor.execute("""
+        INSERT INTO exam_batches (exam_id, name, start_time, end_time, status, is_default)
+        SELECT e.id, '默认批次', e.start_time, e.end_time, 'active', TRUE
+        FROM exams e
+        WHERE NOT EXISTS (SELECT 1 FROM exam_batches b WHERE b.exam_id = e.id)
+    """)
+    cursor.execute("""
+        INSERT IGNORE INTO exam_batch_assignments (batch_id, assign_type, assign_value)
+        SELECT b.id, a.assign_type, a.assign_value
+        FROM exam_batches b
+        JOIN exam_assignments a ON a.exam_id = b.exam_id
+        WHERE b.is_default = TRUE
+    """)
+    cursor.execute("""
+        INSERT IGNORE INTO exam_batch_students (exam_id, batch_id, user_id)
+        SELECT b.exam_id, b.id, u.id
+        FROM exam_batches b
+        JOIN exam_batch_assignments a ON a.batch_id = b.id
+        JOIN users u ON u.username != 'admin' AND (
+               (a.assign_type = 'student' AND a.assign_value = CAST(u.id AS CHAR))
+            OR (a.assign_type = 'class' AND BINARY a.assign_value = BINARY COALESCE(u.class_name, ''))
+            OR (a.assign_type = 'major' AND BINARY a.assign_value = BINARY COALESCE(u.major, ''))
+            OR (a.assign_type = 'course' AND BINARY a.assign_value = BINARY COALESCE(u.teacher_name, ''))
+        )
+        WHERE b.is_default = TRUE
+    """)
+    cursor.execute("""
+        UPDATE exam_user_questions q
+        JOIN exam_batch_students s ON s.exam_id = q.exam_id AND s.user_id = q.user_id
+        SET q.batch_id = s.batch_id
+        WHERE q.batch_id IS NULL
+    """)
+    cursor.execute("""
+        UPDATE user_responses r
+        JOIN exam_batch_students s ON s.exam_id = r.exam_id AND s.user_id = r.user_id
+        SET r.batch_id = s.batch_id
+        WHERE r.exam_id IS NOT NULL AND r.batch_id IS NULL
+    """)
 
 
 def repair_database():
@@ -1786,6 +1898,7 @@ def repair_database():
             CREATE TABLE IF NOT EXISTS exam_user_questions (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
                 exam_id INT NOT NULL,
+                batch_id INT DEFAULT NULL,
                 user_id INT NOT NULL,
                 template_id INT NOT NULL,
                 display_number INT NOT NULL,
@@ -1813,6 +1926,8 @@ def repair_database():
         if not cursor.fetchone():
             cursor.execute("ALTER TABLE user_responses ADD COLUMN switch_count INT NOT NULL DEFAULT 0 AFTER time_taken")
             print("Added user_responses.switch_count column")
+
+        ensure_exam_batch_schema(cursor)
 
         cursor.execute("""
             SELECT COUNT(*) FROM information_schema.table_constraints
@@ -2014,6 +2129,7 @@ def initialize_database():
     CREATE TABLE IF NOT EXISTS exam_user_questions (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
         exam_id INT NOT NULL,
+        batch_id INT DEFAULT NULL,
         user_id INT NOT NULL,
         template_id INT NOT NULL,
         display_number INT NOT NULL,
@@ -2071,6 +2187,7 @@ def initialize_database():
         answer_index INT DEFAULT 0,
         paper_id INT DEFAULT NULL,
         exam_id INT DEFAULT NULL,
+        batch_id INT DEFAULT NULL,
         FOREIGN KEY (user_id) REFERENCES users(id),
         FOREIGN KEY (template_id) REFERENCES problem_templates(id),
         FOREIGN KEY (paper_id) REFERENCES exam_papers(id),
@@ -2423,6 +2540,16 @@ def ensure_performance_indexes():
                 'exam_assignments',
                 'idx_exam_assignments_lookup',
                 "CREATE INDEX idx_exam_assignments_lookup ON exam_assignments (assign_type, assign_value, exam_id)"
+            ),
+            (
+                'user_responses',
+                'idx_user_responses_batch_user_template',
+                "CREATE INDEX idx_user_responses_batch_user_template ON user_responses (batch_id, user_id, template_id)"
+            ),
+            (
+                'exam_user_questions',
+                'idx_exam_user_questions_batch_user',
+                "CREATE INDEX idx_exam_user_questions_batch_user ON exam_user_questions (batch_id, user_id)"
             ),
             (
                 'exams',

@@ -8,25 +8,10 @@
         <h2 class="mb-0"><i class="bi bi-speedometer me-2"></i>管理员后台</h2>
         <div class="btn-group">
             <a href="{{ url_for('admin.admin_exams') }}" class="btn btn-warning">
-                <i class="bi bi-calendar-check"></i> 考试批次/补考
-            </a>
-            <a href="{{ url_for('admin_students_by_status', status='completed', paper_id=selected_paper_id) }}" class="btn btn-success">
-                <i class="bi bi-check-circle"></i> 已完成学生
-            </a>
-            <a href="{{ url_for('admin_students_by_status', status='incomplete', paper_id=selected_paper_id) }}" class="btn btn-warning">
-                <i class="bi bi-exclamation-triangle"></i> 未完成学生
-            </a>
-            <a href="{{ url_for('admin_export_all_student_analytics', paper_id=selected_paper_id) }}" class="btn btn-outline-primary">
-                <i class="bi bi-file-earmark-excel"></i> 导出全部答题数据
-            </a>
-            <a href="{{ url_for('admin.admin_export_best_exam_scores', paper_id=selected_paper_id) }}" class="btn btn-outline-success">
-                <i class="bi bi-award"></i> 导出最高成绩
+                <i class="bi bi-calendar-check"></i> 考试管理
             </a>
             <a href="{{ url_for('admin_user_management') }}" class="btn btn-outline-dark">
                 <i class="bi bi-people"></i> 用户管理
-            </a>
-            <a href="{{ url_for('admin_all_problems_stats', paper_id=selected_paper_id) }}" class="btn btn-info">
-                <i class="bi bi-graph-up"></i> 题目统计
             </a>
             <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-primary">
                 <i class="bi bi-journal-plus"></i> 题目管理
@@ -34,12 +19,41 @@
         </div>
     </div>
 
+    <section class="border-top border-bottom py-3 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h4 class="mb-1">按考试查看答题数据</h4>
+                <div class="text-muted">完成情况、缺考情况和作答明细不再跨考试混合统计。</div>
+            </div>
+            <a class="btn btn-primary" href="{{ url_for('admin.admin_exams') }}"><i class="bi bi-plus-lg"></i> 设置考试</a>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead><tr><th>考试</th><th>题库</th><th>题数</th><th>批次</th><th>学生</th><th></th></tr></thead>
+                <tbody>
+                {% for exam in exams %}
+                    <tr>
+                        <td>{{ exam.name }}{% if exam.status == 'archived' %} <span class="badge bg-secondary">已归档</span>{% endif %}</td>
+                        <td>{{ exam.paper_name }}</td>
+                        <td>{{ exam.question_count or '全部' }}</td>
+                        <td>{{ exam.batch_count }}</td>
+                        <td>{{ exam.student_count }}</td>
+                        <td class="text-end"><a class="btn btn-sm btn-success" href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id) }}">进入考试</a></td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="6" class="text-center text-muted py-4">还没有设置考试</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
 
     <div class="card mb-4 border-info">
         <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
             <h5 class="mb-0"><i class="bi bi-collection me-2"></i>题库管理</h5>
             {% if selected_paper %}
-            <span class="badge bg-light text-info">当前统计题库：{{ selected_paper.name }}{% if selected_paper.is_enabled %} · 已开启{% else %} · 已关闭{% endif %}</span>
+            <span class="badge bg-light text-info">当前题库：{{ selected_paper.name }}{% if selected_paper.is_enabled %} · 已开启{% else %} · 已关闭{% endif %}</span>
             {% else %}
             <span class="badge bg-light text-secondary">暂无题库</span>
             {% endif %}
@@ -47,7 +61,7 @@
         <div class="card-body">
             <form method="get" action="{{ url_for('admin_dashboard') }}" class="row g-3 align-items-end mb-4">
                 <div class="col-md-6">
-                    <label class="form-label">查看题库统计</label>
+                    <label class="form-label">当前管理题库</label>
                     <select class="form-select" name="paper_id" {% if not exam_papers %}disabled{% endif %}>
                         {% if not exam_papers %}
                         <option value="">暂无题库</option>
@@ -58,7 +72,7 @@
                     </select>
                 </div>
                 <div class="col-md-2">
-                    <button type="submit" class="btn btn-info w-100" {% if not exam_papers %}disabled{% endif %}>切换统计</button>
+                    <button type="submit" class="btn btn-info w-100" {% if not exam_papers %}disabled{% endif %}>切换题库</button>
                 </div>
             </form>
             {% if not (exam_papers | selectattr('is_enabled') | list) %}
@@ -135,6 +149,7 @@
         </div>
     </div>
 
+    {% if false %}
     <div class="row mb-4">
         <div class="col-xl-3 col-md-6 mb-3">
             <div class="card text-white bg-primary dashboard-card">
@@ -330,6 +345,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
 </div>
 {% endblock %}
 

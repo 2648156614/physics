@@ -70,6 +70,39 @@ def create_question_blueprint(deps):
     globals().update(deps)
     bp = Blueprint('question', __name__)
 
+    def _paper_has_started_exam(paper_id):
+        if not paper_id:
+            return False
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                """
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM exams e
+                    WHERE e.paper_id = %s AND e.status IN ('published', 'archived')
+                      AND (
+                          EXISTS(SELECT 1 FROM exam_user_questions q WHERE q.exam_id = e.id LIMIT 1)
+                          OR EXISTS(SELECT 1 FROM user_responses r WHERE r.exam_id = e.id LIMIT 1)
+                      )
+                    LIMIT 1
+                ) AS locked
+                """,
+                (paper_id,),
+            )
+            return bool((cursor.fetchone() or {}).get('locked'))
+        finally:
+            cursor.close()
+            conn.close()
+
+
+    def _reject_locked_paper_change(paper_ids):
+        if any(_paper_has_started_exam(paper_id) for paper_id in set(paper_ids) if paper_id):
+            flash('该题库已有学生进入考试，为保证所有学生题目范围一致，不能再增删、移动或修改题目。', 'danger')
+            return True
+        return False
+
     @bp.route('/problem_image/<path:filename>')
     def problem_image_file(filename):
         if not filename or filename != os.path.basename(filename) or not allowed_file(filename):
@@ -124,6 +157,9 @@ def create_question_blueprint(deps):
                 flash('题库不存在', 'danger')
                 return redirect(url_for('admin_dashboard'))
             new_status = not bool(paper['is_enabled'])
+            if not new_status and _paper_has_started_exam(paper_id):
+                flash('该题库正在被已有学生进入的考试使用，不能关闭。请先保留题库状态，避免学生考试中断。', 'danger')
+                return redirect(url_for('admin_dashboard', paper_id=paper_id))
             cursor.execute("UPDATE exam_papers SET is_enabled = %s WHERE id = %s", (new_status, paper_id))
             conn.commit()
             deleted_cache_count = invalidate_exam_paper_cache(paper_id)
@@ -259,6 +295,9 @@ def create_question_blueprint(deps):
             existing_paper = cursor.fetchone()
             if existing_paper and replace_existing:
                 paper_id = existing_paper['id']
+                if _reject_locked_paper_change([paper_id]):
+                    conn.rollback()
+                    return redirect(url_for('admin_manage_problems', paper_id=paper_id))
                 cursor.execute("SELECT id FROM problem_templates WHERE paper_id = %s", (paper_id,))
                 old_template_ids = [row['id'] for row in cursor.fetchall()]
                 deleted_cache_count = 0
@@ -358,6 +397,8 @@ def create_question_blueprint(deps):
                 difficulty = request.form.get('difficulty', 'medium')
                 answer_units = request.form.get('answer_units', '')
                 paper_id = request.form.get('paper_id', type=int)
+                if _reject_locked_paper_change([paper_id]):
+                    return redirect(url_for('admin_manage_problems', paper_id=paper_id))
                 knowledge_point = request.form.get('knowledge_point', '').strip()
                 if not knowledge_point:
                     knowledge_point = infer_knowledge_label(template_name)
@@ -483,9 +524,13 @@ def create_question_blueprint(deps):
                     )
                 remove_image = request.form.get('remove_image') == 'true'
                 current_image = request.form.get('current_image', '')
-                cursor.execute("SELECT image_filename FROM problem_templates WHERE id = %s", (template_id,))
+                cursor.execute("SELECT image_filename, paper_id FROM problem_templates WHERE id = %s", (template_id,))
                 existing_template = cursor.fetchone() or {}
                 old_image_filename = existing_template.get('image_filename')
+                if _reject_locked_paper_change([existing_template.get('paper_id'), paper_id]):
+                    cursor.close()
+                    conn.close()
+                    return redirect(url_for('admin_manage_problems', paper_id=existing_template.get('paper_id')))
     
                 # 处理图片更新
                 image_filename = old_image_filename or current_image or None
@@ -559,8 +604,11 @@ def create_question_blueprint(deps):
     
         try:
             # 先获取题目的图片信息
-            cursor.execute("SELECT image_filename FROM problem_templates WHERE id = %s", (template_id,))
+            cursor.execute("SELECT image_filename, paper_id FROM problem_templates WHERE id = %s", (template_id,))
             template = cursor.fetchone()
+            template_paper_id = template.get('paper_id') if template else None
+            if _reject_locked_paper_change([template_paper_id]):
+                return redirect(url_for('admin_manage_problems', paper_id=template_paper_id))
     
             # 删除相关的答题记录
             cursor.execute("DELETE FROM user_responses WHERE template_id = %s", (template_id,))

@@ -10,6 +10,11 @@ import re
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from services.exam_batch_service import (
+    EXAM_STUDENT_STATUS_LABELS,
+    classify_exam_student_status,
+)
+
 
 def create_admin_blueprint(deps):
     globals().update(deps)
@@ -28,20 +33,18 @@ def create_admin_blueprint(deps):
             include_disabled_for_admin=True
         )
         selected_paper = get_exam_paper_by_id(selected_paper_id) if selected_paper_id else None
-        stats = get_completion_stats(selected_paper_id)
         total_problems = get_total_problem_count(selected_paper_id)
-        recent_completions = get_students_by_completion(completed=True, paper_id=selected_paper_id)
-        incomplete_students = get_students_by_completion(completed=False, paper_id=selected_paper_id)
 
         return render_template(
             'admin_dashboard.html',
             exam_papers=get_exam_papers(include_disabled=True),
             selected_paper_id=selected_paper_id,
             selected_paper=selected_paper,
-            stats=stats,
+            stats={'stats': {}, 'today_stats': {}},
             total_problems=total_problems,
-            recent_completions=recent_completions,
-            incomplete_students=incomplete_students,
+            recent_completions=[],
+            incomplete_students=[],
+            exams=get_all_exams(),
         )
 
 
@@ -187,6 +190,139 @@ def create_admin_blueprint(deps):
         return parsed_rows
 
 
+    def _resolve_assignment_user_ids(cursor, assignments):
+        user_ids = set()
+        field_map = {
+            'class': 'class_name',
+            'major': 'major',
+            'course': 'teacher_name',
+        }
+        for assign_type, assign_value in assignments:
+            if assign_type == 'student':
+                try:
+                    user_ids.add(int(assign_value))
+                except (TypeError, ValueError):
+                    continue
+                continue
+            field_name = field_map.get(assign_type)
+            if not field_name:
+                continue
+            cursor.execute(
+                f"SELECT id FROM users WHERE username != 'admin' AND BINARY COALESCE({field_name}, '') = BINARY %s",
+                (assign_value,),
+            )
+            user_ids.update(int(row['id']) for row in cursor.fetchall())
+        return sorted(user_ids)
+
+
+    def _resolve_uploaded_student_assignments(cursor, upload_file):
+        parsed_rows = _parse_exam_import_rows(upload_file)
+        matched_ids = set()
+        missing_count = 0
+        for row in parsed_rows:
+            matched_user = None
+            if row['student_id']:
+                cursor.execute(
+                    "SELECT id FROM users WHERE username != 'admin' AND username = %s LIMIT 1",
+                    (row['student_id'],),
+                )
+                matched_user = cursor.fetchone()
+            if not matched_user and row['student_name']:
+                cursor.execute(
+                    "SELECT id FROM users WHERE username != 'admin' AND TRIM(name) = %s LIMIT 2",
+                    (row['student_name'],),
+                )
+                matches = cursor.fetchall()
+                matched_user = matches[0] if len(matches) == 1 else None
+            if matched_user:
+                matched_ids.add(int(matched_user['id']))
+            else:
+                missing_count += 1
+        return [('student', str(user_id)) for user_id in sorted(matched_ids)], missing_count
+
+
+    def _create_exam_batch(cursor, exam_id, name, start_time, end_time, assignments, is_default=False):
+        batch_name = (name or '').strip() or ('默认批次' if is_default else '考试批次')
+        user_ids = _resolve_assignment_user_ids(cursor, assignments)
+        if not user_ids:
+            raise ValueError('当前分配范围内没有可用学生。')
+
+        placeholders = ', '.join(['%s'] * len(user_ids))
+        cursor.execute(
+            f"""
+            SELECT u.username, u.name, b.name AS batch_name
+            FROM exam_batch_students s
+            JOIN users u ON u.id = s.user_id
+            JOIN exam_batches b ON b.id = s.batch_id
+            WHERE s.exam_id = %s AND s.user_id IN ({placeholders})
+            LIMIT 5
+            """,
+            [exam_id, *user_ids],
+        )
+        conflicts = cursor.fetchall()
+        if conflicts:
+            names = '、'.join((row.get('name') or row.get('username') or '') for row in conflicts)
+            raise ValueError(f'以下学生已属于本考试的其他批次：{names}')
+
+        cursor.execute(
+            """
+            INSERT INTO exam_batches (exam_id, name, start_time, end_time, status, is_default)
+            VALUES (%s, %s, %s, %s, 'active', %s)
+            """,
+            (exam_id, batch_name, start_time, end_time, bool(is_default)),
+        )
+        batch_id = cursor.lastrowid
+        cursor.executemany(
+            """
+            INSERT INTO exam_batch_assignments (batch_id, assign_type, assign_value)
+            VALUES (%s, %s, %s)
+            """,
+            [(batch_id, assign_type, assign_value) for assign_type, assign_value in assignments],
+        )
+        cursor.executemany(
+            """
+            INSERT INTO exam_batch_students (exam_id, batch_id, user_id)
+            VALUES (%s, %s, %s)
+            """,
+            [(exam_id, batch_id, user_id) for user_id in user_ids],
+        )
+        return batch_id, len(user_ids)
+
+
+    def _replace_exam_batch_assignments(cursor, exam_id, batch_id, assignments):
+        user_ids = _resolve_assignment_user_ids(cursor, assignments)
+        if not user_ids:
+            raise ValueError('当前分配范围内没有可用学生。')
+        placeholders = ', '.join(['%s'] * len(user_ids))
+        cursor.execute(
+            f"""
+            SELECT u.username, u.name, b.name AS batch_name
+            FROM exam_batch_students s
+            JOIN users u ON u.id = s.user_id
+            JOIN exam_batches b ON b.id = s.batch_id
+            WHERE s.exam_id = %s AND s.batch_id != %s
+              AND s.user_id IN ({placeholders})
+            LIMIT 5
+            """,
+            [exam_id, batch_id, *user_ids],
+        )
+        conflicts = cursor.fetchall()
+        if conflicts:
+            names = '、'.join((row.get('name') or row.get('username') or '') for row in conflicts)
+            raise ValueError(f'以下学生已属于本考试的其他批次：{names}')
+        cursor.execute('DELETE FROM exam_batch_students WHERE batch_id = %s', (batch_id,))
+        cursor.execute('DELETE FROM exam_batch_assignments WHERE batch_id = %s', (batch_id,))
+        cursor.executemany(
+            "INSERT INTO exam_batch_assignments (batch_id, assign_type, assign_value) VALUES (%s, %s, %s)",
+            [(batch_id, assign_type, assign_value) for assign_type, assign_value in assignments],
+        )
+        cursor.executemany(
+            "INSERT INTO exam_batch_students (exam_id, batch_id, user_id) VALUES (%s, %s, %s)",
+            [(exam_id, batch_id, user_id) for user_id in user_ids],
+        )
+        return len(user_ids)
+
+
     @bp.route('/admin/exams')
     @login_required
     def admin_exams():
@@ -197,6 +333,9 @@ def create_admin_blueprint(deps):
         class_options, major_options, course_options = _get_exam_setup_options()
         edit_exam_id = request.args.get('edit_exam_id', type=int)
         editing_exam = get_exam_by_id(edit_exam_id) if edit_exam_id else None
+        if editing_exam and editing_exam.get('status') == 'archived':
+            flash('归档考试只允许查看历史数据，不能再编辑。', 'warning')
+            return redirect(url_for('admin.admin_exam_detail', exam_id=edit_exam_id))
         editing_assignments = []
         editing_assign_type = ''
         editing_assign_value = ''
@@ -206,11 +345,23 @@ def create_admin_blueprint(deps):
             cursor = conn.cursor(dictionary=True)
             try:
                 cursor.execute(
-                    'SELECT assign_type, assign_value FROM exam_assignments WHERE exam_id = %s ORDER BY id',
+                    """
+                    SELECT a.assign_type, a.assign_value,
+                           b.id AS batch_id, b.name AS batch_name,
+                           b.start_time, b.end_time
+                    FROM exam_batches b
+                    JOIN exam_batch_assignments a ON a.batch_id = b.id
+                    WHERE b.exam_id = %s AND b.is_default = TRUE
+                    ORDER BY a.id
+                    """,
                     (edit_exam_id,)
                 )
                 editing_assignments = cursor.fetchall()
                 if editing_assignments:
+                    editing_exam['start_time'] = editing_assignments[0]['start_time']
+                    editing_exam['end_time'] = editing_assignments[0]['end_time']
+                    editing_exam['batch_id'] = editing_assignments[0]['batch_id']
+                    editing_exam['batch_name'] = editing_assignments[0]['batch_name']
                     editing_assign_type = editing_assignments[0]['assign_type']
                     editing_assign_value = editing_assignments[0]['assign_value']
                     editing_assign_values = [
@@ -239,6 +390,305 @@ def create_admin_blueprint(deps):
         )
 
 
+    @bp.route('/admin/exams/<int:exam_id>')
+    @login_required
+    def admin_exam_detail(exam_id):
+        if session.get('username') != 'admin':
+            flash('权限不足', 'danger')
+            return redirect(url_for('dashboard'))
+
+        exam = get_exam_by_id(exam_id)
+        if not exam:
+            flash('考试不存在或已被删除。', 'danger')
+            return redirect(url_for('admin.admin_exams'))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                """
+                SELECT b.*,
+                       COUNT(DISTINCT s.user_id) AS student_count,
+                       COUNT(DISTINCT q.user_id) AS entered_count
+                FROM exam_batches b
+                LEFT JOIN exam_batch_students s ON s.batch_id = b.id
+                LEFT JOIN exam_user_questions q ON q.batch_id = b.id
+                WHERE b.exam_id = %s
+                GROUP BY b.id
+                ORDER BY b.start_time, b.id
+                """,
+                (exam_id,),
+            )
+            batches = cursor.fetchall()
+            selected_batch_id = request.args.get('batch_id', type=int)
+            valid_batch_ids = {int(batch['id']) for batch in batches}
+            if selected_batch_id not in valid_batch_ids:
+                selected_batch_id = int(batches[0]['id']) if batches else None
+
+            students = []
+            if selected_batch_id:
+                cursor.execute(
+                    """
+                    SELECT u.id, u.username, u.name, u.class_name, u.major, u.teacher_name,
+                           COALESCE(q.entered_count, 0) AS entered_count,
+                           COALESCE(c.completed_count, 0) AS completed_count,
+                           COALESCE(r.answer_rows, 0) AS answer_rows,
+                           COALESCE(r.correct_rows, 0) AS correct_rows,
+                           r.first_response_time, r.last_response_time
+                    FROM exam_batch_students s
+                    JOIN users u ON u.id = s.user_id
+                    LEFT JOIN (
+                        SELECT user_id, COUNT(*) AS entered_count
+                        FROM exam_user_questions
+                        WHERE exam_id = %s AND batch_id = %s
+                        GROUP BY user_id
+                    ) q ON q.user_id = u.id
+                    LEFT JOIN (
+                        SELECT user_id, COUNT(DISTINCT template_id) AS completed_count
+                        FROM (
+                            SELECT user_id, template_id, attempt_count
+                            FROM user_responses
+                            WHERE exam_id = %s AND batch_id = %s
+                            GROUP BY user_id, template_id, attempt_count
+                            HAVING SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) = COUNT(*)
+                        ) completed_attempts
+                        GROUP BY user_id
+                    ) c ON c.user_id = u.id
+                    LEFT JOIN (
+                        SELECT user_id, COUNT(*) AS answer_rows,
+                               SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS correct_rows,
+                               MIN(response_time) AS first_response_time,
+                               MAX(response_time) AS last_response_time
+                        FROM user_responses
+                        WHERE exam_id = %s AND batch_id = %s
+                        GROUP BY user_id
+                    ) r ON r.user_id = u.id
+                    WHERE s.exam_id = %s AND s.batch_id = %s
+                    ORDER BY u.class_name, u.username
+                    """,
+                    (
+                        exam_id, selected_batch_id,
+                        exam_id, selected_batch_id,
+                        exam_id, selected_batch_id,
+                        exam_id, selected_batch_id,
+                    ),
+                )
+                students = cursor.fetchall()
+        finally:
+            cursor.close()
+            conn.close()
+
+        selected_batch = next(
+            (batch for batch in batches if int(batch['id']) == selected_batch_id),
+            None,
+        )
+        total_problems = int(exam.get('question_count') or get_total_problem_count(exam['paper_id']))
+        now = datetime.now()
+        status_labels = EXAM_STUDENT_STATUS_LABELS
+        status_counts = {key: 0 for key in status_labels}
+        for student in students:
+            entered = int(student.get('entered_count') or 0) > 0
+            status = classify_exam_student_status(
+                entered=entered,
+                completed_count=int(student.get('completed_count') or 0),
+                total_problems=total_problems,
+                start_time=selected_batch.get('start_time') if selected_batch else None,
+                end_time=selected_batch.get('end_time') if selected_batch else None,
+                now=now,
+            )
+            student['exam_status'] = status
+            student['exam_status_label'] = status_labels[status]
+            student['accuracy'] = round(
+                int(student.get('correct_rows') or 0) / int(student.get('answer_rows') or 1) * 100,
+                1,
+            ) if student.get('answer_rows') else None
+            status_counts[status] += 1
+
+        selected_status = (request.args.get('status') or '').strip()
+        visible_students = [
+            student for student in students
+            if not selected_status or student['exam_status'] == selected_status
+        ]
+        class_options, major_options, course_options = _get_exam_setup_options()
+        return render_template(
+            'admin_exam_detail.html',
+            exam=exam,
+            batches=batches,
+            selected_batch=selected_batch,
+            selected_batch_id=selected_batch_id,
+            students=visible_students,
+            total_students=len(students),
+            total_problems=total_problems,
+            status_counts=status_counts,
+            status_labels=status_labels,
+            selected_status=selected_status,
+            class_options=class_options,
+            major_options=major_options,
+            course_options=course_options,
+        )
+
+
+    @bp.route('/admin/exams/<int:exam_id>/batches/create', methods=['POST'])
+    @login_required(db_check=True)
+    def admin_create_exam_batch(exam_id):
+        if session.get('username') != 'admin':
+            flash('权限不足', 'danger')
+            return redirect(url_for('dashboard'))
+        exam = get_exam_by_id(exam_id)
+        if not exam:
+            flash('考试不存在或已被删除。', 'danger')
+            return redirect(url_for('admin.admin_exams'))
+        if exam.get('status') == 'archived':
+            flash('归档考试只允许查看历史数据，不能再添加批次。', 'warning')
+            return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id))
+
+        batch_name = (request.form.get('batch_name') or '').strip()
+        assign_type = (request.form.get('assign_type') or '').strip()
+        assign_values = [value.strip() for value in request.form.getlist('assign_value') if value.strip()]
+        upload_file = request.files.get('student_file')
+        try:
+            start_time = parse_exam_time((request.form.get('start_time') or '').strip())
+            end_time = parse_exam_time((request.form.get('end_time') or '').strip())
+        except ValueError as err:
+            flash(str(err), 'danger')
+            return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id))
+        if not batch_name:
+            flash('请填写批次名称。', 'danger')
+            return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id))
+        if start_time and end_time and end_time <= start_time:
+            flash('结束时间必须晚于开始时间。', 'danger')
+            return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            missing_count = 0
+            if assign_type == 'student':
+                if not upload_file or not upload_file.filename or not allowed_excel_file(upload_file.filename):
+                    raise ValueError('请上传包含学号或姓名的 .xlsx 文件。')
+                assignments, missing_count = _resolve_uploaded_student_assignments(cursor, upload_file)
+            else:
+                if not assign_values:
+                    raise ValueError('请选择批次的学生范围。')
+                assignments = [(assign_type, value) for value in assign_values]
+            batch_id, student_count = _create_exam_batch(
+                cursor, exam_id, batch_name, start_time, end_time, assignments
+            )
+            conn.commit()
+            clear_exam_metadata_cache()
+            message = f'批次创建成功，已分配 {student_count} 名学生。'
+            if missing_count:
+                message += f' 另有 {missing_count} 行未匹配到账户。'
+            flash(message, 'success')
+            return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id, batch_id=batch_id))
+        except (ValueError, mysql.connector.Error) as err:
+            conn.rollback()
+            flash(f'创建批次失败：{err}', 'danger')
+            return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id))
+        finally:
+            cursor.close()
+            conn.close()
+
+
+    @bp.route('/admin/exams/<int:exam_id>/batches/<int:batch_id>/delete', methods=['POST'])
+    @login_required(db_check=True)
+    def admin_delete_exam_batch(exam_id, batch_id):
+        if session.get('username') != 'admin':
+            flash('权限不足', 'danger')
+            return redirect(url_for('dashboard'))
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                'SELECT * FROM exam_batches WHERE id = %s AND exam_id = %s FOR UPDATE',
+                (batch_id, exam_id),
+            )
+            batch = cursor.fetchone()
+            if not batch:
+                raise ValueError('批次不存在。')
+            if batch.get('status') == 'archived':
+                raise ValueError('该批次已经归档。')
+            cursor.execute('SELECT status FROM exams WHERE id = %s', (exam_id,))
+            exam = cursor.fetchone()
+            if not exam or exam.get('status') == 'archived':
+                raise ValueError('归档考试不能再删除批次。')
+            cursor.execute(
+                """
+                SELECT (
+                    EXISTS(SELECT 1 FROM exam_user_questions WHERE batch_id = %s LIMIT 1)
+                    OR EXISTS(SELECT 1 FROM user_responses WHERE batch_id = %s LIMIT 1)
+                ) AS started
+                """,
+                (batch_id, batch_id),
+            )
+            if (cursor.fetchone() or {}).get('started'):
+                cursor.execute("UPDATE exam_batches SET status = 'archived' WHERE id = %s", (batch_id,))
+                message = f"批次《{batch['name']}》已有考试数据，已归档而不是删除。"
+            else:
+                cursor.execute('DELETE FROM exam_batches WHERE id = %s', (batch_id,))
+                message = f"批次《{batch['name']}》已删除。"
+            conn.commit()
+            clear_exam_metadata_cache()
+            flash(message, 'success')
+        except (ValueError, mysql.connector.Error) as err:
+            conn.rollback()
+            flash(f'处理批次失败：{err}', 'danger')
+        finally:
+            cursor.close()
+            conn.close()
+        return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id))
+
+
+    @bp.route('/admin/exams/<int:exam_id>/batches/<int:batch_id>/extend', methods=['POST'])
+    @login_required(db_check=True)
+    def admin_extend_exam_batch(exam_id, batch_id):
+        if session.get('username') != 'admin':
+            flash('权限不足', 'danger')
+            return redirect(url_for('dashboard'))
+        try:
+            new_end_time = parse_exam_time((request.form.get('end_time') or '').strip())
+        except ValueError as err:
+            flash(str(err), 'danger')
+            return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id, batch_id=batch_id))
+        if not new_end_time:
+            flash('请选择新的结束时间。', 'danger')
+            return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id, batch_id=batch_id))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                'SELECT * FROM exam_batches WHERE id = %s AND exam_id = %s FOR UPDATE',
+                (batch_id, exam_id),
+            )
+            batch = cursor.fetchone()
+            if not batch:
+                raise ValueError('批次不存在。')
+            if batch.get('status') == 'archived':
+                raise ValueError('归档批次不能再修改结束时间。')
+            cursor.execute('SELECT status FROM exams WHERE id = %s', (exam_id,))
+            exam = cursor.fetchone()
+            if not exam or exam.get('status') == 'archived':
+                raise ValueError('归档考试不能再修改结束时间。')
+            if batch.get('start_time') and new_end_time <= batch['start_time']:
+                raise ValueError('结束时间必须晚于开始时间。')
+            if batch.get('end_time') and new_end_time <= batch['end_time']:
+                raise ValueError('只能延长结束时间，不能缩短。')
+            cursor.execute('UPDATE exam_batches SET end_time = %s WHERE id = %s', (new_end_time, batch_id))
+            if batch.get('is_default'):
+                cursor.execute('UPDATE exams SET end_time = %s WHERE id = %s', (new_end_time, exam_id))
+            conn.commit()
+            clear_exam_metadata_cache()
+            flash(f"批次《{batch['name']}》结束时间已延长。", 'success')
+        except (ValueError, mysql.connector.Error) as err:
+            conn.rollback()
+            flash(f'延长考试时间失败：{err}', 'danger')
+        finally:
+            cursor.close()
+            conn.close()
+        return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id, batch_id=batch_id))
+
+
     @bp.route('/admin/exams/create', methods=['POST'])
     @login_required(db_check=True)
     def admin_create_exam():
@@ -257,6 +707,7 @@ def create_admin_blueprint(deps):
             if value and value.strip()
         ]
         upload_file = request.files.get('student_file')
+        batch_name = (request.form.get('batch_name') or '默认批次').strip()
         start_time_raw = (request.form.get('start_time') or '').strip()
         end_time_raw = (request.form.get('end_time') or '').strip()
 
@@ -376,11 +827,23 @@ def create_admin_blueprint(deps):
                 """,
                 [(exam_id, item_type, item_value) for item_type, item_value in assignments]
             )
+            batch_id, batch_student_count = _create_exam_batch(
+                cursor,
+                exam_id,
+                batch_name,
+                start_time,
+                end_time,
+                assignments,
+                is_default=True,
+            )
             conn.commit()
             clear_exam_metadata_cache()
             if assign_type == 'student' and missing_rows:
                 return _build_missing_accounts_response(missing_rows, name)
-            flash(f'考试创建成功，已添加 {len(assignments)} 条分配规则。', 'success')
+            flash(f'考试创建成功，首个批次已分配 {batch_student_count} 名学生。', 'success')
+        except ValueError as err:
+            conn.rollback()
+            flash(f'创建考试失败：{err}', 'danger')
         except mysql.connector.Error as err:
             conn.rollback()
             flash(f'创建考试失败：{err}', 'danger')
@@ -402,6 +865,9 @@ def create_admin_blueprint(deps):
         if not existing_exam:
             flash('考试不存在或已被删除。', 'danger')
             return redirect(url_for('admin.admin_exams'))
+        if existing_exam.get('status') == 'archived':
+            flash('归档考试只允许查看历史数据，不能再编辑。', 'warning')
+            return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id))
 
         name = (request.form.get('name') or '').strip()
         paper_id = request.form.get('paper_id', type=int)
@@ -468,6 +934,44 @@ def create_admin_blueprint(deps):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         try:
+            cursor.execute(
+                "SELECT * FROM exam_batches WHERE exam_id = %s AND is_default = TRUE LIMIT 1 FOR UPDATE",
+                (exam_id,),
+            )
+            default_batch = cursor.fetchone()
+            if not default_batch:
+                raise ValueError('默认批次不存在，请先重新部署以完成数据迁移。')
+            cursor.execute(
+                "SELECT assign_type, assign_value FROM exam_batch_assignments WHERE batch_id = %s",
+                (default_batch['id'],),
+            )
+            current_batch_assignments = cursor.fetchall()
+            current_assignment_type = current_batch_assignments[0]['assign_type'] if current_batch_assignments else ''
+            current_assignment_values = {
+                row['assign_value'] for row in current_batch_assignments
+                if row['assign_type'] == current_assignment_type
+            }
+            if assign_type == 'student' and not replace_student_assignments:
+                assignment_changed = False
+            else:
+                assignment_changed = (
+                    assign_type != current_assignment_type or set(assign_values) != current_assignment_values
+                )
+            cursor.execute(
+                "SELECT EXISTS(SELECT 1 FROM exam_user_questions WHERE batch_id = %s LIMIT 1) AS started",
+                (default_batch['id'],),
+            )
+            default_batch_started = bool((cursor.fetchone() or {}).get('started'))
+            if default_batch_started:
+                start_changed = start_time != default_batch.get('start_time')
+                old_end_time = default_batch.get('end_time')
+                end_shortened = bool(old_end_time and end_time and end_time < old_end_time)
+                end_removed_or_added = (old_end_time is None) != (end_time is None)
+                if start_changed or assignment_changed or end_shortened or end_removed_or_added:
+                    conn.rollback()
+                    flash('默认批次已有学生进入，只能保持名单和开始时间不变，并向后延长结束时间。', 'danger')
+                    return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
+
             old_question_count = existing_exam.get('question_count')
             if old_question_count is None and int(existing_exam['paper_id']) == paper_id:
                 old_paper_count = len(get_problem_templates_by_paper(paper_id))
@@ -572,6 +1076,10 @@ def create_admin_blueprint(deps):
                             })
                     cursor.execute('DELETE FROM exam_assignments WHERE exam_id = %s', (exam_id,))
                 else:
+                    cursor.execute(
+                        'UPDATE exam_batches SET start_time = %s, end_time = %s WHERE id = %s',
+                        (start_time, end_time, default_batch['id']),
+                    )
                     conn.commit()
                     clear_exam_metadata_cache()
                     flash('考试更新成功，已保留原有学生名单。', 'success')
@@ -593,12 +1101,20 @@ def create_admin_blueprint(deps):
                 """,
                 [(exam_id, item_type, item_value) for item_type, item_value in assignments]
             )
+            cursor.execute(
+                'UPDATE exam_batches SET start_time = %s, end_time = %s WHERE id = %s',
+                (start_time, end_time, default_batch['id']),
+            )
+            if assignment_changed:
+                _replace_exam_batch_assignments(
+                    cursor, exam_id, default_batch['id'], assignments
+                )
             conn.commit()
             clear_exam_metadata_cache()
             if assign_type == 'student' and missing_rows:
                 return _build_missing_accounts_response(missing_rows, name)
             flash(f'考试更新成功，已设置 {len(assignments)} 条分配规则。', 'success')
-        except mysql.connector.Error as err:
+        except (ValueError, mysql.connector.Error) as err:
             conn.rollback()
             flash(f'更新考试失败：{err}', 'danger')
         finally:
@@ -643,14 +1159,8 @@ def create_admin_blueprint(deps):
                     WHERE u.username != 'admin'
                       AND EXISTS (
                         SELECT 1
-                        FROM exam_assignments a
-                        WHERE a.exam_id = %s
-                          AND (
-                                (a.assign_type = 'student' AND CAST(a.assign_value AS UNSIGNED) = u.id)
-                             OR (a.assign_type = 'class' AND BINARY a.assign_value = BINARY COALESCE(u.class_name, ''))
-                             OR (a.assign_type = 'major' AND BINARY a.assign_value = BINARY COALESCE(u.major, ''))
-                             OR (a.assign_type = 'course' AND BINARY a.assign_value = BINARY COALESCE(u.teacher_name, ''))
-                          )
+                        FROM exam_batch_students s
+                        WHERE s.exam_id = %s AND s.user_id = u.id
                       )
                     HAVING completed_count < %s
                     ORDER BY u.class_name, u.username
@@ -813,46 +1323,7 @@ def create_admin_blueprint(deps):
         selected_exam = get_exam_by_id(selected_exam_id) if selected_exam_id else None
         if selected_exam_id and not selected_exam:
             flash('考试不存在，无法导出答题数据。', 'danger')
-        return redirect(url_for('admin.admin_exams'))
-
-
-    @bp.route('/admin/exams/<int:exam_id>/delete', methods=['POST'])
-    @login_required(db_check=True)
-    def admin_delete_exam(exam_id):
-        if session.get('username') != 'admin':
-            flash('权限不足', 'danger')
-            return redirect(url_for('dashboard'))
-
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        try:
-            cursor.execute('SELECT name FROM exams WHERE id = %s FOR UPDATE', (exam_id,))
-            exam = cursor.fetchone()
-            if not exam:
-                flash('考试不存在或已被删除。', 'warning')
-                return redirect(url_for('admin.admin_exams'))
-
-            cursor.execute('DELETE FROM user_responses WHERE exam_id = %s', (exam_id,))
-            deleted_responses = cursor.rowcount
-            cursor.execute('DELETE FROM exam_user_questions WHERE exam_id = %s', (exam_id,))
-            deleted_question_lists = cursor.rowcount
-            cursor.execute('DELETE FROM exam_assignments WHERE exam_id = %s', (exam_id,))
-            cursor.execute('DELETE FROM exams WHERE id = %s', (exam_id,))
-            conn.commit()
-            clear_exam_metadata_cache()
-            flash(
-                f"考试《{exam['name']}》已删除，同时清理 {deleted_responses} 条作答记录和 "
-                f"{deleted_question_lists} 条个人题单记录。",
-                'success',
-            )
-        except mysql.connector.Error as err:
-            conn.rollback()
-            flash(f'删除考试失败：{err}', 'danger')
-        finally:
-            cursor.close()
-            conn.close()
-
-        return redirect(url_for('admin.admin_exams'))
+            return redirect(url_for('admin.admin_exams'))
 
         if selected_exam:
             selected_paper_id = selected_exam['paper_id']
@@ -910,14 +1381,8 @@ def create_admin_blueprint(deps):
                     WHERE u.username != 'admin'
                       AND EXISTS (
                         SELECT 1
-                        FROM exam_assignments a
-                        WHERE a.exam_id = %s
-                          AND (
-                                (a.assign_type = 'student' AND CAST(a.assign_value AS UNSIGNED) = u.id)
-                             OR (a.assign_type = 'class' AND BINARY a.assign_value = BINARY COALESCE(u.class_name, ''))
-                             OR (a.assign_type = 'major' AND BINARY a.assign_value = BINARY COALESCE(u.major, ''))
-                             OR (a.assign_type = 'course' AND BINARY a.assign_value = BINARY COALESCE(u.teacher_name, ''))
-                          )
+                        FROM exam_batch_students s
+                        WHERE s.exam_id = %s AND s.user_id = u.id
                       )
                     ORDER BY COALESCE(NULLIF(TRIM(u.teacher_name), ''), '未分配') ASC,
                              COALESCE(NULLIF(TRIM(u.class_name), ''), '未分班') ASC,
@@ -1207,6 +1672,52 @@ def create_admin_blueprint(deps):
         )
         response.headers['Content-Disposition'] = f'attachment; filename={filename}'
         return response
+
+
+    @bp.route('/admin/exams/<int:exam_id>/delete', methods=['POST'])
+    @login_required(db_check=True)
+    def admin_delete_exam(exam_id):
+        if session.get('username') != 'admin':
+            flash('权限不足', 'danger')
+            return redirect(url_for('dashboard'))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT name FROM exams WHERE id = %s FOR UPDATE', (exam_id,))
+            exam = cursor.fetchone()
+            if not exam:
+                flash('考试不存在或已被删除。', 'warning')
+                return redirect(url_for('admin.admin_exams'))
+
+            cursor.execute(
+                """
+                SELECT (
+                    EXISTS(SELECT 1 FROM exam_user_questions WHERE exam_id = %s LIMIT 1)
+                    OR EXISTS(SELECT 1 FROM user_responses WHERE exam_id = %s LIMIT 1)
+                ) AS started
+                """,
+                (exam_id, exam_id),
+            )
+            if (cursor.fetchone() or {}).get('started'):
+                cursor.execute("UPDATE exams SET status = 'archived' WHERE id = %s", (exam_id,))
+                cursor.execute("UPDATE exam_batches SET status = 'archived' WHERE exam_id = %s", (exam_id,))
+                message = f"考试《{exam['name']}》已有考试数据，已归档并保留全部成绩。"
+            else:
+                cursor.execute('DELETE FROM exam_assignments WHERE exam_id = %s', (exam_id,))
+                cursor.execute('DELETE FROM exams WHERE id = %s', (exam_id,))
+                message = f"考试《{exam['name']}》已删除。"
+            conn.commit()
+            clear_exam_metadata_cache()
+            flash(message, 'success')
+        except mysql.connector.Error as err:
+            conn.rollback()
+            flash(f'删除考试失败：{err}', 'danger')
+        finally:
+            cursor.close()
+            conn.close()
+
+        return redirect(url_for('admin.admin_exams'))
     
 
     @bp.route('/admin/export/best-exam-scores')

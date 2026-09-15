@@ -440,6 +440,7 @@ def create_exam_blueprint(deps):
                 'actual_id': actual_id,
                 'paper_id': paper_id,
                 'exam_id': selected_exam_id,
+                'batch_id': exam_access.get('batch_id'),
                 'user_id': session['user_id'],
                 'token': token,
                 'total_attempts': 0,
@@ -501,6 +502,7 @@ def create_exam_blueprint(deps):
                 current_problem_state.get('user_id') == session['user_id'] and
                 current_problem_state.get('paper_id') == paper_id and
                 current_problem_state.get('exam_id') == selected_exam_id and
+                current_problem_state.get('batch_id') == exam_access.get('batch_id') and
                 current_problem_state.get('actual_id') == actual_id
             )
             if state_matches_current_user:
@@ -539,6 +541,7 @@ def create_exam_blueprint(deps):
                 'actual_id': actual_id,
                 'paper_id': paper_id,
                 'exam_id': selected_exam_id,
+                'batch_id': exam_access.get('batch_id'),
                 'user_id': session['user_id'],
                 'token': problem_token,
                 'total_attempts': 0,
@@ -556,6 +559,7 @@ def create_exam_blueprint(deps):
             session['current_problem']['actual_id'] = actual_id
             session['current_problem']['paper_id'] = paper_id
             session['current_problem']['exam_id'] = selected_exam_id
+            session['current_problem']['batch_id'] = exam_access.get('batch_id')
             session['current_problem']['user_id'] = session['user_id']
     
         # 3. 检查是否已经完成
@@ -634,6 +638,7 @@ def create_exam_blueprint(deps):
                     current_problem_state.get('user_id') != session['user_id'] or
                     current_problem_state.get('paper_id') != paper_id or
                     current_problem_state.get('exam_id') != selected_exam_id or
+                    current_problem_state.get('batch_id') != exam_access.get('batch_id') or
                     current_problem_state.get('actual_id') != actual_id):
                 session.pop('current_problem', None)
                 session.modified = True

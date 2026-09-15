@@ -66,6 +66,10 @@
                         <input class="form-control exam-question-count" type="number" name="question_count" min="1" required>
                         <div class="form-text exam-question-count-hint"></div>
                     </div>
+                    <div>
+                        <label class="form-label">首个批次名称</label>
+                        <input class="form-control" name="batch_name" required value="默认批次" placeholder="例如：机电一班上午场">
+                    </div>
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label">开始时间</label>
@@ -249,7 +253,7 @@
                         <th>题库</th>
                         <th>题数</th>
                         <th>时间</th>
-                        <th>分配数</th>
+                        <th>批次/人数</th>
                         <th>状态</th>
                         <th>操作</th>
                     </tr>
@@ -269,14 +273,14 @@
                                 {% if exam.end_time %}{{ exam.end_time.strftime('%Y-%m-%d %H:%M') }}{% else %}不限结束{% endif %}
                             </small>
                         </td>
-                        <td>{{ exam.assignment_count }}</td>
-                        <td><span class="badge bg-success">{{ exam.status }}</span></td>
+                        <td>{{ exam.batch_count }}批 / {{ exam.student_count }}人</td>
+                        <td><span class="badge {{ 'bg-secondary' if exam.status == 'archived' else 'bg-success' }}">{{ '已归档' if exam.status == 'archived' else exam.status }}</span></td>
                         <td>
-                            <a class="btn btn-sm btn-outline-success" href="{{ url_for('admin.admin_export_all_student_analytics', exam_id=exam.id) }}">导出答题数据</a>
-                            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.admin_exams', edit_exam_id=exam.id) }}">编辑</a>
-                            <form method="post" action="{{ url_for('admin.admin_delete_exam', exam_id=exam.id) }}" class="d-inline" onsubmit="return confirm('确定删除这场考试吗？相关作答记录和个人题单也会永久删除，此操作无法撤销。');">
+                            <a class="btn btn-sm btn-success" href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id) }}">进入考试</a>
+                            {% if exam.status != 'archived' %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.admin_exams', edit_exam_id=exam.id) }}">编辑</a>{% endif %}
+                            <form method="post" action="{{ url_for('admin.admin_delete_exam', exam_id=exam.id) }}" class="d-inline" onsubmit="return confirm('确定继续吗？未开始的考试会删除，已有考试数据的考试会归档并保留成绩。');">
                                 <button class="btn btn-sm btn-outline-danger" type="submit">
-                                    <i class="bi bi-trash"></i> 删除
+                                    <i class="bi bi-archive"></i> 删除或归档
                                 </button>
                             </form>
                         </td>
