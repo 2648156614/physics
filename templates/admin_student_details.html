@@ -136,17 +136,22 @@
 <div class="student-story-page">
     <section class="hero-banner glass-panel">
         <div>
-            <span class="eyebrow"><i class="bi bi-person-badge"></i> 学生学习画像</span>
+            <span class="eyebrow"><i class="bi bi-person-badge"></i> {{ '本场考试答题详情' if exam_scope else '学生学习画像' }}</span>
             <h2 class="hero-title">{{ student.name or student.username }} 的答题情况页面</h2>
-            <p class="hero-meta">账号：{{ student.username }} · 班级：{{ student.class_name or '未分班' }} · 自动生成阶段式数据结论</p>
+            <p class="hero-meta">账号：{{ student.username }} · 班级：{{ student.class_name or '未分班' }}{% if exam_scope %} · 考试：{{ exam_scope.exam_name }} · 批次：{{ exam_scope.batch_name }}{% else %} · 自动生成阶段式数据结论{% endif %}</p>
             <div class="insight-callout">
                 <div class="fw-bold mb-2"><i class="bi bi-stars me-2"></i>自动结论提示</div>
                 <div>{{ insight_summary }}</div>
             </div>
         </div>
         <div class="d-flex gap-2 flex-wrap align-self-start">
+            {% if exam_scope %}
+            <a href="{{ url_for('admin.admin_exam_detail', exam_id=exam_scope.exam_id, batch_id=exam_scope.batch_id) }}" class="btn btn-light"><i class="bi bi-people"></i> 返回当前批次</a>
+            <a href="{{ url_for('admin.admin_exams') }}" class="btn btn-outline-light"><i class="bi bi-arrow-left"></i> 返回考试列表</a>
+            {% else %}
             <a href="{{ url_for('admin_all_problems_stats', paper_id=selected_paper_id) }}" class="btn btn-light"><i class="bi bi-people"></i> 返回学生统计</a>
             <a href="{{ url_for('admin_dashboard', paper_id=selected_paper_id) }}" class="btn btn-outline-light"><i class="bi bi-arrow-left"></i> 返回后台</a>
+            {% endif %}
         </div>
     </section>
 
@@ -263,7 +268,7 @@
                     <article class="glass-panel error-card {% if loop.first %}emphasis{% endif %}" data-animate>
                         <div class="d-flex justify-content-between gap-3 flex-wrap align-items-start">
                             <div>
-                                <div class="metric-label">第{{ get_display_number(item.template_id) }}题 · {{ item.knowledge_label }}</div>
+                                <div class="metric-label">第{{ item.display_number or get_display_number(item.template_id, selected_paper_id) }}题 · {{ item.knowledge_label }}</div>
                                 <h5 class="mb-2">{{ item.template_name }}</h5>
                                 <div class="metric-note">最近错误时间：{{ item.last_wrong_time.strftime('%m-%d %H:%M') if item.last_wrong_time else '-' }}</div>
                             </div>
@@ -325,7 +330,7 @@
                         <tbody>
                             {% for stat in problem_stats %}
                             <tr>
-                                <td>{{ get_display_number(stat.template_id) }}</td>
+                                <td>{{ stat.display_number or get_display_number(stat.template_id, selected_paper_id) }}</td>
                                 <td>{{ stat.template_name }}</td>
                                 <td><span class="badge bg-light text-primary">{{ stat.knowledge_label }}</span></td>
                                 <td>
@@ -340,6 +345,12 @@
                                 <td>{% if stat.is_completed and stat.correct_attempts %}<span class="text-success fw-bold">{{ stat.correct_attempts or 0 }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
                                 <td>{% if stat.is_completed and stat.cumulative_time_to_correct %}<span class="text-primary">{{ "%.1f"|format(stat.cumulative_time_to_correct) }}秒</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
                                 <td>{% if stat.last_attempt_time %}<small>{{ stat.last_attempt_time.strftime('%m-%d %H:%M') }}</small>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="9" class="text-center text-muted py-4">
+                                    {% if exam_scope %}该学生尚未进入本场考试，暂无个人题单和作答明细。{% else %}暂无题目明细。{% endif %}
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>

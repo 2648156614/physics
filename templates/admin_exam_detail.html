@@ -227,7 +227,7 @@
                 {% for student in students %}
                 <tr>
                     <td>{{ student.username }}</td>
-                    <td>{{ student.name or '-' }}</td>
+                    <td><a class="fw-semibold text-decoration-none" href="{{ url_for('admin_student_details', user_id=student.id, exam_id=exam.id, batch_id=selected_batch.id) }}">{{ student.name or student.username }}</a></td>
                     <td>{{ student.class_name or '-' }}</td>
                     <td>{{ student.major or '-' }}</td>
                     <td>{{ student.teacher_name or '-' }}</td>

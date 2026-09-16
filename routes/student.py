@@ -593,8 +593,15 @@ def create_student_blueprint(deps):
         if session.get('username') != 'admin':
             flash('权限不足', 'danger')
             return redirect(url_for('dashboard'))
-    
-        selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
+
+        selected_exam_id = request.args.get('exam_id', type=int)
+        selected_batch_id = request.args.get('batch_id', type=int)
+        if bool(selected_exam_id) != bool(selected_batch_id):
+            flash('考试详情参数不完整，请从考试批次页面重新进入。', 'danger')
+            return redirect(url_for('admin.admin_exams'))
+
+        exam_scope = None
+        selected_paper_id = None
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
     
@@ -609,11 +616,55 @@ def create_student_blueprint(deps):
             if not student:
                 flash('学生不存在', 'danger')
                 return redirect(url_for('admin_dashboard'))
-    
-            # 获取题目总数
-            total_problems = get_total_problem_count(selected_paper_id)
-            problem_template_filter, problem_template_params = build_enabled_paper_filter('t', selected_paper_id)
-            response_filter, response_params = build_enabled_paper_filter('ur', selected_paper_id)
+
+            if selected_exam_id:
+                cursor.execute(
+                    """
+                    SELECT e.id AS exam_id, e.name AS exam_name, e.paper_id, e.question_count,
+                           b.id AS batch_id, b.name AS batch_name,
+                           ep.name AS paper_name
+                    FROM exam_batch_students s
+                    JOIN exam_batches b ON b.id = s.batch_id AND b.exam_id = s.exam_id
+                    JOIN exams e ON e.id = s.exam_id
+                    JOIN exam_papers ep ON ep.id = e.paper_id
+                    WHERE s.user_id = %s AND s.exam_id = %s AND s.batch_id = %s
+                    LIMIT 1
+                    """,
+                    (user_id, selected_exam_id, selected_batch_id),
+                )
+                exam_scope = cursor.fetchone()
+                if not exam_scope:
+                    flash('该学生不属于指定的考试批次。', 'danger')
+                    return redirect(url_for('admin.admin_exam_detail', exam_id=selected_exam_id))
+                selected_paper_id = int(exam_scope['paper_id'])
+                total_problems = int(
+                    exam_scope.get('question_count') or get_total_problem_count(selected_paper_id)
+                )
+                response_filter = " AND ur.exam_id = %s AND ur.batch_id = %s"
+                response_params = [selected_exam_id, selected_batch_id]
+                problem_template_from = """
+                    FROM exam_user_questions q
+                    JOIN problem_templates t ON t.id = q.template_id
+                    LEFT JOIN progress p ON t.id = p.template_id
+                """
+                problem_template_filter = """
+                    WHERE q.exam_id = %s AND q.batch_id = %s AND q.user_id = %s
+                """
+                problem_template_params = [selected_exam_id, selected_batch_id, user_id]
+                problem_display_select = ", q.display_number AS display_number"
+                problem_order = "q.display_number"
+            else:
+                selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
+                total_problems = get_total_problem_count(selected_paper_id)
+                problem_template_filter, problem_template_params = build_enabled_paper_filter('t', selected_paper_id)
+                response_filter, response_params = build_enabled_paper_filter('ur', selected_paper_id)
+                problem_template_from = """
+                    FROM problem_templates t
+                    LEFT JOIN progress p ON t.id = p.template_id
+                """
+                problem_template_filter = f"WHERE 1 = 1 {problem_template_filter}"
+                problem_display_select = ""
+                problem_order = "t.id"
     
             # 每题作答状态：是否答对；答对时展示达到答对所需次数与累计时长
             cursor.execute(f"""
@@ -658,10 +709,10 @@ def create_student_blueprint(deps):
                           AND p.attempts_to_correct IS NOT NULL
                           AND a2.attempt_count <= p.attempts_to_correct
                     ) AS cumulative_time_to_correct
-                FROM problem_templates t
-                LEFT JOIN progress p ON t.id = p.template_id
-                WHERE 1 = 1 {problem_template_filter}
-                ORDER BY t.id
+                    {problem_display_select}
+                {problem_template_from}
+                {problem_template_filter}
+                ORDER BY {problem_order}
             """, [user_id] + response_params + problem_template_params)
     
             problem_stats = cursor.fetchall()
@@ -669,6 +720,8 @@ def create_student_blueprint(deps):
                 stat['knowledge_label'] = infer_knowledge_label(stat.get('template_name'))
                 stat['correct_rate'] = 100.0 if stat.get('is_completed') else 0.0
             completed_problems_count = sum(1 for stat in problem_stats if stat.get('is_completed'))
+            if exam_scope:
+                student['total_time'] = sum(float(stat.get('total_time_spent') or 0) for stat in problem_stats)
     
             # 计算总体统计
             cursor.execute(f"""
@@ -701,9 +754,12 @@ def create_student_blueprint(deps):
             cumulative_correct = 0
             for index, stat in enumerate(problem_stats, start=1):
                 cumulative_correct += 1 if stat.get('is_completed') else 0
+                display_number = stat.get('display_number') or get_display_number(
+                    stat.get('template_id'), selected_paper_id
+                )
                 trend_points.append({
-                    'label': f"第{get_display_number(stat.get('template_id'), selected_paper_id)}题",
-                    'short_label': str(get_display_number(stat.get('template_id'), selected_paper_id)),
+                    'label': f"第{display_number}题",
+                    'short_label': str(display_number),
                     'correct_rate': round((cumulative_correct / index) * 100, 1),
                     'attempts': stat.get('total_attempts') or 0,
                     'completed': bool(stat.get('is_completed'))
@@ -749,6 +805,14 @@ def create_student_blueprint(deps):
             """, [user_id] + response_params)
             error_type_stats = cursor.fetchall()
     
+            wrong_display_select = ", MIN(q.display_number) AS display_number" if exam_scope else ""
+            wrong_display_join = """
+                JOIN exam_user_questions q
+                  ON q.exam_id = ur.exam_id
+                 AND q.batch_id = ur.batch_id
+                 AND q.user_id = ur.user_id
+                 AND q.template_id = ur.template_id
+            """ if exam_scope else ""
             cursor.execute(f"""
                 SELECT
                     t.id AS template_id,
@@ -758,8 +822,10 @@ def create_student_blueprint(deps):
                     SUM(CASE WHEN ur.error_type = '计算误差' THEN 1 ELSE 0 END) AS calc_error_count,
                     SUM(CASE WHEN ur.error_type = '精度或单位偏差' THEN 1 ELSE 0 END) AS unit_error_count,
                     SUM(CASE WHEN ur.error_type = '格式错误' THEN 1 ELSE 0 END) AS format_error_count
+                    {wrong_display_select}
                 FROM user_responses ur
                 JOIN problem_templates t ON t.id = ur.template_id
+                {wrong_display_join}
                 WHERE ur.user_id = %s AND ur.is_correct = FALSE {response_filter}
                 GROUP BY t.id, t.template_name
                 ORDER BY wrong_count DESC, t.id ASC
@@ -784,12 +850,15 @@ def create_student_blueprint(deps):
                                    insight_summary=insight_summary,
                                    username=session['username'],
                                    get_display_number=get_display_number,
-                                   selected_paper_id=selected_paper_id)  # 传递函数到模板
+                                   selected_paper_id=selected_paper_id,
+                                   exam_scope=exam_scope)
         except Exception as e:
             print(f"获取学生详情失败: {str(e)}")
             import traceback
             print(f"详细错误: {traceback.format_exc()}")
             flash('获取学生详情失败', 'danger')
+            if selected_exam_id:
+                return redirect(url_for('admin.admin_exam_detail', exam_id=selected_exam_id, batch_id=selected_batch_id))
             return redirect(url_for('admin_dashboard'))
         finally:
             cursor.close()
