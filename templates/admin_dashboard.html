@@ -6,17 +6,6 @@
 <div class="container">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2 class="mb-0"><i class="bi bi-speedometer me-2"></i>管理员后台</h2>
-        <div class="btn-group">
-            <a href="{{ url_for('admin.admin_exams') }}" class="btn btn-warning">
-                <i class="bi bi-calendar-check"></i> 考试管理
-            </a>
-            <a href="{{ url_for('admin_user_management') }}" class="btn btn-outline-dark">
-                <i class="bi bi-people"></i> 用户管理
-            </a>
-            <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-primary">
-                <i class="bi bi-journal-plus"></i> 题目管理
-            </a>
-        </div>
     </div>
 
     <section class="border-top border-bottom py-3 mb-4">
@@ -25,7 +14,6 @@
                 <h4 class="mb-1">按考试查看答题数据</h4>
                 <div class="text-muted">完成情况、缺考情况和作答明细不再跨考试混合统计。</div>
             </div>
-            <a class="btn btn-primary" href="{{ url_for('admin.admin_exams') }}"><i class="bi bi-plus-lg"></i> 设置考试</a>
         </div>
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">

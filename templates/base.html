@@ -167,6 +167,119 @@
                 display: none !important;
             }
         }
+
+        .admin-workspace {
+            display: grid;
+            grid-template-columns: 248px minmax(0, 1fr);
+            align-items: start;
+            min-height: calc(100vh - 56px);
+            background: #f5f7fa;
+        }
+
+        .admin-sidebar-desktop {
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+            background: #fff;
+            border-right: 1px solid #dfe3e8;
+            padding: 18px 12px;
+        }
+
+        .admin-main {
+            min-width: 0;
+            padding-bottom: 1rem;
+        }
+
+        .admin-sidebar-heading {
+            padding: 0 10px 14px;
+            color: #6c757d;
+            font-size: .78rem;
+            font-weight: 700;
+        }
+
+        .admin-sidebar-home,
+        .admin-sidebar-toggle,
+        .admin-sidebar-link {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            min-height: 42px;
+            border: 0;
+            border-radius: 6px;
+            color: #263442;
+            text-decoration: none;
+            background: transparent;
+        }
+
+        .admin-sidebar-home,
+        .admin-sidebar-toggle {
+            padding: 9px 10px;
+            font-weight: 650;
+            text-align: left;
+        }
+
+        .admin-sidebar-link {
+            padding: 8px 10px 8px 38px;
+            color: #56616d;
+            font-size: .92rem;
+        }
+
+        .admin-sidebar-home:hover,
+        .admin-sidebar-toggle:hover,
+        .admin-sidebar-link:hover {
+            color: #0d6efd;
+            background: #eef4ff;
+        }
+
+        .admin-sidebar-home.active,
+        .admin-sidebar-toggle.active,
+        .admin-sidebar-link.active {
+            color: #0b5ed7;
+            background: #e7f0ff;
+        }
+
+        .admin-sidebar-toggle .admin-sidebar-chevron {
+            margin-left: auto;
+            transition: transform .2s ease;
+        }
+
+        .admin-sidebar-toggle[aria-expanded="true"] .admin-sidebar-chevron {
+            transform: rotate(180deg);
+        }
+
+        .admin-sidebar-group + .admin-sidebar-group {
+            margin-top: 4px;
+        }
+
+        .admin-sidebar-submenu {
+            padding: 3px 0 6px;
+        }
+
+        .admin-mobile-menu-button {
+            display: none;
+        }
+
+        .admin-offcanvas {
+            width: min(86vw, 300px) !important;
+        }
+
+        @media (max-width: 991.98px) {
+            .admin-workspace {
+                display: block;
+            }
+
+            .admin-sidebar-desktop {
+                display: none;
+            }
+
+            .admin-mobile-menu-button {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                margin: 12px 10px 0;
+            }
+        }
     </style>
 
 <!--    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>-->
@@ -175,6 +288,57 @@
 </head>
 <!-- 关键：添加移动端检测类 -->
 <body class="{% if is_mobile %}mobile-device{% else %}desktop-device{% endif %} {% if is_touch %}touch-device{% endif %}">
+
+    {% set show_admin_sidebar = is_admin and request.path.startswith('/admin') %}
+    {% macro render_admin_sidebar(prefix) %}
+        {% set exam_student_detail = request.path.startswith('/admin/student/') and request.args.get('exam_id') %}
+        {% set exam_active = request.path.startswith('/admin/exams') or exam_student_detail or (request.endpoint in ['admin_all_problems_stats', 'admin.admin_export_all_student_analytics'] and request.args.get('exam_id')) %}
+        {% set user_active = request.path.startswith('/admin/users') or request.path.startswith('/admin/students/') or (request.path.startswith('/admin/student/') and not exam_student_detail) %}
+        {% set question_active = request.path.startswith('/admin/manage_problems') or request.path.startswith('/admin/add_problem') or request.path.startswith('/admin/edit_problem') or request.path.startswith('/admin/exam_papers') %}
+        <div class="admin-sidebar-heading">后台导航</div>
+        <nav aria-label="管理员导航">
+            <a class="admin-sidebar-home {{ 'active' if request.path == '/admin' else '' }}" href="{{ url_for('admin_dashboard') }}">
+                <i class="bi bi-grid me-2"></i> 管理员首页
+            </a>
+
+            <div class="admin-sidebar-group">
+                <button class="admin-sidebar-toggle {{ 'active' if exam_active else '' }}" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#{{ prefix }}-exam-menu"
+                        aria-expanded="{{ 'true' if exam_active else 'false' }}" aria-controls="{{ prefix }}-exam-menu">
+                    <i class="bi bi-calendar-check me-2"></i> 考试管理
+                    <i class="bi bi-chevron-down admin-sidebar-chevron"></i>
+                </button>
+                <div class="collapse {{ 'show' if exam_active else '' }} admin-sidebar-submenu" id="{{ prefix }}-exam-menu">
+                    <a class="admin-sidebar-link {{ 'active' if request.path == '/admin/exams' else '' }}" href="{{ url_for('admin.admin_exams') }}">考试列表与设置</a>
+                </div>
+            </div>
+
+            <div class="admin-sidebar-group">
+                <button class="admin-sidebar-toggle {{ 'active' if user_active else '' }}" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#{{ prefix }}-user-menu"
+                        aria-expanded="{{ 'true' if user_active else 'false' }}" aria-controls="{{ prefix }}-user-menu">
+                    <i class="bi bi-people me-2"></i> 用户管理
+                    <i class="bi bi-chevron-down admin-sidebar-chevron"></i>
+                </button>
+                <div class="collapse {{ 'show' if user_active else '' }} admin-sidebar-submenu" id="{{ prefix }}-user-menu">
+                    <a class="admin-sidebar-link {{ 'active' if request.path == '/admin/users' else '' }}" href="{{ url_for('admin_user_management') }}">学生账户</a>
+                </div>
+            </div>
+
+            <div class="admin-sidebar-group">
+                <button class="admin-sidebar-toggle {{ 'active' if question_active else '' }}" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#{{ prefix }}-question-menu"
+                        aria-expanded="{{ 'true' if question_active else 'false' }}" aria-controls="{{ prefix }}-question-menu">
+                    <i class="bi bi-journals me-2"></i> 题库管理
+                    <i class="bi bi-chevron-down admin-sidebar-chevron"></i>
+                </button>
+                <div class="collapse {{ 'show' if question_active else '' }} admin-sidebar-submenu" id="{{ prefix }}-question-menu">
+                    <a class="admin-sidebar-link {{ 'active' if request.path == '/admin/manage_problems' else '' }}" href="{{ url_for('admin_manage_problems') }}">进入题库</a>
+                    <a class="admin-sidebar-link {{ 'active' if request.path == '/admin/add_problem' else '' }}" href="{{ url_for('admin_add_problem') }}">添加题目</a>
+                </div>
+            </div>
+        </nav>
+    {% endmacro %}
 
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
         <div class="container">
@@ -295,7 +459,27 @@
         </div>
     </nav>
 
-    <div class="container mt-3 mt-md-4">
+    {% if show_admin_sidebar %}
+    <div class="admin-workspace">
+        <aside class="admin-sidebar-desktop">
+            {{ render_admin_sidebar('desktop') }}
+        </aside>
+        <main class="admin-main">
+            <button class="btn btn-outline-primary admin-mobile-menu-button" type="button" data-bs-toggle="offcanvas" data-bs-target="#adminMobileSidebar" aria-controls="adminMobileSidebar">
+                <i class="bi bi-list"></i> 管理菜单
+            </button>
+            <div class="offcanvas offcanvas-start admin-offcanvas" tabindex="-1" id="adminMobileSidebar" aria-labelledby="adminMobileSidebarLabel">
+                <div class="offcanvas-header">
+                    <h5 class="offcanvas-title" id="adminMobileSidebarLabel">管理员导航</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="关闭"></button>
+                </div>
+                <div class="offcanvas-body pt-0">
+                    {{ render_admin_sidebar('mobile') }}
+                </div>
+            </div>
+    {% endif %}
+
+    <div class="{{ 'container-fluid px-lg-4' if show_admin_sidebar else 'container' }} mt-3 mt-md-4">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
@@ -309,6 +493,10 @@
 
         {% block content %}{% endblock %}
     </div>
+    {% if show_admin_sidebar %}
+        </main>
+    </div>
+    {% endif %}
 
     {% if 'user_id' in session %}
     <!-- 修改密码弹窗 -->
