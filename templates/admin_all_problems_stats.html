@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}题目统计 - 所有学生{% endblock %}
+{% block title %}{{ exam_scope.exam_name ~ ' - 所有答题数据' if exam_scope else '题目统计 - 所有学生' }}{% endblock %}
 
 {% block content %}
 <style>
@@ -321,20 +321,21 @@
             <div class="d-flex flex-column flex-xl-row justify-content-between gap-4">
                 <div>
                     <div class="panel-tag bg-white text-primary mb-3"><i class="bi bi-stars"></i> 升级版数据驾驶舱</div>
-                    <h2 class="hero-title">题目统计 · 全量学生答题总览</h2>
-                    <p class="hero-subtitle">筛选结果、核心指标、动态图表与学生清单集中展示，提升分析效率并减少页面滚动。</p>
+                    <h2 class="hero-title">{% if exam_scope %}{{ exam_scope.exam_name }} · 所有批次答题总览{% else %}题目统计 · 全量学生答题总览{% endif %}</h2>
+                    <p class="hero-subtitle">{% if exam_scope %}仅统计本场考试全部批次的题目和学生作答，不包含其他考试数据。{% else %}筛选结果、核心指标、动态图表与学生清单集中展示，提升分析效率并减少页面滚动。{% endif %}</p>
                     {% if not problem_stats %}
-                    <div class="alert alert-light text-dark mt-3 mb-0">当前没有已开启题库的题目，暂无题目可统计。</div>
+                    <div class="alert alert-light text-dark mt-3 mb-0">{% if exam_scope %}本场考试还没有学生进入答题页，暂无固定题单和答题数据。{% else %}当前没有已开启题库的题目，暂无题目可统计。{% endif %}</div>
                     {% endif %}
                 </div>
-                <a href="{{ url_for('admin_export_all_student_analytics', paper_id=selected_paper_id) }}" class="btn btn-light align-self-start">
+                <a href="{{ url_for('admin_export_all_student_analytics', exam_id=exam_scope.exam_id) if exam_scope else url_for('admin_export_all_student_analytics', paper_id=selected_paper_id) }}" class="btn btn-light align-self-start">
                     <i class="bi bi-file-earmark-excel"></i> 导出全部答题数据
                 </a>
-                <a href="{{ url_for('admin_dashboard', paper_id=selected_paper_id) }}" class="btn btn-outline-light align-self-start">
-                    <i class="bi bi-arrow-left"></i> 返回管理后台
+                <a href="{{ url_for('admin.admin_exam_detail', exam_id=exam_scope.exam_id) if exam_scope else url_for('admin_dashboard', paper_id=selected_paper_id) }}" class="btn btn-outline-light align-self-start">
+                    <i class="bi bi-arrow-left"></i> {{ '返回考试' if exam_scope else '返回管理后台' }}
                 </a>
             </div>
             <form method="get" class="filter-form mt-4">
+                {% if exam_scope %}<input type="hidden" name="exam_id" value="{{ exam_scope.exam_id }}">{% endif %}
                 <div class="filter-card">
                     <label for="class_name" class="form-label">按班级筛选</label>
                     <select id="class_name" name="class_name" class="form-select">
@@ -357,7 +358,7 @@
                     <label class="form-label">筛选操作</label>
                     <div class="filter-actions">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-funnel"></i> 应用筛选</button>
-                        <a href="{{ url_for('admin_all_problems_stats', paper_id=selected_paper_id) }}" class="btn btn-outline-light">重置</a>
+                        <a href="{{ url_for('admin_all_problems_stats', exam_id=exam_scope.exam_id) if exam_scope else url_for('admin_all_problems_stats', paper_id=selected_paper_id) }}" class="btn btn-outline-light">重置</a>
                     </div>
                 </div>
             </form>
@@ -482,6 +483,7 @@
                                     <th>姓名</th>
                                     <th>专业</th>
                                     <th>班级</th>
+                                    {% if exam_scope %}<th>批次</th>{% endif %}
                                     <th>完成状态</th>
                                     <th>正确题数</th>
                                     <th>总用时</th>
@@ -489,12 +491,13 @@
                             </thead>
                             <tbody>
                                 {% for student in filtered_students %}
-                                <tr onclick="window.location='{{ url_for('admin_student_details', user_id=student.id, paper_id=selected_paper_id) }}'" style="cursor:pointer;">
+                                <tr onclick="window.location='{{ url_for('admin_student_details', user_id=student.id, exam_id=exam_scope.exam_id, batch_id=student.batch_id) if exam_scope else url_for('admin_student_details', user_id=student.id, paper_id=selected_paper_id) }}'" style="cursor:pointer;">
                                     <td class="student-link-cell">{{ loop.index }}</td>
                                     <td class="student-link-cell">{{ student.username }}</td>
                                     <td>{{ student.name or '-' }}</td>
                                     <td>{{ student.major }}</td>
                                     <td>{{ student.class_name }}</td>
+                                    {% if exam_scope %}<td>{{ student.batch_name or '-' }}</td>{% endif %}
                                     <td>
                                         {% if student.completed_all %}
                                             <span class="badge bg-success">已完成</span>

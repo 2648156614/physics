@@ -937,32 +937,78 @@ def create_student_blueprint(deps):
         cursor = conn.cursor(dictionary=True)
     
         try:
-            selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
+            selected_exam_id = request.args.get('exam_id', type=int)
+            exam_scope = None
+            if selected_exam_id:
+                cursor.execute(
+                    """
+                    SELECT e.id AS exam_id, e.name AS exam_name, e.paper_id, e.question_count,
+                           ep.name AS paper_name
+                    FROM exams e
+                    JOIN exam_papers ep ON ep.id = e.paper_id
+                    WHERE e.id = %s
+                    """,
+                    (selected_exam_id,),
+                )
+                exam_scope = cursor.fetchone()
+                if not exam_scope:
+                    flash('考试不存在或已被删除。', 'danger')
+                    return redirect(url_for('admin.admin_exams'))
+                selected_paper_id = int(exam_scope['paper_id'])
+                expected_problem_count = int(
+                    exam_scope.get('question_count') or get_total_problem_count(selected_paper_id)
+                )
+                problem_filter = """
+                    AND EXISTS (
+                        SELECT 1 FROM exam_user_questions eq
+                        WHERE eq.exam_id = %s AND eq.template_id = t.id
+                    )
+                """
+                problem_filter_params = [selected_exam_id]
+                response_filter = " AND ur.exam_id = %s"
+                response_params = [selected_exam_id]
+                response_filter_ur2 = " AND ur2.exam_id = %s"
+                response_params_ur2 = [selected_exam_id]
+                membership_filter = """
+                    AND EXISTS (
+                        SELECT 1 FROM exam_batch_students ebs
+                        WHERE ebs.exam_id = %s AND ebs.user_id = u.id
+                    )
+                """
+                membership_params = [selected_exam_id]
+            else:
+                selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
+                expected_problem_count = get_total_problem_count(selected_paper_id)
+                problem_filter, problem_filter_params = build_enabled_paper_filter('t', selected_paper_id)
+                response_filter, response_params = build_enabled_paper_filter('ur', selected_paper_id)
+                response_filter_ur2, response_params_ur2 = build_enabled_paper_filter('ur2', selected_paper_id)
+                membership_filter = ""
+                membership_params = []
+
             selected_class_name = (request.args.get('class_name') or '').strip()
             selected_major = (request.args.get('major') or '').strip()
-            problem_filter, problem_filter_params = build_enabled_paper_filter('t', selected_paper_id)
-            response_filter, response_params = build_enabled_paper_filter('ur', selected_paper_id)
-            response_filter_ur2, response_params_ur2 = build_enabled_paper_filter('ur2', selected_paper_id)
     
             # 加载班级筛选选项
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT DISTINCT COALESCE(NULLIF(TRIM(class_name), ''), '未分班') AS class_name
-                FROM users
-                WHERE username != 'admin'
+                FROM users u
+                WHERE username != 'admin' {membership_filter}
                 ORDER BY class_name
-            """)
+            """, membership_params)
             class_options = [row['class_name'] for row in cursor.fetchall()]
     
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT DISTINCT COALESCE(NULLIF(TRIM(major), ''), '未设置专业') AS major
-                FROM users
-                WHERE username != 'admin'
+                FROM users u
+                WHERE username != 'admin' {membership_filter}
                 ORDER BY major
-            """)
+            """, membership_params)
             major_options = [row['major'] for row in cursor.fetchall()]
     
             filters = ["u.username != 'admin'"]
-            params = []
+            params = list(membership_params)
+            if exam_scope:
+                filters.append(membership_filter.strip().removeprefix('AND').strip())
     
             if selected_class_name:
                 if selected_class_name == '未分班':
@@ -1054,7 +1100,9 @@ def create_student_blueprint(deps):
     
             # 获取筛选后的学生总数（排除管理员）
             student_filters = ["u.username != 'admin'"]
-            student_params = []
+            student_params = list(membership_params)
+            if exam_scope:
+                student_filters.append(membership_filter.strip().removeprefix('AND').strip())
             if selected_class_name:
                 if selected_class_name == '未分班':
                     student_filters.append("(u.class_name IS NULL OR TRIM(u.class_name) = '')")
@@ -1075,7 +1123,22 @@ def create_student_blueprint(deps):
     
             total_students_result = cursor.fetchone()
             total_students = total_students_result['total'] if total_students_result else 0
-    
+
+            if exam_scope:
+                student_scope_select = f"""
+                    (SELECT ebs.batch_id
+                     FROM exam_batch_students ebs
+                     WHERE ebs.exam_id = {selected_exam_id} AND ebs.user_id = u.id
+                     LIMIT 1) AS batch_id,
+                    (SELECT eb.name
+                     FROM exam_batch_students ebs
+                     JOIN exam_batches eb ON eb.id = ebs.batch_id
+                     WHERE ebs.exam_id = {selected_exam_id} AND ebs.user_id = u.id
+                     LIMIT 1) AS batch_name,
+                """
+            else:
+                student_scope_select = "NULL AS batch_id, NULL AS batch_name,"
+
             cursor.execute(
                 f"""
                 WITH completed AS (
@@ -1100,6 +1163,7 @@ def create_student_blueprint(deps):
                     CASE WHEN COALESCE(c.total_score, 0) >= %s AND %s > 0 THEN TRUE ELSE FALSE END AS completed_all,
                     COALESCE(c.total_score, 0) AS total_score,
                     COALESCE(c.total_time, 0) AS total_time,
+                    {student_scope_select}
                     u.created_at,
                     u.completed_at
                 FROM users u
@@ -1107,7 +1171,7 @@ def create_student_blueprint(deps):
                 WHERE {' AND '.join(student_filters)}
                 ORDER BY u.class_name ASC, u.username ASC
                 """,
-                response_params + response_params_ur2 + [get_total_problem_count(selected_paper_id), get_total_problem_count(selected_paper_id)] + student_params
+                response_params + response_params_ur2 + [expected_problem_count, expected_problem_count] + student_params
             )
             filtered_students = cursor.fetchall()
     
@@ -1180,13 +1244,16 @@ def create_student_blueprint(deps):
                                    selected_class_name=selected_class_name,
                                    selected_major=selected_major,
                                    username=session['username'],
-                                   selected_paper_id=selected_paper_id)
+                                   selected_paper_id=selected_paper_id,
+                                   exam_scope=exam_scope)
     
         except Exception as e:
             print(f"获取题目统计失败: {str(e)}")
             import traceback
             print(f"详细错误: {traceback.format_exc()}")
             flash(f'获取题目统计失败: {str(e)}', 'danger')
+            if request.args.get('exam_id', type=int):
+                return redirect(url_for('admin.admin_exam_detail', exam_id=request.args.get('exam_id', type=int)))
             return redirect(url_for('admin_dashboard'))
         finally:
             cursor.close()
