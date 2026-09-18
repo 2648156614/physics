@@ -589,13 +589,29 @@ def create_student_blueprint(deps):
     @bp.route('/admin/student/<int:user_id>/details')
     @login_required
     def admin_student_details(user_id):
-        """查看学生详细答题情况"""
+        """管理员查看学生详细答题情况。"""
         if session.get('username') != 'admin':
             flash('权限不足', 'danger')
             return redirect(url_for('dashboard'))
 
-        selected_exam_id = request.args.get('exam_id', type=int)
-        selected_batch_id = request.args.get('batch_id', type=int)
+        return render_student_details(user_id)
+
+    @bp.route('/student/answer-details')
+    @login_required
+    def student_answer_details():
+        """学生查看当前首页所选题库中的本人答题数据。"""
+        user_id = session.get('user_id')
+        if not user_id:
+            flash('请先登录', 'warning')
+            return redirect(url_for('auth.login'))
+
+        return render_student_details(user_id, self_view=True)
+
+    def render_student_details(user_id, self_view=False):
+        """渲染学生答题详情；学生本人视图不接受外部用户或考试范围。"""
+
+        selected_exam_id = None if self_view else request.args.get('exam_id', type=int)
+        selected_batch_id = None if self_view else request.args.get('batch_id', type=int)
         if bool(selected_exam_id) != bool(selected_batch_id):
             flash('考试详情参数不完整，请从考试批次页面重新进入。', 'danger')
             return redirect(url_for('admin.admin_exams'))
@@ -615,7 +631,7 @@ def create_student_blueprint(deps):
     
             if not student:
                 flash('学生不存在', 'danger')
-                return redirect(url_for('admin_dashboard'))
+                return redirect(url_for('dashboard') if self_view else url_for('admin_dashboard'))
 
             if selected_exam_id:
                 cursor.execute(
@@ -654,7 +670,8 @@ def create_student_blueprint(deps):
                 problem_display_select = ", q.display_number AS display_number"
                 problem_order = "q.display_number"
             else:
-                selected_paper_id = resolve_selected_exam_paper_id(request.args.get('paper_id', type=int))
+                preferred_paper_id = None if self_view else request.args.get('paper_id', type=int)
+                selected_paper_id = resolve_selected_exam_paper_id(preferred_paper_id)
                 total_problems = get_total_problem_count(selected_paper_id)
                 problem_template_filter, problem_template_params = build_enabled_paper_filter('t', selected_paper_id)
                 response_filter, response_params = build_enabled_paper_filter('ur', selected_paper_id)
@@ -720,8 +737,7 @@ def create_student_blueprint(deps):
                 stat['knowledge_label'] = infer_knowledge_label(stat.get('template_name'))
                 stat['correct_rate'] = 100.0 if stat.get('is_completed') else 0.0
             completed_problems_count = sum(1 for stat in problem_stats if stat.get('is_completed'))
-            if exam_scope:
-                student['total_time'] = sum(float(stat.get('total_time_spent') or 0) for stat in problem_stats)
+            student['total_time'] = sum(float(stat.get('total_time_spent') or 0) for stat in problem_stats)
     
             # 计算总体统计
             cursor.execute(f"""
@@ -836,6 +852,7 @@ def create_student_blueprint(deps):
                 item['knowledge_label'] = infer_knowledge_label(item.get('template_name'))
     
             insight_summary = build_student_insight_summary(problem_stats, knowledge_stats, error_type_stats)
+            selected_paper = get_exam_paper_by_id(selected_paper_id) if selected_paper_id else None
     
             return render_template('admin_student_details.html',
                                    student=student,
@@ -851,12 +868,16 @@ def create_student_blueprint(deps):
                                    username=session['username'],
                                    get_display_number=get_display_number,
                                    selected_paper_id=selected_paper_id,
-                                   exam_scope=exam_scope)
+                                   selected_paper=selected_paper,
+                                   exam_scope=exam_scope,
+                                   self_view=self_view)
         except Exception as e:
             print(f"获取学生详情失败: {str(e)}")
             import traceback
             print(f"详细错误: {traceback.format_exc()}")
             flash('获取学生详情失败', 'danger')
+            if self_view:
+                return redirect(url_for('dashboard'))
             if selected_exam_id:
                 return redirect(url_for('admin.admin_exam_detail', exam_id=selected_exam_id, batch_id=selected_batch_id))
             return redirect(url_for('admin_dashboard'))

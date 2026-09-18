@@ -432,10 +432,10 @@
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link {{ 'active' if request.endpoint == 'statistics' }}" href="{{ url_for('statistics') }}">
+                            <a class="nav-link {{ 'active' if request.endpoint in ['statistics', 'student_answer_details', 'student.student_answer_details'] }}" href="{{ url_for('student_answer_details') }}">
                                 <i class="bi bi-graph-up me-1 d-none-mobile"></i>
-                                <span class="d-inline-mobile">统计</span>
-                                <span class="d-none-mobile">统计</span>
+                                <span class="d-inline-mobile">数据</span>
+                                <span class="d-none-mobile">我的数据</span>
                             </a>
                         </li>
                         <li class="nav-item">

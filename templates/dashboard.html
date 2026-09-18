@@ -187,8 +187,8 @@
                     <a href="{{ url_for('history') }}" class="list-group-item list-group-item-action">
                         <i class="bi bi-clock-history me-2"></i>答题历史
                     </a>
-                    <a href="{{ url_for('statistics') }}" class="list-group-item list-group-item-action">
-                        <i class="bi bi-graph-up me-2"></i>学习统计
+                    <a href="{{ url_for('student_answer_details') }}" class="list-group-item list-group-item-action">
+                        <i class="bi bi-graph-up me-2"></i>我的答题数据
                     </a>
                     <!-- 管理员导航 -->
                     {% if is_admin %}
@@ -346,7 +346,7 @@
                 <i class="bi bi-trophy-fill me-3 fs-2"></i>
                 <div>
                     <h5 class="alert-heading mb-2">学习完成！</h5>
-                    <p class="mb-0">您已经成功完成了所有物理微积分练习题目。可以查看<a href="{{ url_for('statistics') }}" class="alert-link">学习统计</a>或<a href="{{ url_for('history') }}" class="alert-link">答题历史</a>回顾您的学习成果。</p>
+                    <p class="mb-0">您已经成功完成了所有物理微积分练习题目。可以查看<a href="{{ url_for('student_answer_details') }}" class="alert-link">我的答题数据</a>或<a href="{{ url_for('history') }}" class="alert-link">答题历史</a>回顾您的学习成果。</p>
                 </div>
             </div>
         </div>

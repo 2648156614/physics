@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}学生详情 - {{ student.name or student.username }}{% endblock %}
+{% block title %}{{ '我的答题数据' if self_view else '学生详情 - ' ~ (student.name or student.username) }}{% endblock %}
 
 {% block content %}
 <style>
@@ -136,16 +136,19 @@
 <div class="student-story-page">
     <section class="hero-banner glass-panel">
         <div>
-            <span class="eyebrow"><i class="bi bi-person-badge"></i> {{ '本场考试答题详情' if exam_scope else '学生学习画像' }}</span>
-            <h2 class="hero-title">{{ student.name or student.username }} 的答题情况页面</h2>
-            <p class="hero-meta">账号：{{ student.username }} · 班级：{{ student.class_name or '未分班' }}{% if exam_scope %} · 考试：{{ exam_scope.exam_name }} · 批次：{{ exam_scope.batch_name }}{% else %} · 自动生成阶段式数据结论{% endif %}</p>
+            <span class="eyebrow"><i class="bi bi-person-badge"></i> {% if self_view %}我的答题数据{% elif exam_scope %}本场考试答题详情{% else %}学生学习画像{% endif %}</span>
+            <h2 class="hero-title">{{ '我的答题情况' if self_view else (student.name or student.username) ~ ' 的答题情况页面' }}</h2>
+            <p class="hero-meta">账号：{{ student.username }} · 班级：{{ student.class_name or '未分班' }}{% if exam_scope %} · 考试：{{ exam_scope.exam_name }} · 批次：{{ exam_scope.batch_name }}{% elif self_view %} · 当前题库：{{ selected_paper.name if selected_paper else '暂无可用题库' }}{% else %} · 题库：{{ selected_paper.name if selected_paper else '未选择' }}{% endif %}</p>
             <div class="insight-callout">
                 <div class="fw-bold mb-2"><i class="bi bi-stars me-2"></i>自动结论提示</div>
                 <div>{{ insight_summary }}</div>
             </div>
         </div>
         <div class="d-flex gap-2 flex-wrap align-self-start">
-            {% if exam_scope %}
+            {% if self_view %}
+            <a href="{{ url_for('dashboard') }}" class="btn btn-light"><i class="bi bi-house"></i> 返回首页</a>
+            <a href="{{ url_for('history') }}" class="btn btn-outline-light"><i class="bi bi-clock-history"></i> 答题历史</a>
+            {% elif exam_scope %}
             <a href="{{ url_for('admin.admin_exam_detail', exam_id=exam_scope.exam_id, batch_id=exam_scope.batch_id) }}" class="btn btn-light"><i class="bi bi-people"></i> 返回当前批次</a>
             <a href="{{ url_for('admin.admin_exams') }}" class="btn btn-outline-light"><i class="bi bi-arrow-left"></i> 返回考试列表</a>
             {% else %}
@@ -161,7 +164,7 @@
                 <div>
                     <span class="section-eyebrow"><i class="bi bi-1-circle"></i> 第一屏 · 总体数据</span>
                     <h3>从整体完成度先看学习状态</h3>
-                    <p>大数字卡片配合滚动触发动画，帮助管理员快速把握该学生的答题全貌。</p>
+                    <p>{{ '查看当前题库中的完成度、正确率、尝试次数和累计用时。' if self_view else '大数字卡片配合滚动触发动画，帮助管理员快速把握该学生的答题全貌。' }}</p>
                 </div>
             </div>
             <div class="metric-grid">
@@ -206,7 +209,7 @@
                     <div class="glass-panel info-card" data-animate>
                         <div class="metric-label">最终累计正确率</div>
                         <div class="metric-value"><span class="counter" data-value="{{ trend_points[-1].correct_rate if trend_points else 0 }}">0</span>%</div>
-                        <p class="metric-note">最后一个点代表该学生目前的累计正确率。</p>
+                        <p class="metric-note">{{ '最后一个点代表你目前的累计正确率。' if self_view else '最后一个点代表该学生目前的累计正确率。' }}</p>
                     </div>
                     <div class="glass-panel info-card" data-animate>
                         <div class="metric-label">最近一题状态</div>
@@ -246,7 +249,7 @@
                 {% else %}
                 <article class="glass-panel knowledge-card" data-animate>
                     <div class="metric-label">暂无知识点数据</div>
-                    <div class="metric-note mt-2">学生尚未形成可分析的知识点分布。</div>
+                    <div class="metric-note mt-2">{{ '当前还没有形成可分析的知识点分布。' if self_view else '学生尚未形成可分析的知识点分布。' }}</div>
                 </article>
                 {% endfor %}
             </div>
@@ -259,7 +262,7 @@
                 <div>
                     <span class="section-eyebrow"><i class="bi bi-4-circle"></i> 第四屏 · 错题分析</span>
                     <h3>突出最需要复盘的错题与错误类型</h3>
-                    <p>把高频错题、错误类型、详细题目明细集中在同一屏，便于管理员做针对性辅导。</p>
+                    <p>{{ '把高频错题、错误类型和题目明细集中展示，便于及时复盘。' if self_view else '把高频错题、错误类型、详细题目明细集中在同一屏，便于管理员做针对性辅导。' }}</p>
                 </div>
             </div>
             <div class="analysis-layout mb-4">
@@ -349,7 +352,7 @@
                             {% else %}
                             <tr>
                                 <td colspan="9" class="text-center text-muted py-4">
-                                    {% if exam_scope %}该学生尚未进入本场考试，暂无个人题单和作答明细。{% else %}暂无题目明细。{% endif %}
+                                    {% if exam_scope %}该学生尚未进入本场考试，暂无个人题单和作答明细。{% elif self_view %}当前题库暂无题目明细。{% else %}暂无题目明细。{% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
