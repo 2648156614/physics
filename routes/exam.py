@@ -10,7 +10,7 @@ def create_exam_blueprint(deps):
     def home():
         if 'user_id' in session:
             return redirect(url_for('dashboard'))
-        return render_template('home.html')
+        return redirect(url_for('auth.login'))
     
     
     @bp.route('/dashboard')
