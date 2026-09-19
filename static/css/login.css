@@ -187,6 +187,8 @@ button, input { font: inherit; }
     -webkit-backdrop-filter: blur(18px) saturate(115%);
 }
 
+.mobile-brand { display: none; }
+
 .login-heading { margin-bottom: 30px; }
 
 .login-eyebrow {
@@ -375,36 +377,205 @@ button, input { font: inherit; }
     .login-footer-note { margin-top: 20px; padding-top: 16px; }
 }
 
-/* 手机端暂时保留简洁登录布局，后续单独按移动端设计改造。 */
-@media (max-width: 768px) {
-    body { background: #f5f7fa; }
+@media (max-width: 768px), (max-width: 950px) and (max-height: 500px) {
+    html { background: #091a32; }
 
-    .login-page {
-        min-height: 100dvh;
-        padding: 24px 16px;
-        background: #f5f7fa;
-        overflow: auto;
+    body {
+        background: #091a32;
+        color: #fff;
+        overscroll-behavior-y: none;
     }
 
-    .login-page::before,
+    .login-page {
+        display: block;
+        min-height: 100vh;
+        min-height: 100svh;
+        min-height: 100dvh;
+        min-height: var(--login-viewport-height, 100dvh);
+        padding: max(24px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+        background-image: url("../images/login/physics-chalkboard-mobile.webp");
+        background-size: cover;
+        background-position: center;
+        overflow-x: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .login-page::before {
+        display: block;
+        background: rgba(5, 18, 39, 0.42);
+    }
+
     .brand-panel { display: none; }
 
     .login-layout {
+        position: relative;
+        z-index: 1;
         display: block;
-        width: min(100%, 480px);
+        width: min(100%, 440px);
         min-height: 0;
+        margin: 0 auto;
     }
 
     .login-panel {
-        padding: 28px 22px;
-        border-color: #dfe5ec;
-        background: #fff;
-        box-shadow: 0 8px 28px rgba(15, 42, 71, 0.08);
+        padding: clamp(22px, 5vw, 30px) clamp(4px, 2vw, 10px);
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
         backdrop-filter: none;
         -webkit-backdrop-filter: none;
     }
 
-    .login-heading h2 { font-size: 28px; }
+    .mobile-brand {
+        display: grid;
+        justify-items: center;
+        margin: 0 auto clamp(32px, 7svh, 58px);
+        text-align: center;
+        text-shadow: 0 2px 16px rgba(1, 9, 22, 0.45);
+    }
+
+    .mobile-brand-mark {
+        width: 72px;
+        height: 72px;
+        display: grid;
+        place-items: center;
+        margin-bottom: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.62);
+        border-radius: 50%;
+        background: rgba(60, 100, 190, 0.24);
+        color: #fff;
+        font-size: 35px;
+        box-shadow: 0 12px 28px rgba(2, 12, 31, 0.24);
+    }
+
+    .mobile-brand h1 {
+        margin: 0;
+        color: #fff;
+        font-size: clamp(27px, 7vw, 34px);
+        font-weight: 750;
+        line-height: 1.24;
+        letter-spacing: 0;
+    }
+
+    .mobile-brand p {
+        margin: 12px 0 0;
+        color: rgba(224, 233, 248, 0.72);
+        font-size: clamp(14px, 4vw, 17px);
+    }
+
+    .login-heading { display: none; }
+
+    .login-messages { margin-bottom: 16px; }
+
+    .login-alert {
+        border-color: rgba(255, 255, 255, 0.22);
+        background: rgba(9, 27, 57, 0.76);
+        color: #fff;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+    }
+
+    .login-alert-danger {
+        border-color: rgba(255, 152, 152, 0.55);
+        color: #ffe3e3;
+    }
+
+    .login-alert-warning {
+        border-color: rgba(255, 214, 126, 0.5);
+        color: #fff1c7;
+    }
+
+    .login-form { gap: 16px; }
+
+    .field-group label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+
+    .field-control {
+        height: 62px;
+        grid-template-columns: 24px minmax(0, 1fr) auto;
+        gap: 14px;
+        padding: 0 19px;
+        border-color: rgba(190, 209, 246, 0.26);
+        border-radius: 18px;
+        background: rgba(191, 209, 243, 0.12);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+    }
+
+    .field-control:focus-within {
+        border-color: rgba(135, 168, 255, 0.82);
+        background: rgba(191, 209, 243, 0.18);
+        box-shadow: 0 0 0 3px rgba(91, 129, 238, 0.2);
+    }
+
+    .field-control > i,
+    .password-toggle { color: rgba(255, 255, 255, 0.94); }
+
+    .field-control input {
+        color: #fff;
+        font-size: 16px;
+        caret-color: #fff;
+    }
+
+    .field-control input::placeholder { color: rgba(218, 228, 246, 0.58); }
+
+    .login-note {
+        justify-content: center;
+        color: rgba(218, 228, 246, 0.68);
+        font-size: 12px;
+    }
+
+    .login-submit {
+        height: 60px;
+        margin-top: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 18px;
+        background: #3f67df;
+        font-size: 18px;
+        box-shadow: 0 14px 30px rgba(7, 22, 64, 0.34);
+    }
+
+    .login-submit:hover { background: #3f67df; }
+    .login-submit:active { background: #3459ca; }
+
+    .login-footer-note {
+        margin: clamp(30px, 7svh, 58px) 0 0;
+        padding-top: 0;
+        border-top: 0;
+        color: rgba(218, 228, 246, 0.62);
+        text-shadow: 0 2px 12px rgba(2, 11, 28, 0.38);
+    }
+}
+
+@media (max-width: 768px) and (max-height: 720px), (max-width: 950px) and (max-height: 500px) {
+    .login-panel { padding-top: 12px; padding-bottom: 12px; }
+    .mobile-brand { margin-bottom: 24px; }
+    .mobile-brand-mark { width: 58px; height: 58px; margin-bottom: 12px; font-size: 28px; }
+    .mobile-brand h1 { font-size: 26px; }
+    .mobile-brand p { margin-top: 7px; font-size: 14px; }
+    .field-control { height: 54px; }
+    .login-form { gap: 12px; }
+    .login-submit { height: 54px; }
+    .login-footer-note { margin-top: 24px; }
+}
+
+@media (max-width: 950px) and (max-height: 500px) and (orientation: landscape) {
+    .login-page { padding-top: max(12px, env(safe-area-inset-top)); }
+    .mobile-brand { margin-bottom: 18px; }
+    .mobile-brand-mark { display: none; }
+    .mobile-brand p { display: none; }
+    .login-footer-note { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

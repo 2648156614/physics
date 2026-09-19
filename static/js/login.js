@@ -4,7 +4,16 @@
     const loginForm = document.getElementById('login-form');
     const loginSubmit = document.getElementById('login-submit');
 
-    if (window.matchMedia('(min-width: 769px)').matches) {
+    function syncViewportHeight() {
+        const viewportHeight = window.visualViewport?.height || window.innerHeight;
+        document.documentElement.style.setProperty('--login-viewport-height', `${viewportHeight}px`);
+    }
+
+    syncViewportHeight();
+    window.addEventListener('orientationchange', syncViewportHeight, { passive: true });
+    window.visualViewport?.addEventListener('resize', syncViewportHeight, { passive: true });
+
+    if (window.matchMedia('(min-width: 769px) and (min-height: 501px)').matches) {
         document.getElementById('username')?.focus();
     }
 
