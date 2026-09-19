@@ -10,7 +10,7 @@
             <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left"></i> 返回管理后台
             </a>
-            <a href="{{ url_for('admin_manage_problems') }}" class="btn btn-outline-info">
+            <a href="{{ url_for('admin_manage_problems', paper_id=selected_paper_id) if selected_paper_id else url_for('admin_manage_problems') }}" class="btn btn-outline-info">
                 <i class="bi bi-list-check"></i> 管理题目
             </a>
         </div>
@@ -52,7 +52,7 @@
                             <label for="paper_id" class="form-label">所属题库</label>
                             <select class="form-select" id="paper_id" name="paper_id" required>
                                 {% for paper in exam_papers %}
-                                <option value="{{ paper.id }}" {% if template is defined and template.paper_id == paper.id %}selected{% endif %}>{{ paper.name }} {% if paper.is_enabled %}(已开启){% else %}(已关闭){% endif %}</option>
+                                <option value="{{ paper.id }}" {% if (template is defined and template.paper_id == paper.id) or selected_paper_id == paper.id %}selected{% endif %}>{{ paper.name }} {% if paper.is_enabled %}(已开启){% else %}(已关闭){% endif %}</option>
                                 {% endfor %}
                             </select>
                         </div>

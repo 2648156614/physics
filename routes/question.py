@@ -454,13 +454,17 @@ def create_question_blueprint(deps):
                 conn.close()
     
                 flash(f'题目添加成功！已清理 {deleted_cache_count} 条题目缓存。', 'success')
-                return redirect(url_for('admin_manage_problems'))
+                return redirect(url_for('admin_manage_problems', paper_id=paper_id))
     
             except Exception as e:
                 print(f"添加题目失败: {str(e)}")
                 flash(f'添加题目失败: {str(e)}', 'danger')
     
-        return render_template('admin_add_problem.html', exam_papers=get_exam_papers())
+        return render_template(
+            'admin_add_problem.html',
+            exam_papers=get_exam_papers(),
+            selected_paper_id=request.args.get('paper_id', type=int),
+        )
     
     
     @bp.route('/admin/manage_problems')
@@ -477,38 +481,45 @@ def create_question_blueprint(deps):
             selected_status = 'active'
         exam_papers = get_exam_papers()
     
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        try:
-            conditions = []
-            params = []
-            if selected_paper_id:
-                conditions.append("pt.paper_id = %s")
-                params.append(selected_paper_id)
-            if selected_status != 'all':
-                conditions.append("COALESCE(pt.status, 'active') = %s")
-                params.append(selected_status)
-            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ''
-            cursor.execute(
-                f"""
-                SELECT pt.*,
-                       (
-                           (SELECT COUNT(*) FROM exam_question_pool eqp WHERE eqp.template_id = pt.id)
-                           + (SELECT COUNT(*) FROM exam_user_questions euq WHERE euq.template_id = pt.id)
-                           + (SELECT COUNT(*) FROM user_responses ur WHERE ur.template_id = pt.id)
-                       ) AS usage_count
-                FROM problem_templates pt
-                {where_clause}
-                ORDER BY pt.id
-                """,
-                params,
-            )
-            templates = cursor.fetchall()
-        finally:
-            cursor.close()
-            conn.close()
-    
-        display_mapping = get_problem_display_info(selected_paper_id, enabled_only=False)
+        paper_by_id = {int(paper['id']): paper for paper in exam_papers}
+        selected_paper = paper_by_id.get(selected_paper_id) if selected_paper_id else None
+        if selected_paper_id and not selected_paper:
+            flash('题库不存在或已被删除。', 'warning')
+            return redirect(url_for('admin_manage_problems'))
+
+        templates = []
+        if selected_paper:
+            conn = get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            try:
+                conditions = ["pt.paper_id = %s"]
+                params = [selected_paper_id]
+                if selected_status != 'all':
+                    conditions.append("COALESCE(pt.status, 'active') = %s")
+                    params.append(selected_status)
+                cursor.execute(
+                    f"""
+                    SELECT pt.*,
+                           (
+                               (SELECT COUNT(*) FROM exam_question_pool eqp WHERE eqp.template_id = pt.id)
+                               + (SELECT COUNT(*) FROM exam_user_questions euq WHERE euq.template_id = pt.id)
+                               + (SELECT COUNT(*) FROM user_responses ur WHERE ur.template_id = pt.id)
+                           ) AS usage_count
+                    FROM problem_templates pt
+                    WHERE {' AND '.join(conditions)}
+                    ORDER BY pt.id
+                    """,
+                    params,
+                )
+                templates = cursor.fetchall()
+            finally:
+                cursor.close()
+                conn.close()
+
+        display_mapping = (
+            get_problem_display_info(selected_paper_id, enabled_only=False)
+            if selected_paper else {}
+        )
         display_number_by_id = {
             int(actual_id): info['display_number']
             for actual_id, info in display_mapping.items()
@@ -520,6 +531,7 @@ def create_question_blueprint(deps):
                                templates=templates,
                                display_mapping=display_mapping,
                                exam_papers=exam_papers,
+                               selected_paper=selected_paper,
                                selected_paper_id=selected_paper_id,
                                selected_status=selected_status)
     

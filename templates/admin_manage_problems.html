@@ -1,33 +1,141 @@
 {% extends "base.html" %}
 
-{% block title %}管理题目 - 管理员{% endblock %}
+{% block title %}题库管理 - 管理员{% endblock %}
 
 {% block content %}
+<style>
+    .paper-entry {
+        display: flex;
+        min-height: 150px;
+        color: inherit;
+        text-decoration: none;
+        border: 1px solid #dfe5ec;
+        border-radius: 6px;
+        background: #fff;
+        transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+    }
+    .paper-entry:hover {
+        color: inherit;
+        border-color: #8ab4dc;
+        box-shadow: 0 7px 18px rgba(30, 58, 90, .1);
+        transform: translateY(-2px);
+    }
+    .paper-entry__body {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        min-width: 0;
+        padding: 1.15rem;
+    }
+    .paper-entry__icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        flex: 0 0 38px;
+        border-radius: 6px;
+        color: #1f5f94;
+        background: #eaf3fb;
+        font-size: 1.15rem;
+    }
+    .paper-entry__description {
+        display: -webkit-box;
+        overflow: hidden;
+        color: #6c757d;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+    }
+    .paper-entry__footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: auto;
+        padding-top: 1rem;
+        color: #596674;
+    }
+    @media (max-width: 576px) {
+        .question-bank-header {
+            align-items: flex-start !important;
+            gap: .75rem;
+        }
+        .question-bank-header .btn {
+            white-space: nowrap;
+        }
+        .paper-entry {
+            min-height: 132px;
+        }
+    }
+</style>
+
 <div class="container">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2 class="mb-0">题目管理</h2>
+    {% if not selected_paper %}
+    <div class="question-bank-header d-flex justify-content-between align-items-center mb-4">
         <div>
-            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-secondary">
-                <i class="bi bi-arrow-left"></i> 返回管理后台
-            </a>
-            <a href="{{ url_for('admin_add_problem') }}" class="btn btn-primary">
-                <i class="bi bi-plus-circle"></i> 添加题目
+            <h2 class="mb-1">题库管理</h2>
+            <p class="text-muted mb-0">选择一个题库，进入后查看和管理其中的题目。</p>
+        </div>
+        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> 返回管理后台
+        </a>
+    </div>
+
+    {% if exam_papers %}
+    <div class="row g-3">
+        {% for paper in exam_papers %}
+        <div class="col-12 col-md-6 col-xl-4">
+            <a class="paper-entry" href="{{ url_for('admin_manage_problems', paper_id=paper.id) }}">
+                <div class="paper-entry__body">
+                    <div class="d-flex align-items-start gap-3">
+                        <span class="paper-entry__icon"><i class="bi bi-journal-text"></i></span>
+                        <div class="min-w-0 flex-grow-1">
+                            <div class="d-flex align-items-start justify-content-between gap-2">
+                                <h5 class="mb-1 text-break">{{ paper.name }}</h5>
+                                {% if paper.is_enabled %}
+                                <span class="badge bg-success">已开启</span>
+                                {% else %}
+                                <span class="badge bg-secondary">已关闭</span>
+                                {% endif %}
+                            </div>
+                            <div class="paper-entry__description small">{{ paper.description or '暂无题库说明' }}</div>
+                        </div>
+                    </div>
+                    <div class="paper-entry__footer">
+                        <span><strong>{{ paper.template_count or 0 }}</strong> 道当前题目</span>
+                        <span class="text-primary">进入题库 <i class="bi bi-chevron-right"></i></span>
+                    </div>
+                </div>
             </a>
         </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="border rounded text-center py-5 bg-white">
+        <i class="bi bi-journals display-4 text-muted"></i>
+        <h4 class="mt-3">暂无题库</h4>
+        <p class="text-muted mb-3">请先返回管理后台创建题库。</p>
+        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-primary">创建题库</a>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="question-bank-header d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <a class="small text-decoration-none" href="{{ url_for('admin_manage_problems') }}">
+                <i class="bi bi-arrow-left me-1"></i>全部题库
+            </a>
+            <h2 class="mb-1 mt-2">{{ selected_paper.name }}</h2>
+            <p class="text-muted mb-0">{{ selected_paper.description or '管理当前题库中的题目与历史版本。' }}</p>
+        </div>
+        <a href="{{ url_for('admin_add_problem', paper_id=selected_paper.id) }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> 添加题目
+        </a>
     </div>
 
     <form method="get" class="card card-body mb-3">
+        <input type="hidden" name="paper_id" value="{{ selected_paper.id }}">
         <div class="row g-3 align-items-end">
-            <div class="col-md-4">
-                <label class="form-label">按题库筛选</label>
-                <select class="form-select" name="paper_id">
-                    <option value="">全部题库</option>
-                    {% for paper in exam_papers %}
-                    <option value="{{ paper.id }}" {% if selected_paper_id == paper.id %}selected{% endif %}>{{ paper.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-3">
+            <div class="col-md-5">
                 <label class="form-label">题目状态</label>
                 <select class="form-select" name="status">
                     <option value="active" {% if selected_status == 'active' %}selected{% endif %}>当前题目</option>
@@ -36,23 +144,17 @@
                 </select>
             </div>
             <div class="col-md-2"><button class="btn btn-outline-primary w-100">筛选</button></div>
-            <div class="col-md-3">
-                {% if selected_paper_id %}
-                <a class="btn btn-outline-success w-100" href="{{ url_for('admin_export_exam_paper', paper_id=selected_paper_id) }}">
+            <div class="col-md-3 ms-md-auto">
+                <a class="btn btn-outline-success w-100" href="{{ url_for('admin_export_exam_paper', paper_id=selected_paper.id) }}">
                     <i class="bi bi-download me-1"></i> 导出当前题库
                 </a>
-                {% else %}
-                <button class="btn btn-outline-success w-100" type="button" disabled>先选择题库再导出</button>
-                {% endif %}
             </div>
         </div>
     </form>
 
     <div class="alert alert-info d-flex align-items-start gap-2" role="alert">
         <i class="bi bi-shield-check mt-1"></i>
-        <div>
-            已用于考试或产生答题记录的题目不会被直接删除。编辑时系统会创建新版本，移除时只退出当前题库，历史考试数据保持不变。
-        </div>
+        <div>已用于考试或产生答题记录的题目不会被直接删除。编辑时系统会创建新版本，历史考试数据保持不变。</div>
     </div>
 
     <div class="card card-body mb-3 border-success">
@@ -60,43 +162,34 @@
             <div class="col-md-5">
                 <label class="form-label">导入题库备份</label>
                 <input class="form-control" type="file" name="paper_file" accept=".json,application/json" required>
-                <div class="form-text">请选择本页面导出的 JSON 备份文件，题目和图片会一起恢复。</div>
+                <div class="form-text">请选择本系统导出的 JSON 备份文件，题目和图片会一起恢复。</div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4">
                 <div class="form-check mt-4">
                     <input class="form-check-input" type="checkbox" name="replace_existing" value="1" id="replaceExistingPaper">
                     <label class="form-check-label" for="replaceExistingPaper">同名题库覆盖导入</label>
                 </div>
                 <div class="form-text">不勾选时，同名题库会自动创建副本。</div>
             </div>
-            <div class="col-md-2">
-                <button class="btn btn-success w-100" type="submit">
-                    <i class="bi bi-upload me-1"></i> 一键导入
-                </button>
+            <div class="col-md-3">
+                <button class="btn btn-success w-100" type="submit"><i class="bi bi-upload me-1"></i> 一键导入</button>
             </div>
         </form>
     </div>
 
     <div class="card">
-        <div class="card-header">
-            <h5 class="mb-0"><i class="bi bi-list-check me-2"></i> 题目列表</h5>
+        <div class="card-header d-flex align-items-center justify-content-between">
+            <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>题目列表</h5>
+            <span class="text-muted small">{{ templates|length }} 道</span>
         </div>
         <div class="card-body">
             {% if templates %}
             <div class="table-responsive">
-                <table class="table table-hover">
+                <table class="table table-hover align-middle">
                     <thead class="table-light">
                         <tr>
-                            <th>序号</th>
-                            <th>实际ID</th>
-                            <th>所属题库</th>
-                            <th>题目名称</th>
-                            <th>图片</th>
-                            <th>变量</th>
-                            <th>答案数量</th>
-                            <th>难度</th>
-                            <th>状态</th>
-                            <th>操作</th>
+                            <th>序号</th><th>实际ID</th><th>题目名称</th><th>图片</th><th>变量</th>
+                            <th>答案数量</th><th>难度</th><th>状态</th><th>操作</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -104,64 +197,41 @@
                         <tr>
                             <td><strong>{{ template.display_number }}</strong></td>
                             <td><small class="text-muted">{{ template.id }}</small></td>
-                            <td><span class="badge bg-secondary">{{ template.paper_id or '-' }}</span></td>
                             <td>
                                 <strong>{{ template.template_name }}</strong>
-                                <div class="text-muted small mt-1">
-                                    {{ template.problem_text|striptags|truncate(100) }}
-                                </div>
+                                <div class="text-muted small mt-1">{{ template.problem_text|striptags|truncate(100) }}</div>
                             </td>
                             <td>
                                 {% if template.image_filename %}
-                                <span class="badge bg-success" title="{{ template.image_filename }}">
-                                    <i class="bi bi-image"></i> 有图片
-                                </span>
-                                {% else %}
-                                <span class="badge bg-secondary">无图片</span>
-                                {% endif %}
+                                <span class="badge bg-success" title="{{ template.image_filename }}"><i class="bi bi-image"></i> 有图片</span>
+                                {% else %}<span class="badge bg-secondary">无图片</span>{% endif %}
+                            </td>
+                            <td><span class="badge bg-info text-dark">{{ template.variables or '无' }}</span></td>
+                            <td><span class="badge bg-primary">{{ template.answer_count }}</span></td>
+                            <td>
+                                {% if template.difficulty == 'easy' %}<span class="badge bg-success">简单</span>
+                                {% elif template.difficulty == 'hard' %}<span class="badge bg-danger">困难</span>
+                                {% else %}<span class="badge bg-warning text-dark">中等</span>{% endif %}
                             </td>
                             <td>
-                                <span class="badge bg-info">{{ template.variables or '无' }}</span>
-                            </td>
-                            <td>
-                                <span class="badge bg-primary">{{ template.answer_count }}</span>
-                            </td>
-                            <td>
-                                {% if template.difficulty == 'easy' %}
-                                <span class="badge bg-success">简单</span>
-                                {% elif template.difficulty == 'hard' %}
-                                <span class="badge bg-danger">困难</span>
-                                {% else %}
-                                <span class="badge bg-warning">中等</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if template.status == 'retired' %}
-                                <span class="badge bg-secondary">历史版本</span>
-                                {% else %}
-                                <span class="badge bg-success">当前</span>
-                                {% endif %}
+                                {% if template.status == 'retired' %}<span class="badge bg-secondary">历史版本</span>
+                                {% else %}<span class="badge bg-success">当前</span>{% endif %}
                                 <div class="small text-muted mt-1">v{{ template.version_number or 1 }}</div>
                             </td>
                             <td>
                                 <div class="d-flex flex-wrap gap-1">
-                                    <a href="{{ url_for('admin_edit_problem', template_id=template.id) }}"
-                                       class="btn btn-sm btn-outline-primary">
+                                    <a href="{{ url_for('admin_edit_problem', template_id=template.id) }}" class="btn btn-sm btn-outline-primary">
                                         <i class="bi bi-pencil"></i> {% if template.status == 'retired' %}基于此新建版本{% else %}编辑{% endif %}
                                     </a>
                                     {% if template.status == 'retired' %}
                                     <form method="post" action="{{ url_for('admin_restore_problem', template_id=template.id) }}">
-                                        <button type="submit" class="btn btn-sm btn-outline-success">
-                                            <i class="bi bi-arrow-counterclockwise"></i> 恢复
-                                        </button>
+                                        <button type="submit" class="btn btn-sm btn-outline-success"><i class="bi bi-arrow-counterclockwise"></i> 恢复</button>
                                     </form>
                                     {% else %}
                                     <form method="post" action="{{ url_for('admin_delete_problem', template_id=template.id) }}"
                                           onsubmit="return confirmRemove(this, {{ 'true' if template.usage_count else 'false' }})">
                                         <input type="hidden" name="template_name" value="{{ template.template_name }}">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger">
-                                            <i class="bi bi-archive"></i> 移出题库
-                                        </button>
+                                        <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-archive"></i> 移出题库</button>
                                     </form>
                                     {% endif %}
                                 </div>
@@ -173,16 +243,16 @@
             </div>
             {% else %}
             <div class="text-center py-5">
-                <i class="bi bi-inbox display-1 text-muted"></i>
-                <h4 class="text-muted">暂无题目</h4>
-                <p class="text-muted">还没有添加任何题目</p>
-                <a href="{{ url_for('admin_add_problem') }}" class="btn btn-primary">
-                    <i class="bi bi-plus-circle me-2"></i> 添加第一个题目
+                <i class="bi bi-inbox display-4 text-muted"></i>
+                <h4 class="text-muted mt-3">当前筛选下暂无题目</h4>
+                <a href="{{ url_for('admin_add_problem', paper_id=selected_paper.id) }}" class="btn btn-primary mt-2">
+                    <i class="bi bi-plus-circle me-1"></i> 添加题目
                 </a>
             </div>
             {% endif %}
         </div>
     </div>
+    {% endif %}
 </div>
 
 <script>
