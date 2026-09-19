@@ -355,33 +355,11 @@
                     {% if 'user_id' in session %}
                         <!-- 管理员菜单 -->
                         {% if session.username == 'admin' %}
-                        <li class="nav-item dropdown">
-                            <a class="nav-link dropdown-toggle" href="#" id="adminDropdown" role="button"
-                               data-bs-toggle="dropdown" aria-expanded="false">
+                        <li class="nav-item">
+                            <a class="nav-link {{ 'active' if request.path.startswith('/admin') }}" href="{{ url_for('admin_dashboard') }}">
                                 <i class="bi bi-gear me-1"></i>
-                                <span class="d-none-mobile">管理</span>
+                                <span>管理</span>
                             </a>
-                            <ul class="dropdown-menu" aria-labelledby="adminDropdown">
-                                <li><a class="dropdown-item" href="{{ url_for('admin_dashboard') }}">
-                                    <i class="bi bi-speedometer me-1"></i> 管理后台
-                                </a></li>
-                                <li><a class="dropdown-item" href="{{ url_for('admin_students_by_status', status='completed') }}">
-                                    <i class="bi bi-check-circle me-1"></i> 已完成学生
-                                </a></li>
-                                <li><a class="dropdown-item" href="{{ url_for('admin_students_by_status', status='incomplete') }}">
-                                    <i class="bi bi-exclamation-triangle me-1"></i> 未完成学生
-                                </a></li>
-                                <li><hr class="dropdown-divider"></li>
-                                <li><a class="dropdown-item" href="{{ url_for('admin_all_problems_stats') }}">
-                                    <i class="bi bi-graph-up me-1"></i> 题目统计
-                                </a></li>
-                                <li><a class="dropdown-item" href="{{ url_for('admin_analytics') }}">
-                                    <i class="bi bi-bar-chart me-1"></i> 学情看板
-                                </a></li>
-                                <li><a class="dropdown-item" href="{{ url_for('update_all_status') }}">
-                                    <i class="bi bi-arrow-clockwise me-1"></i> 更新状态
-                                </a></li>
-                            </ul>
                         </li>
                         {% endif %}
                         <li class="nav-item dropdown avatar-menu">
