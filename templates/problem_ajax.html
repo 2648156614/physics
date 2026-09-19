@@ -4,6 +4,57 @@
 
 {% block content %}
 <style>
+    /* 首屏关键样式：在完整样式解析前就固定手机导航，避免桌面侧栏闪现。 */
+    @media (max-width: 768px) {
+        .problem-navigation-column {
+            height: 0;
+            min-height: 0;
+            margin: 0 !important;
+            padding: 0;
+        }
+
+        .problem-navigation-column > .card {
+            position: fixed;
+            right: auto;
+            bottom: max(8px, env(safe-area-inset-bottom));
+            left: 50%;
+            z-index: 1060;
+            margin: 0;
+            overflow: visible;
+            border: 0;
+            background: transparent;
+            box-shadow: none;
+            transform: translateX(-50%);
+        }
+
+        .problem-navigation-column .card-header,
+        .problem-navigation-column .card-footer {
+            display: none !important;
+        }
+
+        .problem-navigation-column .card-body {
+            display: none;
+        }
+
+        .mobile-problem-nav-toggle {
+            display: flex !important;
+            min-width: 72px;
+            min-height: 40px;
+            margin: 0 auto;
+            padding: 0.35rem 0.65rem;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            border: 1px solid rgba(15, 23, 42, 0.22);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.97);
+            color: #111827;
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.2);
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+    }
+
     #problem-content-container {
         position: relative;
         overflow: hidden;
@@ -749,6 +800,57 @@ let lastSpotlightRelativePosition = { xRatio: 0.5, yRatio: 0.5, hasValue: false 
 let spotlightTimer = null; // 新增：保持蒙版定时器
 let resumeShieldTimer = null;
 let isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent); // 新增：检测移动设备
+const MOBILE_PROBLEM_NAV_QUERY = '(max-width: 768px)';
+const mobileQuestionSwitchKey = 'mobile-question-switch';
+
+function readMobileQuestionSwitch() {
+    try {
+        return sessionStorage.getItem(mobileQuestionSwitchKey) === '1';
+    } catch (error) {
+        return false;
+    }
+}
+
+function saveMobileQuestionSwitch() {
+    try {
+        sessionStorage.setItem(mobileQuestionSwitchKey, '1');
+    } catch (error) {
+        console.debug('无法保存移动端切题状态:', error);
+    }
+}
+
+function clearMobileQuestionSwitch() {
+    try {
+        sessionStorage.removeItem(mobileQuestionSwitchKey);
+    } catch (error) {
+        console.debug('无法清理移动端切题状态:', error);
+    }
+}
+
+const arrivedFromMobileQuestionSwitch = readMobileQuestionSwitch();
+
+function usesMobileProblemNavigation() {
+    return window.matchMedia(MOBILE_PROBLEM_NAV_QUERY).matches;
+}
+
+function navigateToProblem(targetProblem) {
+    if (usesMobileProblemNavigation()) {
+        saveMobileQuestionSwitch();
+    }
+    markExpectedPageTransition();
+    window.location.assign(`/problem_ajax/${targetProblem}`);
+}
+
+if (arrivedFromMobileQuestionSwitch) {
+    clearMobileQuestionSwitch();
+}
+
+if (arrivedFromMobileQuestionSwitch && usesMobileProblemNavigation()) {
+    if ('scrollRestoration' in history) {
+        history.scrollRestoration = 'manual';
+    }
+    window.scrollTo(0, 0);
+}
 
 // 双模式切换状态
 let currentInputMode = 'normal'; // 'normal' 或 'scientific'
@@ -2453,6 +2555,15 @@ function initProblemSidebar() {
             const currentAnswer = getCurrentAnswer();
             if (currentAnswer && !confirm('切换题目将丢失当前输入的答案，确定要跳转吗？')) {
                 e.preventDefault();
+                return;
+            }
+
+            if (usesMobileProblemNavigation()) {
+                e.preventDefault();
+                if (navCard) {
+                    navCard.classList.remove('is-open');
+                }
+                navigateToProblem(parseInt(this.getAttribute('data-problem-id'), 10));
             }
         });
     });
@@ -2578,8 +2689,7 @@ document.getElementById('answer-form').addEventListener('submit', async function
                     }, 500);
 
                     setTimeout(() => {
-                        markExpectedPageTransition();
-                        window.location.href = '/problem_ajax/' + data.next_problem;
+                        navigateToProblem(data.next_problem);
                     }, 3000);
                 } else {
                     setTimeout(() => {
@@ -2614,11 +2724,11 @@ document.getElementById('answer-form').addEventListener('submit', async function
 
 // 下一题按钮
 document.getElementById('next-btn').addEventListener('click', function() {
-    markExpectedPageTransition();
     const nextProblem = problemId + 1;
     if (nextProblem <= totalProblems) {
-        window.location.href = '/problem_ajax/' + nextProblem;
+        navigateToProblem(nextProblem);
     } else {
+        markExpectedPageTransition();
         window.location.href = '{{ url_for("dashboard") }}';
     }
 });
@@ -2636,6 +2746,11 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('动态问题页面加载完成');
     console.log('页面加载时间:', new Date().toLocaleTimeString());
     console.log('开始计时时间:', new Date(startTime).toLocaleTimeString());
+
+    if (arrivedFromMobileQuestionSwitch && usesMobileProblemNavigation()) {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+        requestAnimationFrame(() => window.scrollTo(0, 0));
+    }
 
     // 初始化功能
     initTimer();
@@ -2682,8 +2797,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 markExpectedUiAction(3000);
                 const currentAnswer = getCurrentAnswer();
                 if (!currentAnswer || confirm('切换题目将丢失当前输入的答案，确定要跳转吗？')) {
-                    markExpectedPageTransition();
-                    window.location.href = `/problem_ajax/${targetProblem}`;
+                    navigateToProblem(targetProblem);
                 }
             }
         }
@@ -2717,22 +2831,24 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // 自动聚焦到第一个输入框
-    setTimeout(() => {
-        if (answerCount === 1) {
-            if (currentInputMode === 'normal') {
-                document.getElementById('answer-normal').focus();
-            } else {
-                document.getElementById('mantissa1').focus();
+    // 电脑端保留键盘输入效率；手机端不自动跳到答案框或弹出软键盘。
+    if (!usesMobileProblemNavigation()) {
+        setTimeout(() => {
+            if (answerCount === 1) {
+                if (currentInputMode === 'normal') {
+                    document.getElementById('answer-normal').focus();
+                } else {
+                    document.getElementById('mantissa1').focus();
+                }
+            } else if (answerCount > 1) {
+                if (currentInputMode === 'normal') {
+                    document.getElementById('answer-normal1').focus();
+                } else {
+                    document.getElementById('mantissa1').focus();
+                }
             }
-        } else if (answerCount > 1) {
-            if (currentInputMode === 'normal') {
-                document.getElementById('answer-normal1').focus();
-            } else {
-                document.getElementById('mantissa1').focus();
-            }
-        }
-    }, 500);
+        }, 500);
+    }
 
     // 初始化时强制同步一次数据
     setTimeout(() => {
