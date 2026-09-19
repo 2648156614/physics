@@ -482,7 +482,11 @@ def create_admin_blueprint(deps):
             (batch for batch in batches if int(batch['id']) == selected_batch_id),
             None,
         )
-        total_problems = int(exam.get('question_count') or get_total_problem_count(exam['paper_id']))
+        total_problems = int(
+            exam['question_count']
+            if exam.get('question_count') is not None
+            else get_exam_question_pool_count(exam_id, exam['paper_id'])
+        )
         now = datetime.now()
         status_labels = EXAM_STUDENT_STATUS_LABELS
         status_counts = {key: 0 for key in status_labels}
@@ -778,6 +782,9 @@ def create_admin_blueprint(deps):
                 (name, paper_id, question_count, exam_type if exam_type in {'normal', 'retake'} else 'normal', start_time, end_time)
             )
             exam_id = cursor.lastrowid
+            frozen_question_count = replace_exam_question_pool(cursor, exam_id, paper_id)
+            if frozen_question_count < question_count:
+                raise ValueError('当前题库可用题目不足，无法创建考试。')
 
             assignments = []
             missing_rows = []
@@ -1025,6 +1032,9 @@ def create_admin_blueprint(deps):
                     flash('已有学生进入过答题页面，不能再修改题库或抽题数量。', 'danger')
                     return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
                 cursor.execute('DELETE FROM exam_user_questions WHERE exam_id = %s', (exam_id,))
+                frozen_question_count = replace_exam_question_pool(cursor, exam_id, paper_id)
+                if frozen_question_count < question_count:
+                    raise ValueError('当前题库可用题目不足，无法保存考试。')
 
             cursor.execute(
                 """
@@ -1167,7 +1177,11 @@ def create_admin_blueprint(deps):
             conn = get_db_connection()
             cursor = conn.cursor(dictionary=True)
             try:
-                total_problems = source_exam.get('question_count') or get_total_problem_count(source_exam['paper_id'])
+                total_problems = (
+                    source_exam['question_count']
+                    if source_exam.get('question_count') is not None
+                    else get_exam_question_pool_count(source_exam['id'], source_exam['paper_id'])
+                )
                 cursor.execute(
                     """
                     SELECT u.id, u.username, u.name, u.class_name, u.major, u.teacher_name,
@@ -1733,6 +1747,7 @@ def create_admin_blueprint(deps):
                 message = f"考试《{exam['name']}》已有考试数据，已归档并保留全部成绩。"
             else:
                 cursor.execute('DELETE FROM exam_assignments WHERE exam_id = %s', (exam_id,))
+                cursor.execute('DELETE FROM exam_question_pool WHERE exam_id = %s', (exam_id,))
                 cursor.execute('DELETE FROM exams WHERE id = %s', (exam_id,))
                 message = f"考试《{exam['name']}》已删除。"
             conn.commit()
@@ -1782,6 +1797,7 @@ def create_admin_blueprint(deps):
                 SELECT paper_id, COUNT(*) AS total_problems
                 FROM problem_templates
                 WHERE paper_id IN ({placeholders})
+                  AND COALESCE(status, 'active') = 'active'
                 GROUP BY paper_id
             """, paper_ids)
             total_problem_by_paper = {

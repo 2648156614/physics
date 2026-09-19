@@ -103,6 +103,19 @@ def create_question_blueprint(deps):
             return True
         return False
 
+    def _template_is_referenced(cursor, template_id):
+        cursor.execute(
+            """
+            SELECT (
+                EXISTS(SELECT 1 FROM exam_question_pool WHERE template_id = %s LIMIT 1)
+                OR EXISTS(SELECT 1 FROM exam_user_questions WHERE template_id = %s LIMIT 1)
+                OR EXISTS(SELECT 1 FROM user_responses WHERE template_id = %s LIMIT 1)
+            ) AS referenced
+            """,
+            (template_id, template_id, template_id),
+        )
+        return bool((cursor.fetchone() or {}).get('referenced'))
+
     @bp.route('/problem_image/<path:filename>')
     def problem_image_file(filename):
         if not filename or filename != os.path.basename(filename) or not allowed_file(filename):
@@ -198,7 +211,7 @@ def create_question_blueprint(deps):
                 SELECT template_name, problem_text, variables, solution_formula,
                        answer_count, answer_units, difficulty, image_filename
                 FROM problem_templates
-                WHERE paper_id = %s
+                WHERE paper_id = %s AND COALESCE(status, 'active') = 'active'
                 ORDER BY id
                 """,
                 (paper_id,)
@@ -295,17 +308,20 @@ def create_question_blueprint(deps):
             existing_paper = cursor.fetchone()
             if existing_paper and replace_existing:
                 paper_id = existing_paper['id']
-                if _reject_locked_paper_change([paper_id]):
-                    conn.rollback()
-                    return redirect(url_for('admin_manage_problems', paper_id=paper_id))
-                cursor.execute("SELECT id FROM problem_templates WHERE paper_id = %s", (paper_id,))
+                cursor.execute(
+                    "SELECT id FROM problem_templates WHERE paper_id = %s AND COALESCE(status, 'active') = 'active'",
+                    (paper_id,),
+                )
                 old_template_ids = [row['id'] for row in cursor.fetchall()]
                 deleted_cache_count = 0
-                if old_template_ids:
-                    placeholders = ', '.join(['%s'] * len(old_template_ids))
-                    cursor.execute(f"DELETE FROM user_responses WHERE template_id IN ({placeholders})", old_template_ids)
-                    cursor.execute(f"DELETE FROM problem_templates WHERE id IN ({placeholders})", old_template_ids)
-                    for template_id in old_template_ids:
+                for template_id in old_template_ids:
+                    if _template_is_referenced(cursor, template_id):
+                        cursor.execute(
+                            "UPDATE problem_templates SET status = 'retired', retired_at = NOW() WHERE id = %s",
+                            (template_id,),
+                        )
+                    else:
+                        cursor.execute("DELETE FROM problem_templates WHERE id = %s", (template_id,))
                         deleted_cache_count += invalidate_problem_cache(template_id)
                 cursor.execute(
                     "UPDATE exam_papers SET description = %s, is_enabled = %s WHERE id = %s",
@@ -397,8 +413,6 @@ def create_question_blueprint(deps):
                 difficulty = request.form.get('difficulty', 'medium')
                 answer_units = request.form.get('answer_units', '')
                 paper_id = request.form.get('paper_id', type=int)
-                if _reject_locked_paper_change([paper_id]):
-                    return redirect(url_for('admin_manage_problems', paper_id=paper_id))
                 knowledge_point = request.form.get('knowledge_point', '').strip()
                 if not knowledge_point:
                     knowledge_point = infer_knowledge_label(template_name)
@@ -458,15 +472,37 @@ def create_question_blueprint(deps):
             return redirect(url_for('dashboard'))
     
         selected_paper_id = request.args.get('paper_id', type=int)
+        selected_status = (request.args.get('status') or 'active').strip().lower()
+        if selected_status not in {'active', 'retired', 'all'}:
+            selected_status = 'active'
         exam_papers = get_exam_papers()
     
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         try:
+            conditions = []
+            params = []
             if selected_paper_id:
-                cursor.execute("SELECT * FROM problem_templates WHERE paper_id = %s ORDER BY id", (selected_paper_id,))
-            else:
-                cursor.execute("SELECT * FROM problem_templates ORDER BY id")
+                conditions.append("pt.paper_id = %s")
+                params.append(selected_paper_id)
+            if selected_status != 'all':
+                conditions.append("COALESCE(pt.status, 'active') = %s")
+                params.append(selected_status)
+            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ''
+            cursor.execute(
+                f"""
+                SELECT pt.*,
+                       (
+                           (SELECT COUNT(*) FROM exam_question_pool eqp WHERE eqp.template_id = pt.id)
+                           + (SELECT COUNT(*) FROM exam_user_questions euq WHERE euq.template_id = pt.id)
+                           + (SELECT COUNT(*) FROM user_responses ur WHERE ur.template_id = pt.id)
+                       ) AS usage_count
+                FROM problem_templates pt
+                {where_clause}
+                ORDER BY pt.id
+                """,
+                params,
+            )
             templates = cursor.fetchall()
         finally:
             cursor.close()
@@ -484,7 +520,8 @@ def create_question_blueprint(deps):
                                templates=templates,
                                display_mapping=display_mapping,
                                exam_papers=exam_papers,
-                               selected_paper_id=selected_paper_id)
+                               selected_paper_id=selected_paper_id,
+                               selected_status=selected_status)
     
     
     @bp.route('/admin/edit_problem/<int:template_id>', methods=['GET', 'POST'])
@@ -524,13 +561,9 @@ def create_question_blueprint(deps):
                     )
                 remove_image = request.form.get('remove_image') == 'true'
                 current_image = request.form.get('current_image', '')
-                cursor.execute("SELECT image_filename, paper_id FROM problem_templates WHERE id = %s", (template_id,))
+                cursor.execute("SELECT * FROM problem_templates WHERE id = %s", (template_id,))
                 existing_template = cursor.fetchone() or {}
                 old_image_filename = existing_template.get('image_filename')
-                if _reject_locked_paper_change([existing_template.get('paper_id'), paper_id]):
-                    cursor.close()
-                    conn.close()
-                    return redirect(url_for('admin_manage_problems', paper_id=existing_template.get('paper_id')))
     
                 # 处理图片更新
                 image_filename = old_image_filename or current_image or None
@@ -551,26 +584,69 @@ def create_question_blueprint(deps):
                 if image_filename:
                     problem_text = build_problem_image_html(image_filename, template_name) + strip_problem_image_html(problem_text)
     
-                cursor.execute("""
-                    UPDATE problem_templates 
-                    SET template_name = %s, problem_text = %s, variables = %s, 
-                        solution_formula = %s, answer_count = %s, answer_units = %s, difficulty = %s, image_filename = %s, paper_id = %s, knowledge_point = %s, generation_strategy = %s
-                    WHERE id = %s
-                """, (template_name, problem_text, variables, solution_formula, answer_count, answer_units, difficulty, image_filename, paper_id, knowledge_point, generation_strategy,
-                      template_id))
+                creates_new_version = _template_is_referenced(cursor, template_id)
+                if creates_new_version:
+                    version_parent_id = existing_template.get('version_parent_id') or template_id
+                    cursor.execute(
+                        """
+                        SELECT COALESCE(MAX(version_number), 0) AS latest_version
+                        FROM problem_templates
+                        WHERE id = %s OR version_parent_id = %s
+                        """,
+                        (version_parent_id, version_parent_id),
+                    )
+                    version_number = int((cursor.fetchone() or {}).get('latest_version') or 0) + 1
+                    cursor.execute(
+                        "UPDATE problem_templates SET status = 'retired', retired_at = NOW() WHERE id = %s",
+                        (template_id,),
+                    )
+                    cursor.execute("""
+                        INSERT INTO problem_templates
+                            (template_name, problem_text, variables, solution_formula,
+                             answer_count, answer_units, difficulty, image_filename, paper_id,
+                             knowledge_point, generation_strategy, status, version_parent_id, version_number)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s)
+                    """, (
+                        template_name, problem_text, variables, solution_formula, answer_count,
+                        answer_units, difficulty, image_filename, paper_id, knowledge_point,
+                        generation_strategy, version_parent_id, version_number,
+                    ))
+                    current_template_id = cursor.lastrowid
+                else:
+                    cursor.execute("""
+                        UPDATE problem_templates
+                        SET template_name = %s, problem_text = %s, variables = %s,
+                            solution_formula = %s, answer_count = %s, answer_units = %s,
+                            difficulty = %s, image_filename = %s, paper_id = %s,
+                            knowledge_point = %s, generation_strategy = %s,
+                            status = 'active', retired_at = NULL
+                        WHERE id = %s
+                    """, (
+                        template_name, problem_text, variables, solution_formula, answer_count,
+                        answer_units, difficulty, image_filename, paper_id, knowledge_point,
+                        generation_strategy, template_id,
+                    ))
+                    current_template_id = template_id
     
                 conn.commit()
                 deleted_old_image = False
-                if old_image_filename and old_image_filename != image_filename:
+                if not creates_new_version and old_image_filename and old_image_filename != image_filename:
                     deleted_old_image = delete_image_file_if_unused(cursor, old_image_filename, template_id)
-                deleted_cache_count = invalidate_problem_cache(template_id)
+                if creates_new_version:
+                    clear_exam_metadata_cache()
+                    deleted_cache_count = 0
+                else:
+                    deleted_cache_count = invalidate_problem_cache(template_id)
                 session.pop('current_problem', None)
                 session.modified = True
                 cursor.close()
                 conn.close()
                 extra_message = '\uFF0C\u65E7\u56FE\u7247\u6587\u4EF6\u5DF2\u5220\u9664' if deleted_old_image else ''
-                flash(f'\u9898\u76EE\u66F4\u65B0\u6210\u529F\uFF01\u5DF2\u6E05\u7406 {deleted_cache_count} \u6761\u65E7\u7F13\u5B58{extra_message}\u3002', 'success')
-                return redirect(url_for('admin_manage_problems'))
+                if creates_new_version:
+                    flash(f'题目已创建为新版本（ID {current_template_id}）；历史考试继续使用旧版本，答题数据未改变。', 'success')
+                else:
+                    flash(f'题目更新成功！已清理 {deleted_cache_count} 条旧缓存{extra_message}。', 'success')
+                return redirect(url_for('admin_manage_problems', paper_id=paper_id))
     
             except Exception as e:
                 print(f"更新题目失败: {str(e)}")
@@ -591,32 +667,43 @@ def create_question_blueprint(deps):
         return render_template('admin_edit_problem.html', template=template, exam_papers=get_exam_papers())
     
     
-    @bp.route('/admin/delete_problem/<int:template_id>')
+    @bp.route('/admin/delete_problem/<int:template_id>', methods=['POST'])
     @login_required(db_check=True)
     def admin_delete_problem(template_id):
-        """删除题目并清理相关图片"""
+        """Remove a question from active banks without deleting historical exam data."""
         if session.get('username') != 'admin':
             flash('权限不足', 'danger')
             return redirect(url_for('dashboard'))
     
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+        template_paper_id = None
+        referenced = False
     
         try:
             # 先获取题目的图片信息
             cursor.execute("SELECT image_filename, paper_id FROM problem_templates WHERE id = %s", (template_id,))
             template = cursor.fetchone()
             template_paper_id = template.get('paper_id') if template else None
-            if _reject_locked_paper_change([template_paper_id]):
-                return redirect(url_for('admin_manage_problems', paper_id=template_paper_id))
-    
-            # 删除相关的答题记录
-            cursor.execute("DELETE FROM user_responses WHERE template_id = %s", (template_id,))
-            # 删除题目模板
-            cursor.execute("DELETE FROM problem_templates WHERE id = %s", (template_id,))
+            if not template:
+                flash('题目不存在。', 'warning')
+                return redirect(url_for('admin_manage_problems'))
+
+            referenced = _template_is_referenced(cursor, template_id)
+            if referenced:
+                cursor.execute(
+                    "UPDATE problem_templates SET status = 'retired', retired_at = NOW() WHERE id = %s",
+                    (template_id,),
+                )
+            else:
+                cursor.execute("DELETE FROM problem_templates WHERE id = %s", (template_id,))
     
             conn.commit()
-            deleted_cache_count = invalidate_problem_cache(template_id)
+            if referenced:
+                clear_exam_metadata_cache()
+                deleted_cache_count = 0
+            else:
+                deleted_cache_count = invalidate_problem_cache(template_id)
             session.pop('current_problem', None)
             session.modified = True
             print(f"ℹ️ 删除题目后已清理 {deleted_cache_count} 条旧缓存")
@@ -645,7 +732,10 @@ def create_question_blueprint(deps):
                 except Exception as e:
                     print(f"⚠️ 删除图片文件失败: {e}")
     
-            flash('题目删除成功！', 'success')
+            if referenced:
+                flash('题目已退出当前题库；历史考试与答题数据已完整保留。', 'success')
+            else:
+                flash('未使用的题目已永久删除。', 'success')
         except Exception as e:
             print(f"❌ 删除题目失败: {str(e)}")
             flash(f'删除题目失败: {str(e)}', 'danger')
@@ -653,7 +743,54 @@ def create_question_blueprint(deps):
             cursor.close()
             conn.close()
     
-        return redirect(url_for('admin_manage_problems'))
+        return redirect(url_for('admin_manage_problems', paper_id=template_paper_id))
+
+
+    @bp.route('/admin/restore_problem/<int:template_id>', methods=['POST'])
+    @login_required(db_check=True)
+    def admin_restore_problem(template_id):
+        if session.get('username') != 'admin':
+            flash('权限不足', 'danger')
+            return redirect(url_for('dashboard'))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        paper_id = None
+        try:
+            cursor.execute(
+                "SELECT paper_id, version_parent_id FROM problem_templates WHERE id = %s",
+                (template_id,),
+            )
+            template = cursor.fetchone()
+            if not template:
+                flash('题目不存在。', 'warning')
+                return redirect(url_for('admin_manage_problems'))
+            paper_id = template.get('paper_id')
+            version_parent_id = template.get('version_parent_id') or template_id
+            cursor.execute(
+                """
+                UPDATE problem_templates
+                SET status = 'retired', retired_at = NOW()
+                WHERE id != %s
+                  AND (id = %s OR version_parent_id = %s)
+                  AND COALESCE(status, 'active') = 'active'
+                """,
+                (template_id, version_parent_id, version_parent_id),
+            )
+            cursor.execute(
+                "UPDATE problem_templates SET status = 'active', retired_at = NULL WHERE id = %s",
+                (template_id,),
+            )
+            conn.commit()
+            clear_exam_metadata_cache()
+            flash('题目已恢复到当前题库。', 'success')
+        except Exception as err:
+            conn.rollback()
+            flash(f'恢复题目失败: {err}', 'danger')
+        finally:
+            cursor.close()
+            conn.close()
+        return redirect(url_for('admin_manage_problems', paper_id=paper_id, status='all'))
     
     
     @bp.route('/admin/update_all_status')

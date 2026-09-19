@@ -118,7 +118,8 @@ def get_exam_papers(include_disabled=True):
             SELECT ep.id, ep.name, ep.description, ep.is_enabled, ep.created_at,
                    COUNT(pt.id) AS template_count
             FROM exam_papers ep
-            LEFT JOIN problem_templates pt ON pt.paper_id = ep.id
+            LEFT JOIN problem_templates pt
+              ON pt.paper_id = ep.id AND COALESCE(pt.status, 'active') = 'active'
         """
         params = []
         if not include_disabled:
@@ -504,7 +505,7 @@ def get_problem_templates_by_paper(paper_id=None, enabled_only=True):
     cursor = conn.cursor(dictionary=True)
     try:
         query = ["SELECT pt.id, pt.template_name, pt.paper_id FROM problem_templates pt"]
-        conditions = []
+        conditions = ["COALESCE(pt.status, 'active') = 'active'"]
         params = []
 
         if paper_id is not None:
@@ -524,6 +525,38 @@ def get_problem_templates_by_paper(paper_id=None, enabled_only=True):
     finally:
         cursor.close()
         conn.close()
+
+
+def replace_exam_question_pool(cursor, exam_id, paper_id):
+    """Freeze the currently active questions for an exam."""
+    cursor.execute("DELETE FROM exam_question_pool WHERE exam_id = %s", (exam_id,))
+    cursor.execute(
+        """
+        INSERT INTO exam_question_pool (exam_id, template_id)
+        SELECT %s, id
+        FROM problem_templates
+        WHERE paper_id = %s AND COALESCE(status, 'active') = 'active'
+        ORDER BY id
+        """,
+        (exam_id, paper_id),
+    )
+    return cursor.rowcount
+
+
+def get_exam_question_pool_count(exam_id, fallback_paper_id=None):
+    """Return the frozen question count, falling back for legacy exams."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM exam_question_pool WHERE exam_id = %s", (exam_id,))
+        row = cursor.fetchone()
+        frozen_count = int(row[0] if row else 0)
+        if frozen_count:
+            return frozen_count
+    finally:
+        cursor.close()
+        conn.close()
+    return get_total_problem_count(fallback_paper_id) if fallback_paper_id else 0
 
 
 def get_enabled_exam_paper_ids():
@@ -679,7 +712,10 @@ def invalidate_exam_paper_cache(paper_id=None):
         if conn:
             cursor = conn.cursor(dictionary=True)
             try:
-                cursor.execute("SELECT id FROM problem_templates WHERE paper_id = %s", (paper_id,))
+                cursor.execute(
+                    "SELECT id FROM problem_templates WHERE paper_id = %s AND COALESCE(status, 'active') = 'active'",
+                    (paper_id,),
+                )
                 template_ids = [row['id'] for row in cursor.fetchall()]
             finally:
                 cursor.close()
@@ -829,6 +865,7 @@ def prewarm_pools(paper_id=None, enabled_only=True):
             params.append(paper_id)
         elif enabled_only:
             conditions.append("ep.is_enabled = TRUE")
+        conditions.append("COALESCE(pt.status, 'active') = 'active'")
         if conditions:
             query.append("WHERE " + " AND ".join(conditions))
         query.append("ORDER BY pt.id")
@@ -1033,26 +1070,51 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
     if not exam:
         return {}
     paper_id = int(exam['paper_id'])
-    templates = get_problem_templates_by_paper(paper_id)
-    template_lookup = {int(item['id']): item for item in templates}
-    if not template_lookup:
-        return {}
-
-    configured_count = exam.get('question_count')
-    if configured_count is None:
-        selected_ids = list(template_lookup)
-    else:
-        selected_ids = select_exam_template_ids(
-            template_lookup,
-            configured_count,
-            exam_id,
-            user_id,
-            app.config.get('SECRET_KEY'),
-        )
-
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        cursor.execute(
+            "SELECT EXISTS(SELECT 1 FROM exam_question_pool WHERE exam_id = %s LIMIT 1) AS frozen",
+            (exam_id,),
+        )
+        if not (cursor.fetchone() or {}).get('frozen'):
+            cursor.execute(
+                """
+                INSERT IGNORE INTO exam_question_pool (exam_id, template_id)
+                SELECT %s, pt.id
+                FROM problem_templates pt
+                WHERE pt.paper_id = %s AND COALESCE(pt.status, 'active') = 'active'
+                """,
+                (exam_id, paper_id),
+            )
+            conn.commit()
+        cursor.execute(
+            """
+            SELECT pt.id, pt.template_name, pt.paper_id
+            FROM exam_question_pool eqp
+            JOIN problem_templates pt ON pt.id = eqp.template_id
+            WHERE eqp.exam_id = %s AND pt.paper_id = %s
+            ORDER BY pt.id
+            """,
+            (exam_id, paper_id),
+        )
+        templates = cursor.fetchall()
+        template_lookup = {int(item['id']): item for item in templates}
+        if not template_lookup:
+            return {}
+
+        configured_count = exam.get('question_count')
+        if configured_count is None:
+            selected_ids = list(template_lookup)
+        else:
+            selected_ids = select_exam_template_ids(
+                template_lookup,
+                configured_count,
+                exam_id,
+                user_id,
+                app.config.get('SECRET_KEY'),
+            )
+
         cursor.execute(
             "SELECT batch_id FROM exam_batch_students WHERE exam_id = %s AND user_id = %s",
             (exam_id, user_id),
@@ -1294,13 +1356,16 @@ def get_total_problem_count(paper_id=None):
         if paper_id is not None:
             if paper_id not in enabled_paper_ids:
                 return 0
-            cursor.execute("SELECT COUNT(*) FROM problem_templates WHERE paper_id = %s", (paper_id,))
+            cursor.execute(
+                "SELECT COUNT(*) FROM problem_templates WHERE paper_id = %s AND COALESCE(status, 'active') = 'active'",
+                (paper_id,),
+            )
         else:
             if not enabled_paper_ids:
                 return 0
             placeholders = ', '.join(['%s'] * len(enabled_paper_ids))
             cursor.execute(
-                f"SELECT COUNT(*) FROM problem_templates WHERE paper_id IN ({placeholders})",
+                f"SELECT COUNT(*) FROM problem_templates WHERE paper_id IN ({placeholders}) AND COALESCE(status, 'active') = 'active'",
                 enabled_paper_ids
             )
         row = cursor.fetchone()
@@ -1812,6 +1877,57 @@ def ensure_exam_batch_schema(cursor):
     """)
 
 
+def ensure_question_lifecycle_schema(cursor):
+    """Add non-destructive question versioning and freeze each exam's question pool."""
+    cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'status'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "ALTER TABLE problem_templates ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active' AFTER generation_strategy"
+        )
+        print("已添加 problem_templates.status 列")
+
+    cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'version_parent_id'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "ALTER TABLE problem_templates ADD COLUMN version_parent_id INT DEFAULT NULL AFTER status"
+        )
+        print("已添加 problem_templates.version_parent_id 列")
+
+    cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'version_number'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "ALTER TABLE problem_templates ADD COLUMN version_number INT NOT NULL DEFAULT 1 AFTER version_parent_id"
+        )
+        print("已添加 problem_templates.version_number 列")
+
+    cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'retired_at'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "ALTER TABLE problem_templates ADD COLUMN retired_at DATETIME DEFAULT NULL AFTER version_number"
+        )
+        print("已添加 problem_templates.retired_at 列")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS exam_question_pool (
+            exam_id INT NOT NULL,
+            template_id INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (exam_id, template_id),
+            INDEX idx_exam_question_pool_template (template_id)
+        )
+    """)
+    cursor.execute("""
+        INSERT IGNORE INTO exam_question_pool (exam_id, template_id)
+        SELECT e.id, pt.id
+        FROM exams e
+        JOIN problem_templates pt ON pt.paper_id = e.paper_id
+        WHERE COALESCE(pt.status, 'active') = 'active'
+          AND NOT EXISTS (
+              SELECT 1 FROM exam_question_pool existing WHERE existing.exam_id = e.id
+          )
+    """)
+
+
 def repair_database():
     """修复数据库表结构"""
     conn = get_db_connection()
@@ -1987,6 +2103,7 @@ def repair_database():
         if not cursor.fetchone():
             cursor.execute("ALTER TABLE problem_templates ADD COLUMN generation_strategy TEXT DEFAULT NULL")
             print("已添加 problem_templates.generation_strategy 列")
+        ensure_question_lifecycle_schema(cursor)
         cursor.execute("""
             SELECT id, template_name, problem_text, variables, solution_formula, answer_count
             FROM problem_templates
@@ -2157,6 +2274,10 @@ def initialize_database():
         paper_id INT DEFAULT NULL,
         knowledge_point VARCHAR(50) DEFAULT NULL,
         generation_strategy TEXT DEFAULT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        version_parent_id INT DEFAULT NULL,
+        version_number INT NOT NULL DEFAULT 1,
+        retired_at DATETIME DEFAULT NULL,
         FOREIGN KEY (paper_id) REFERENCES exam_papers(id)
     )
     """)
@@ -2167,6 +2288,8 @@ def initialize_database():
     if not cursor.fetchone():
         cursor.execute("ALTER TABLE problem_templates ADD COLUMN generation_strategy TEXT DEFAULT NULL")
         print("已添加 problem_templates.generation_strategy 列")
+
+    ensure_question_lifecycle_schema(cursor)
 
     # 创建用户答题记录表（确保包含所有必要字段）
     cursor.execute("""
@@ -2517,6 +2640,11 @@ def ensure_performance_indexes():
                 "CREATE INDEX idx_problem_templates_paper_id ON problem_templates (paper_id)"
             ),
             (
+                'problem_templates',
+                'idx_problem_templates_paper_status',
+                "CREATE INDEX idx_problem_templates_paper_status ON problem_templates (paper_id, status, id)"
+            ),
+            (
                 'user_responses',
                 'idx_user_responses_user_paper_template_attempt',
                 "CREATE INDEX idx_user_responses_user_paper_template_attempt ON user_responses (user_id, paper_id, template_id, attempt_count)"
@@ -2550,6 +2678,11 @@ def ensure_performance_indexes():
                 'exam_user_questions',
                 'idx_exam_user_questions_batch_user',
                 "CREATE INDEX idx_exam_user_questions_batch_user ON exam_user_questions (batch_id, user_id)"
+            ),
+            (
+                'exam_user_questions',
+                'idx_exam_user_questions_template',
+                "CREATE INDEX idx_exam_user_questions_template ON exam_user_questions (template_id)"
             ),
             (
                 'exams',
@@ -2781,8 +2914,16 @@ def update_user_completion_status(user_id, exam_id=None):
             len(get_user_exam_problem_display_info(user_id, exam_id, selected_paper_id))
             if exam_id else get_total_problem_count(selected_paper_id)
         )
-        response_scope = "ur.exam_id = %s" if exam_id else "COALESCE(ur.paper_id, t.paper_id) = %s"
-        response_scope_2 = "ur2.exam_id = %s" if exam_id else "COALESCE(ur2.paper_id, t2.paper_id) = %s"
+        response_scope = (
+            "ur.exam_id = %s"
+            if exam_id
+            else "COALESCE(ur.paper_id, t.paper_id) = %s AND COALESCE(t.status, 'active') = 'active'"
+        )
+        response_scope_2 = (
+            "ur2.exam_id = %s"
+            if exam_id
+            else "COALESCE(ur2.paper_id, t2.paper_id) = %s AND COALESCE(t2.status, 'active') = 'active'"
+        )
         scope_param = exam_id if exam_id else selected_paper_id
 
         cursor.execute(f"""

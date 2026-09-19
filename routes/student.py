@@ -654,7 +654,9 @@ def create_student_blueprint(deps):
                     return redirect(url_for('admin.admin_exam_detail', exam_id=selected_exam_id))
                 selected_paper_id = int(exam_scope['paper_id'])
                 total_problems = int(
-                    exam_scope.get('question_count') or get_total_problem_count(selected_paper_id)
+                    exam_scope['question_count']
+                    if exam_scope.get('question_count') is not None
+                    else get_exam_question_pool_count(selected_exam_id, selected_paper_id)
                 )
                 response_filter = " AND ur.exam_id = %s AND ur.batch_id = %s"
                 response_params = [selected_exam_id, selected_batch_id]
@@ -679,7 +681,9 @@ def create_student_blueprint(deps):
                     FROM problem_templates t
                     LEFT JOIN progress p ON t.id = p.template_id
                 """
-                problem_template_filter = f"WHERE 1 = 1 {problem_template_filter}"
+                problem_template_filter = (
+                    f"WHERE COALESCE(t.status, 'active') = 'active' {problem_template_filter}"
+                )
                 problem_display_select = ""
                 problem_order = "t.id"
     
@@ -977,7 +981,9 @@ def create_student_blueprint(deps):
                     return redirect(url_for('admin.admin_exams'))
                 selected_paper_id = int(exam_scope['paper_id'])
                 expected_problem_count = int(
-                    exam_scope.get('question_count') or get_total_problem_count(selected_paper_id)
+                    exam_scope['question_count']
+                    if exam_scope.get('question_count') is not None
+                    else get_exam_question_pool_count(selected_exam_id, selected_paper_id)
                 )
                 problem_filter = """
                     AND EXISTS (

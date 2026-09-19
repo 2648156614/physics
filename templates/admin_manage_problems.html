@@ -18,13 +18,21 @@
 
     <form method="get" class="card card-body mb-3">
         <div class="row g-3 align-items-end">
-            <div class="col-md-5">
+            <div class="col-md-4">
                 <label class="form-label">按题库筛选</label>
                 <select class="form-select" name="paper_id">
                     <option value="">全部题库</option>
                     {% for paper in exam_papers %}
                     <option value="{{ paper.id }}" {% if selected_paper_id == paper.id %}selected{% endif %}>{{ paper.name }}</option>
                     {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">题目状态</label>
+                <select class="form-select" name="status">
+                    <option value="active" {% if selected_status == 'active' %}selected{% endif %}>当前题目</option>
+                    <option value="retired" {% if selected_status == 'retired' %}selected{% endif %}>历史版本</option>
+                    <option value="all" {% if selected_status == 'all' %}selected{% endif %}>全部状态</option>
                 </select>
             </div>
             <div class="col-md-2"><button class="btn btn-outline-primary w-100">筛选</button></div>
@@ -39,6 +47,13 @@
             </div>
         </div>
     </form>
+
+    <div class="alert alert-info d-flex align-items-start gap-2" role="alert">
+        <i class="bi bi-shield-check mt-1"></i>
+        <div>
+            已用于考试或产生答题记录的题目不会被直接删除。编辑时系统会创建新版本，移除时只退出当前题库，历史考试数据保持不变。
+        </div>
+    </div>
 
     <div class="card card-body mb-3 border-success">
         <form method="post" action="{{ url_for('admin_import_exam_paper') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
@@ -80,6 +95,7 @@
                             <th>变量</th>
                             <th>答案数量</th>
                             <th>难度</th>
+                            <th>状态</th>
                             <th>操作</th>
                         </tr>
                     </thead>
@@ -120,15 +136,34 @@
                                 {% endif %}
                             </td>
                             <td>
-                                <div class="btn-group btn-group-sm">
+                                {% if template.status == 'retired' %}
+                                <span class="badge bg-secondary">历史版本</span>
+                                {% else %}
+                                <span class="badge bg-success">当前</span>
+                                {% endif %}
+                                <div class="small text-muted mt-1">v{{ template.version_number or 1 }}</div>
+                            </td>
+                            <td>
+                                <div class="d-flex flex-wrap gap-1">
                                     <a href="{{ url_for('admin_edit_problem', template_id=template.id) }}"
-                                       class="btn btn-outline-primary">
-                                        <i class="bi bi-pencil"></i> 编辑
+                                       class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-pencil"></i> {% if template.status == 'retired' %}基于此新建版本{% else %}编辑{% endif %}
                                     </a>
-                                    <button type="button" class="btn btn-outline-danger"
-                                            onclick="confirmDelete({{ template.id }}, '{{ template.template_name }}')">
-                                        <i class="bi bi-trash"></i> 删除
-                                    </button>
+                                    {% if template.status == 'retired' %}
+                                    <form method="post" action="{{ url_for('admin_restore_problem', template_id=template.id) }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-success">
+                                            <i class="bi bi-arrow-counterclockwise"></i> 恢复
+                                        </button>
+                                    </form>
+                                    {% else %}
+                                    <form method="post" action="{{ url_for('admin_delete_problem', template_id=template.id) }}"
+                                          onsubmit="return confirmRemove(this, {{ 'true' if template.usage_count else 'false' }})">
+                                        <input type="hidden" name="template_name" value="{{ template.template_name }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                            <i class="bi bi-archive"></i> 移出题库
+                                        </button>
+                                    </form>
+                                    {% endif %}
                                 </div>
                             </td>
                         </tr>
@@ -151,10 +186,12 @@
 </div>
 
 <script>
-function confirmDelete(templateId, templateName) {
-    if (confirm(`确定要删除题目 "${templateName}" 吗？\n\n注意：这将同时删除所有相关的答题记录！`)) {
-        window.location.href = `/admin/delete_problem/${templateId}`;
-    }
+function confirmRemove(form, hasHistory) {
+    const templateName = form.querySelector('[name="template_name"]').value;
+    const detail = hasHistory
+        ? '该题目已有历史引用，将只退出当前题库，考试与答题数据会保留。'
+        : '该题目尚未使用，将被永久删除。';
+    return confirm(`确定移除题目“${templateName}”吗？\n\n${detail}`);
 }
 </script>
 {% endblock %}
