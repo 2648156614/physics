@@ -15,6 +15,7 @@ sys.modules.setdefault('db', db_stub)
 
 from services.question_generation_service import (
     build_formula_context,
+    format_display_number,
     generate_derived_inverse_problem,
     generate_inverse_problem,
     infer_generation_strategy,
@@ -60,6 +61,34 @@ def make_derived_strategy():
         'key_vars': {'T': {'type': 'choice', 'values': [2]}},
         'max_attempts': 5,
         'max_denominator': 16,
+    }
+
+
+def make_visible_solve_strategy(q_value, target_value):
+    return {
+        'enabled': True,
+        'mode': 'derived_inverse_v1',
+        'solve_for': 'a0',
+        'hidden_vars': {
+            'q': {
+                'type': 'choice',
+                'values': [q_value],
+                'range': [1, 10],
+            }
+        },
+        'derived_vars': {
+            'h': '3*q',
+            'L': '4*q',
+        },
+        'target_answer': {'type': 'choice', 'values': [target_value]},
+        'key_vars': {},
+        'beauty_constraints': {
+            'display_style': 'decimal_first',
+            'max_decimal_places': 3,
+            'max_fraction_denominator': 4,
+            'max_fraction_numerator': 20,
+        },
+        'max_attempts': 5,
     }
 
 
@@ -218,6 +247,83 @@ class DerivedInverseGenerationTests(unittest.TestCase):
 
         self.assertEqual(result['generation_mode'], 'derived_inverse_v1')
         self.assertNotIn('q', result['var_values'])
+
+    def generate_visible_solve(self, q_value, target_value):
+        template = {
+            'id': 3,
+            'template_name': 'visible inverse test',
+            'problem_text': 'h={{h}} m, L={{L}} m, a0={{a0}} m/s^2',
+            'solution_formula': 'a0 + (21/16)*(h/3 - 2)',
+            'answer_count': 1,
+            'generation_strategy': json.dumps(
+                make_visible_solve_strategy(q_value, target_value)
+            ),
+            'image_filename': None,
+        }
+        return generate_derived_inverse_problem(
+            template,
+            ['h', 'L', 'a0'],
+            {'h': (3, 30), 'L': (4, 40), 'a0': (1, 20)},
+            build_formula_context(),
+            ['m/s'],
+            {'non_negative': True, 'min_answer': 0, 'max_answer': 1e7},
+        )
+
+    def test_sampled_hidden_variable_can_solve_visible_variable(self):
+        result = self.generate_visible_solve(q_value=2, target_value=8)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result['var_values'], {'h': 6.0, 'L': 8.0, 'a0': 8.0})
+        self.assertEqual(result['correct_answers'], [8.0])
+
+    def test_visible_solve_keeps_finite_decimal(self):
+        result = self.generate_visible_solve(q_value=8, target_value=14)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result['var_values'], {'h': 24.0, 'L': 32.0, 'a0': 6.125})
+        self.assertEqual(result['display_var_values']['a0'], 6.125)
+        self.assertEqual(result['correct_answers'], [14.0])
+        self.assertNotIn('q', result['var_values'])
+        self.assertNotIn('q', result['display_var_values'])
+        self.assertNotIn('{{q}}', result['problem_text'])
+
+    def test_decimal_display_is_preferred_over_fraction(self):
+        self.assertEqual(format_display_number(5.88, max_denominator=25), 5.88)
+        self.assertNotEqual(format_display_number(5.88, max_denominator=25), '147/25')
+
+    def test_simple_recurring_fraction_is_allowed(self):
+        self.assertEqual(format_display_number(1 / 3), '1/3')
+
+    def test_failed_derived_mode_falls_back_to_legacy_generation(self):
+        template = {
+            'id': 4,
+            'template_name': 'fallback test',
+            'problem_text': 'x={{x}}',
+            'variables': 'x[1,10]',
+            'solution_formula': 'x * 2',
+            'answer_count': 1,
+            'answer_units': 'm',
+            'generation_strategy': json.dumps({
+                'enabled': True,
+                'mode': 'derived_inverse_v1',
+                'solve_for': 'x',
+                'hidden_vars': {'q': {'range': [1, 10]}},
+                'derived_vars': {'x': 'q'},
+                'target_answer': {'type': 'choice', 'values': [8]},
+            }),
+            'image_filename': None,
+        }
+
+        with (
+            patch.object(question_generation_service, 'get_template', return_value=template),
+            patch.object(question_generation_service.random, 'uniform', return_value=2.0),
+        ):
+            result = question_generation_service.generate_problem_from_template(template['id'])
+
+        self.assertIsNotNone(result)
+        self.assertNotIn('generation_mode', result)
+        self.assertEqual(result['var_values'], {'x': 2.0})
+        self.assertEqual(result['correct_answers'], [4.0])
 
 
 if __name__ == '__main__':

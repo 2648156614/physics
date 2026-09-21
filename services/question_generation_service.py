@@ -119,17 +119,33 @@ def parse_generation_strategy(template):
     return strategy if isinstance(strategy, dict) else None
 
 
-def format_display_number(value, max_denominator=12):
+def format_display_number(
+    value,
+    max_denominator=4,
+    max_decimal_places=3,
+    max_fraction_numerator=None,
+):
     if not isinstance(value, (int, float)) or not np.isfinite(value):
         return value
     if abs(value - round(value)) < 1e-9:
         return int(round(value))
+
+    rounded = round(value, max_decimal_places)
+    if abs(value - rounded) < 1e-9:
+        return rounded
+
     fraction = Fraction(float(value)).limit_denominator(max_denominator)
-    if abs(float(fraction) - value) < 1e-8 and abs(fraction.denominator) > 1:
+    numerator_is_allowed = (
+        max_fraction_numerator is None
+        or abs(fraction.numerator) <= max_fraction_numerator
+    )
+    if (
+        abs(float(fraction) - value) < 1e-8
+        and abs(fraction.denominator) > 1
+        and numerator_is_allowed
+    ):
         return f"{fraction.numerator}/{fraction.denominator}"
-    if abs(value) >= 1:
-        return round(value, 3)
-    return round(value, 4)
+    return rounded
 
 
 SAFE_SYMBOLIC_FUNCTIONS = {
@@ -327,15 +343,27 @@ def _is_valid_numeric_range(value_range):
     return np.isfinite(minimum) and np.isfinite(maximum) and minimum != maximum
 
 
-def _is_display_friendly(value, max_denominator):
+def _is_display_friendly(
+    value,
+    max_denominator,
+    max_decimal_places=3,
+    max_fraction_numerator=None,
+):
     if not isinstance(value, (int, float)) or not np.isfinite(value):
         return False
     if abs(value - round(value)) <= 1e-9:
         return True
-    fraction = Fraction(float(value)).limit_denominator(max_denominator)
-    if abs(float(fraction) - value) <= 1e-8:
+    if abs(round(value, max_decimal_places) - value) <= 1e-9:
         return True
-    return abs(round(value, 4) - value) <= 1e-9
+    fraction = Fraction(float(value)).limit_denominator(max_denominator)
+    return (
+        abs(float(fraction) - value) <= 1e-8
+        and abs(fraction.denominator) > 1
+        and (
+            max_fraction_numerator is None
+            or abs(fraction.numerator) <= max_fraction_numerator
+        )
+    )
 
 
 def _problem_contains_hidden_placeholder(problem_text, hidden_names):
@@ -740,12 +768,25 @@ def generate_derived_inverse_problem(
         solve_for = [name for name in raw_solve_for if isinstance(name, str)]
     else:
         return None
+    allowed_solve_names = set(hidden_names) | (
+        set(variables) - set(derived_names)
+    )
     if (
         not solve_for
         or len(set(solve_for)) != len(solve_for)
-        or set(solve_for) != set(hidden_names)
+        or not set(solve_for).issubset(allowed_solve_names)
     ):
         return None
+
+    sampled_hidden_names = [
+        name for name in hidden_names if name not in solve_for
+    ]
+    solved_hidden_names = [
+        name for name in solve_for if name in hidden_names
+    ]
+    solved_visible_names = [
+        name for name in solve_for if name in variables
+    ]
 
     answer_count = int(template.get('answer_count', 1) or 1)
     target_specs = _normalize_target_specs(strategy, answer_count)
@@ -757,7 +798,31 @@ def generate_derived_inverse_problem(
 
     try:
         max_attempts = max(1, min(int(strategy.get('max_attempts', 50) or 50), 200))
-        max_denominator = max(1, min(int(strategy.get('max_denominator', 16) or 16), 64))
+        beauty_constraints = strategy.get('beauty_constraints') or {}
+        if not isinstance(beauty_constraints, dict):
+            return None
+        if beauty_constraints.get('display_style', 'decimal_first') != 'decimal_first':
+            return None
+        max_decimal_places = max(
+            0,
+            min(int(beauty_constraints.get('max_decimal_places', 3)), 8),
+        )
+        max_denominator = max(
+            1,
+            min(
+                int(
+                    beauty_constraints.get(
+                        'max_fraction_denominator',
+                        strategy.get('max_denominator', 4),
+                    )
+                ),
+                64,
+            ),
+        )
+        max_fraction_numerator = max(
+            1,
+            min(int(beauty_constraints.get('max_fraction_numerator', 1000)), 100000),
+        )
         derived_json = json.dumps(derived_vars, ensure_ascii=True, sort_keys=True)
         positive_hidden_names = tuple(
             name
@@ -794,6 +859,11 @@ def generate_derived_inverse_problem(
     ordinary_names = [name for name in variables if name not in derived_names]
     var_units = infer_variable_units(template.get('problem_text', ''), variables)
 
+    def get_solve_range(name):
+        if name in hidden_vars:
+            return hidden_vars[name]['range']
+        return configured_ranges[name]
+
     for attempt in range(max_attempts):
         try:
             target_answers = {
@@ -803,8 +873,18 @@ def generate_derived_inverse_problem(
             if any(not np.isfinite(value) for value in target_answers.values()):
                 continue
 
+            hidden_values = {}
+            for name in sampled_hidden_names:
+                spec = hidden_vars[name]
+                value = float(_rand_from_spec(spec, spec['range']))
+                if not np.isfinite(value) or not _strict_range_contains(value, spec['range']):
+                    raise ValueError('sampled hidden variable is outside its configured range')
+                hidden_values[name] = value
+
             visible_values = {}
             for name in ordinary_names:
+                if name in solved_visible_names:
+                    continue
                 value = float(_rand_from_spec(key_vars.get(name), configured_ranges[name]))
                 if not np.isfinite(value) or not _strict_range_contains(value, configured_ranges[name]):
                     raise ValueError('ordinary variable is outside its configured range')
@@ -814,11 +894,14 @@ def generate_derived_inverse_problem(
                 symbols[name]: value for name, value in visible_values.items()
             }
             known_substitutions.update({
+                symbols[name]: value for name, value in hidden_values.items()
+            })
+            known_substitutions.update({
                 target_symbol: target_answers[answer_index]
                 for answer_index, target_symbol in zip(target_indices, target_symbols)
             })
 
-            hidden_values = None
+            solved_values = None
             for solution in solutions:
                 candidate_values = {}
                 candidate_substitutions = dict(known_substitutions)
@@ -846,15 +929,23 @@ def generate_derived_inverse_problem(
                 if unresolved:
                     continue
                 if all(
-                    _strict_range_contains(candidate_values[name], hidden_vars[name]['range'])
+                    _strict_range_contains(candidate_values[name], get_solve_range(name))
                     for name in solve_for
                 ):
-                    hidden_values = candidate_values
-                    known_substitutions.update({
-                        symbols[name]: value for name, value in hidden_values.items()
-                    })
+                    solved_values = candidate_values
                     break
-            if hidden_values is None:
+            if solved_values is None:
+                continue
+
+            for name, value in solved_values.items():
+                if name in hidden_names:
+                    hidden_values[name] = value
+                else:
+                    visible_values[name] = value
+                known_substitutions[symbols[name]] = value
+
+            expected_hidden_names = set(sampled_hidden_names) | set(solved_hidden_names)
+            if set(hidden_values) != expected_hidden_names:
                 continue
 
             for name, expression in expanded_derived.items():
@@ -873,7 +964,15 @@ def generate_derived_inverse_problem(
                 continue
             if any(name in visible_values and visible_values[name] <= 0 for name in {'R', 'T'}):
                 continue
-            if any(not _is_display_friendly(value, max_denominator) for value in visible_values.values()):
+            if any(
+                not _is_display_friendly(
+                    value,
+                    max_denominator,
+                    max_decimal_places,
+                    max_fraction_numerator,
+                )
+                for value in visible_values.values()
+            ):
                 continue
 
             answer_substitutions = {
@@ -904,7 +1003,12 @@ def generate_derived_inverse_problem(
                 continue
 
             display_values = {
-                name: format_display_number(value, max_denominator)
+                name: format_display_number(
+                    value,
+                    max_denominator,
+                    max_decimal_places,
+                    max_fraction_numerator,
+                )
                 for name, value in visible_values.items()
             }
             if any(name in hidden_names for name in visible_values) or any(
