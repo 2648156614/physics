@@ -1,3 +1,4 @@
+import ast
 import json
 import random
 import re
@@ -129,6 +130,223 @@ def format_display_number(value, max_denominator=12):
     if abs(value) >= 1:
         return round(value, 3)
     return round(value, 4)
+
+
+SAFE_SYMBOLIC_FUNCTIONS = {
+    'sqrt': sp.sqrt,
+    'sin': sp.sin,
+    'cos': sp.cos,
+    'tan': sp.tan,
+    'asin': sp.asin,
+    'acos': sp.acos,
+    'atan': sp.atan,
+    'exp': sp.exp,
+    'log': sp.log,
+    'ln': sp.log,
+    'abs': sp.Abs,
+    'Abs': sp.Abs,
+    'min': sp.Min,
+    'max': sp.Max,
+}
+SAFE_SYMBOLIC_CONSTANTS = {'pi': sp.pi, 'E': sp.E}
+SAFE_SYMBOLIC_BINARY_OPERATORS = {
+    ast.Add: lambda left, right: left + right,
+    ast.Sub: lambda left, right: left - right,
+    ast.Mult: lambda left, right: left * right,
+    ast.Div: lambda left, right: left / right,
+    ast.Pow: lambda left, right: left ** right,
+}
+
+
+def _build_safe_symbolic_node(node, symbols):
+    if isinstance(node, ast.Constant):
+        value = node.value
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError('only finite numeric constants are allowed')
+        if not np.isfinite(value) or abs(value) > 1e12:
+            raise ValueError('numeric constant is outside the allowed range')
+        return sp.Integer(value) if isinstance(value, int) else sp.Rational(str(value))
+
+    if isinstance(node, ast.Name):
+        if node.id in symbols:
+            return symbols[node.id]
+        if node.id in SAFE_SYMBOLIC_CONSTANTS:
+            return SAFE_SYMBOLIC_CONSTANTS[node.id]
+        raise ValueError(f'undeclared symbol: {node.id}')
+
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        operand = _build_safe_symbolic_node(node.operand, symbols)
+        return operand if isinstance(node.op, ast.UAdd) else -operand
+
+    if isinstance(node, ast.BinOp) and type(node.op) in SAFE_SYMBOLIC_BINARY_OPERATORS:
+        left = _build_safe_symbolic_node(node.left, symbols)
+        right = _build_safe_symbolic_node(node.right, symbols)
+        if isinstance(node.op, ast.Pow):
+            if right.free_symbols:
+                raise ValueError('symbolic exponents are not allowed')
+            exponent = float(sp.N(right))
+            if not np.isfinite(exponent) or abs(exponent) > 12:
+                raise ValueError('exponent is outside the allowed range')
+        return SAFE_SYMBOLIC_BINARY_OPERATORS[type(node.op)](left, right)
+
+    if isinstance(node, ast.Call):
+        if not isinstance(node.func, ast.Name) or node.func.id not in SAFE_SYMBOLIC_FUNCTIONS:
+            raise ValueError('function is not allowed')
+        if node.keywords:
+            raise ValueError('keyword arguments are not allowed')
+        arguments = [_build_safe_symbolic_node(argument, symbols) for argument in node.args]
+        if not arguments:
+            raise ValueError('function requires at least one argument')
+        return SAFE_SYMBOLIC_FUNCTIONS[node.func.id](*arguments)
+
+    raise ValueError(f'unsupported expression element: {type(node).__name__}')
+
+
+def _parse_safe_symbolic_expressions(expression_text, symbols, allow_multiple=False):
+    if not isinstance(expression_text, str) or not expression_text.strip():
+        raise ValueError('expression must be a non-empty string')
+    if len(expression_text) > 1000:
+        raise ValueError('expression is too long')
+
+    parsed = ast.parse(expression_text.strip(), mode='eval')
+    if sum(1 for _ in ast.walk(parsed)) > 160:
+        raise ValueError('expression is too complex')
+
+    body = parsed.body
+    if isinstance(body, (ast.Tuple, ast.List)):
+        if not allow_multiple:
+            raise ValueError('multiple expressions are not allowed here')
+        nodes = body.elts
+    else:
+        nodes = [body]
+    return [_build_safe_symbolic_node(node, symbols) for node in nodes]
+
+
+def _expand_derived_expressions(derived_expressions, symbols):
+    expanded = {}
+
+    def expand(name, stack):
+        if name in expanded:
+            return expanded[name]
+        if name in stack:
+            raise ValueError('derived variable dependency cycle detected')
+        expression = derived_expressions[name]
+        if symbols[name] in expression.free_symbols:
+            raise ValueError('derived variable cannot reference itself')
+        substitutions = {}
+        for dependency_name in derived_expressions:
+            if dependency_name == name:
+                continue
+            dependency_symbol = symbols[dependency_name]
+            if dependency_symbol in expression.free_symbols:
+                substitutions[dependency_symbol] = expand(dependency_name, stack | {name})
+        expanded[name] = sp.simplify(expression.subs(substitutions, simultaneous=True))
+        return expanded[name]
+
+    for derived_name in derived_expressions:
+        expand(derived_name, set())
+    return expanded
+
+
+@lru_cache(maxsize=256)
+def _prepare_derived_inverse_solver(
+    solution_formula,
+    variables,
+    hidden_names,
+    positive_hidden_names,
+    derived_json,
+    solve_for,
+    target_indices,
+):
+    all_names = tuple(dict.fromkeys(tuple(variables) + tuple(hidden_names)))
+    positive_hidden_names = set(positive_hidden_names)
+    symbols = {
+        name: (
+            sp.symbols(name, positive=True)
+            if name in positive_hidden_names
+            else sp.symbols(name, real=True)
+        )
+        for name in all_names
+    }
+    solution_expressions = _parse_safe_symbolic_expressions(
+        solution_formula,
+        symbols,
+        allow_multiple=True,
+    )
+    derived_specs = json.loads(derived_json)
+    derived_expressions = {
+        name: _parse_safe_symbolic_expressions(expression, symbols)[0]
+        for name, expression in derived_specs.items()
+    }
+    expanded_derived = _expand_derived_expressions(derived_expressions, symbols)
+    derived_substitutions = {
+        symbols[name]: expression for name, expression in expanded_derived.items()
+    }
+    transformed_expressions = tuple(
+        sp.simplify(expression.subs(derived_substitutions, simultaneous=True))
+        for expression in solution_expressions
+    )
+
+    solve_symbols = [symbols[name] for name in solve_for]
+    target_symbols = sp.symbols(f'_derived_target_0:{len(target_indices)}', real=True)
+    equations = [
+        sp.Eq(transformed_expressions[answer_index], target_symbol)
+        for answer_index, target_symbol in zip(target_indices, target_symbols)
+    ]
+    solutions = sp.solve(equations, solve_symbols, dict=True)
+    if isinstance(solutions, dict):
+        solutions = [solutions]
+    return (
+        symbols,
+        tuple(solution_expressions),
+        tuple(sorted(expanded_derived.items())),
+        tuple(solve_symbols),
+        tuple(target_symbols),
+        tuple(solutions or []),
+    )
+
+
+def _strict_range_contains(value, value_range):
+    try:
+        minimum, maximum = map(float, value_range)
+    except (TypeError, ValueError):
+        return False
+    if minimum > maximum:
+        minimum, maximum = maximum, minimum
+    tolerance = max(1e-9, max(abs(minimum), abs(maximum)) * 1e-9)
+    return minimum - tolerance <= value <= maximum + tolerance
+
+
+def _is_valid_numeric_range(value_range):
+    if not isinstance(value_range, (list, tuple)) or len(value_range) != 2:
+        return False
+    try:
+        minimum, maximum = map(float, value_range)
+    except (TypeError, ValueError):
+        return False
+    return np.isfinite(minimum) and np.isfinite(maximum) and minimum != maximum
+
+
+def _is_display_friendly(value, max_denominator):
+    if not isinstance(value, (int, float)) or not np.isfinite(value):
+        return False
+    if abs(value - round(value)) <= 1e-9:
+        return True
+    fraction = Fraction(float(value)).limit_denominator(max_denominator)
+    if abs(float(fraction) - value) <= 1e-8:
+        return True
+    return abs(round(value, 4) - value) <= 1e-9
+
+
+def _problem_contains_hidden_placeholder(problem_text, hidden_names):
+    for name in hidden_names:
+        escaped_name = re.escape(name)
+        if re.search(
+            rf'\{{\{{\s*(?:problem\.var_values\.)?{escaped_name}\s*\}}\}}|__{escaped_name}__',
+            problem_text or '',
+        ):
+            return True
+    return False
 
 
 def _rand_from_spec(spec, fallback_range, rng=None):
@@ -471,6 +689,252 @@ def generate_inverse_problem(template, variables, configured_ranges, local_vars,
     return None
 
 
+def generate_derived_inverse_problem(
+    template,
+    variables,
+    configured_ranges,
+    local_vars,
+    answer_units,
+    answer_constraints,
+):
+    strategy = parse_generation_strategy(template)
+    if not strategy or not strategy.get('enabled', True) or strategy.get('mode') != 'derived_inverse_v1':
+        return None
+
+    hidden_vars = strategy.get('hidden_vars')
+    derived_vars = strategy.get('derived_vars')
+    key_vars = strategy.get('key_vars') or {}
+    if not isinstance(hidden_vars, dict) or not isinstance(derived_vars, dict) or not isinstance(key_vars, dict):
+        return None
+    if not hidden_vars or not derived_vars or len(hidden_vars) > 4 or len(derived_vars) > 20:
+        return None
+
+    hidden_names = list(hidden_vars)
+    derived_names = list(derived_vars)
+    all_declared_names = set(variables) | set(hidden_names)
+    if any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name or '') for name in all_declared_names):
+        return None
+    if set(hidden_names).intersection(variables):
+        return None
+    if not set(derived_names).issubset(variables):
+        return None
+    if set(key_vars) - (set(variables) - set(derived_names)):
+        return None
+    if any(not isinstance(spec, dict) for spec in key_vars.values()):
+        return None
+    if any(name not in configured_ranges for name in variables):
+        return None
+    if any(
+        not isinstance(hidden_vars.get(name), dict)
+        or not _is_valid_numeric_range(hidden_vars[name].get('range'))
+        for name in hidden_names
+    ):
+        return None
+    if _problem_contains_hidden_placeholder(template.get('problem_text', ''), hidden_names):
+        return None
+
+    raw_solve_for = strategy.get('solve_for')
+    if isinstance(raw_solve_for, str):
+        solve_for = [raw_solve_for]
+    elif isinstance(raw_solve_for, (list, tuple)):
+        solve_for = [name for name in raw_solve_for if isinstance(name, str)]
+    else:
+        return None
+    if (
+        not solve_for
+        or len(set(solve_for)) != len(solve_for)
+        or set(solve_for) != set(hidden_names)
+    ):
+        return None
+
+    answer_count = int(template.get('answer_count', 1) or 1)
+    target_specs = _normalize_target_specs(strategy, answer_count)
+    if len(target_specs) != len(solve_for):
+        return None
+    target_indices = tuple(sorted(target_specs))
+    if any(index < 0 or index >= answer_count for index in target_indices):
+        return None
+
+    try:
+        max_attempts = max(1, min(int(strategy.get('max_attempts', 50) or 50), 200))
+        max_denominator = max(1, min(int(strategy.get('max_denominator', 16) or 16), 64))
+        derived_json = json.dumps(derived_vars, ensure_ascii=True, sort_keys=True)
+        positive_hidden_names = tuple(
+            name
+            for name in hidden_names
+            if min(map(float, hidden_vars[name]['range'])) > 0
+        )
+        (
+            symbols,
+            solution_expressions,
+            expanded_derived_items,
+            solve_symbols,
+            target_symbols,
+            solutions,
+        ) = _prepare_derived_inverse_solver(
+            template['solution_formula'],
+            tuple(variables),
+            tuple(hidden_names),
+            positive_hidden_names,
+            derived_json,
+            tuple(solve_for),
+            target_indices,
+        )
+    except Exception:
+        return None
+    if len(solution_expressions) != answer_count or not solutions:
+        return None
+    hidden_symbols = {symbols[name] for name in hidden_names}
+    if any(expression.free_symbols.intersection(hidden_symbols) for expression in solution_expressions):
+        return None
+
+    expanded_derived = dict(expanded_derived_items)
+    normalized_answer_units = list(answer_units[:answer_count])
+    normalized_answer_units.extend([''] * (answer_count - len(normalized_answer_units)))
+    ordinary_names = [name for name in variables if name not in derived_names]
+    var_units = infer_variable_units(template.get('problem_text', ''), variables)
+
+    for attempt in range(max_attempts):
+        try:
+            target_answers = {
+                answer_index: float(_rand_from_spec(spec, spec.get('range', (1, 50))))
+                for answer_index, spec in target_specs.items()
+            }
+            if any(not np.isfinite(value) for value in target_answers.values()):
+                continue
+
+            visible_values = {}
+            for name in ordinary_names:
+                value = float(_rand_from_spec(key_vars.get(name), configured_ranges[name]))
+                if not np.isfinite(value) or not _strict_range_contains(value, configured_ranges[name]):
+                    raise ValueError('ordinary variable is outside its configured range')
+                visible_values[name] = value
+
+            known_substitutions = {
+                symbols[name]: value for name, value in visible_values.items()
+            }
+            known_substitutions.update({
+                target_symbol: target_answers[answer_index]
+                for answer_index, target_symbol in zip(target_indices, target_symbols)
+            })
+
+            hidden_values = None
+            for solution in solutions:
+                candidate_values = {}
+                candidate_substitutions = dict(known_substitutions)
+                unresolved = set(solve_for)
+                for _ in solve_for:
+                    made_progress = False
+                    for name, solve_symbol in zip(solve_for, solve_symbols):
+                        if name not in unresolved or solve_symbol not in solution:
+                            continue
+                        evaluated_expression = solution[solve_symbol].subs(candidate_substitutions)
+                        if evaluated_expression.free_symbols:
+                            continue
+                        evaluated = sp.N(evaluated_expression)
+                        if evaluated.is_real is False:
+                            continue
+                        value = float(evaluated)
+                        if not np.isfinite(value):
+                            continue
+                        candidate_values[name] = value
+                        candidate_substitutions[solve_symbol] = value
+                        unresolved.remove(name)
+                        made_progress = True
+                    if not unresolved or not made_progress:
+                        break
+                if unresolved:
+                    continue
+                if all(
+                    _strict_range_contains(candidate_values[name], hidden_vars[name]['range'])
+                    for name in solve_for
+                ):
+                    hidden_values = candidate_values
+                    known_substitutions.update({
+                        symbols[name]: value for name, value in hidden_values.items()
+                    })
+                    break
+            if hidden_values is None:
+                continue
+
+            for name, expression in expanded_derived.items():
+                evaluated = sp.N(expression.subs(known_substitutions))
+                if evaluated.free_symbols or evaluated.is_real is False:
+                    raise ValueError('derived variable could not be reduced to a real number')
+                value = float(evaluated)
+                if not np.isfinite(value) or not _strict_range_contains(value, configured_ranges[name]):
+                    raise ValueError('derived variable is outside its configured range')
+                if name in {'R', 'T'} and value <= 0:
+                    raise ValueError('physical variable must be positive')
+                visible_values[name] = value
+                known_substitutions[symbols[name]] = value
+
+            if set(visible_values) != set(variables):
+                continue
+            if any(name in visible_values and visible_values[name] <= 0 for name in {'R', 'T'}):
+                continue
+            if any(not _is_display_friendly(value, max_denominator) for value in visible_values.values()):
+                continue
+
+            answer_substitutions = {
+                symbols[name]: value for name, value in visible_values.items()
+            }
+            correct_answers = []
+            for expression in solution_expressions:
+                evaluated = sp.N(expression.subs(answer_substitutions))
+                if evaluated.free_symbols or evaluated.is_real is False:
+                    raise ValueError('answer could not be reduced to a real number')
+                answer = float(evaluated)
+                if not np.isfinite(answer):
+                    raise ValueError('answer is not finite')
+                correct_answers.append(answer)
+
+            if not is_answer_reasonable_dynamic(
+                correct_answers,
+                visible_values,
+                attempt,
+                answer_constraints,
+            ):
+                continue
+            if not all(
+                abs(correct_answers[index] - target)
+                <= max(1e-7, abs(target) * 1e-7)
+                for index, target in target_answers.items()
+            ):
+                continue
+
+            display_values = {
+                name: format_display_number(value, max_denominator)
+                for name, value in visible_values.items()
+            }
+            if any(name in hidden_names for name in visible_values) or any(
+                name in hidden_names for name in display_values
+            ):
+                continue
+            problem_content = format_problem_text(template['problem_text'], display_values)
+            return {
+                'problem_text': problem_content,
+                'var_values': {
+                    name: round(visible_values[name], 10) for name in variables
+                },
+                'display_var_values': {
+                    name: display_values[name] for name in variables
+                },
+                'var_units': var_units,
+                'correct_answers': correct_answers,
+                'answer_units': normalized_answer_units,
+                'template_id': template['id'],
+                'answer_count': answer_count,
+                'template_name': template['template_name'],
+                'image_filename': template.get('image_filename'),
+                'generation_mode': 'derived_inverse_v1',
+            }
+        except (ArithmeticError, TypeError, ValueError, OverflowError):
+            continue
+
+    return None
+
+
 def infer_generation_strategy(template_name, problem_text, variables_text, solution_formula, answer_count=1):
     variables, configured_ranges = parse_variable_specs(variables_text or '')
     answer_count = int(answer_count or 1)
@@ -567,14 +1031,28 @@ def generate_problem_from_template(template_id, max_attempts=10):
     answer_constraints = infer_answer_constraints(answer_units)
     var_units = infer_variable_units(template.get('problem_text', ''), variables)
 
-    inverse_problem = generate_inverse_problem(
-        template,
-        variables,
-        configured_ranges,
-        local_vars,
-        answer_units[:],
-        answer_constraints,
-    )
+    strategy = parse_generation_strategy(template)
+    strategy_mode = strategy.get('mode') if strategy and strategy.get('enabled', True) else None
+    if strategy_mode == 'derived_inverse_v1':
+        inverse_problem = generate_derived_inverse_problem(
+            template,
+            variables,
+            configured_ranges,
+            local_vars,
+            answer_units[:],
+            answer_constraints,
+        )
+    elif strategy_mode == 'inverse_v1':
+        inverse_problem = generate_inverse_problem(
+            template,
+            variables,
+            configured_ranges,
+            local_vars,
+            answer_units[:],
+            answer_constraints,
+        )
+    else:
+        inverse_problem = None
     if inverse_problem:
         print(f"Inverse problem generated - template: {template['template_name']}")
         print(f"   Variable values: {inverse_problem['var_values']}")

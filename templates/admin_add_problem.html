@@ -144,7 +144,9 @@
                             <textarea class="form-control font-monospace" id="generation_strategy" name="generation_strategy" rows="7"
                                       placeholder="留空时系统会根据变量和公式自动生成。把 enabled 改为 false 可让该题回退旧随机生成规则。"></textarea>
                             <div class="form-text">
-                                支持单答案和多答案反推；多答案会识别独立目标并在可行时联立求解，失败时自动回退旧生成规则。
+                                支持 <code>inverse_v1</code> 和 <code>derived_inverse_v1</code>。派生反解模式可在
+                                <code>hidden_vars</code> 中声明后台变量，并用 <code>derived_vars</code> 计算学生可见变量；
+                                隐藏变量不要填写到上方变量列表或题干中。生成失败时会自动回退旧随机规则。
                             </div>
                         </div>
 

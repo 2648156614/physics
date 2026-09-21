@@ -3,6 +3,7 @@ import math
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 numpy_stub = types.ModuleType('numpy')
 numpy_stub.isfinite = math.isfinite
@@ -14,9 +15,11 @@ sys.modules.setdefault('db', db_stub)
 
 from services.question_generation_service import (
     build_formula_context,
+    generate_derived_inverse_problem,
     generate_inverse_problem,
     infer_generation_strategy,
 )
+from services import question_generation_service
 
 
 def make_template(formula, answer_count, strategy):
@@ -28,6 +31,35 @@ def make_template(formula, answer_count, strategy):
         'answer_count': answer_count,
         'generation_strategy': json.dumps(strategy),
         'image_filename': None,
+    }
+
+
+def make_derived_template(strategy, problem_text=None):
+    return {
+        'id': 2,
+        'template_name': 'derived inverse test',
+        'problem_text': problem_text or 'R={{R}} m, s={{k}}t^2+1, T={{T}} s',
+        'solution_formula': 'sqrt((2*k)**2 + (((2*k*T)**2)/R)**2)',
+        'answer_count': 1,
+        'generation_strategy': json.dumps(strategy),
+        'image_filename': None,
+    }
+
+
+def make_derived_strategy():
+    return {
+        'enabled': True,
+        'mode': 'derived_inverse_v1',
+        'solve_for': 'q',
+        'hidden_vars': {'q': {'range': [0.5, 10]}},
+        'derived_vars': {
+            'k': '3*q',
+            'R': '(9/2)*q*T**2',
+        },
+        'target_answer': {'type': 'choice', 'values': [20]},
+        'key_vars': {'T': {'type': 'choice', 'values': [2]}},
+        'max_attempts': 5,
+        'max_denominator': 16,
     }
 
 
@@ -133,6 +165,59 @@ class InverseGenerationTests(unittest.TestCase):
             sum(isinstance(spec, dict) for spec in strategy['target_answers']),
             1,
         )
+
+
+class DerivedInverseGenerationTests(unittest.TestCase):
+    def generate(self, strategy=None, ranges=None, problem_text=None):
+        return generate_derived_inverse_problem(
+            make_derived_template(strategy or make_derived_strategy(), problem_text),
+            ['k', 'R', 'T'],
+            ranges or {'k': (1.5, 30), 'R': (0.5, 405), 'T': (0.5, 3)},
+            build_formula_context(),
+            ['m/s^2'],
+            {'non_negative': True, 'min_answer': 0, 'max_answer': 1e7},
+        )
+
+    def test_hidden_variable_generates_visible_pretty_values(self):
+        result = self.generate()
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result['generation_mode'], 'derived_inverse_v1')
+        self.assertEqual(result['var_values'], {'k': 6.0, 'R': 36.0, 'T': 2.0})
+        self.assertEqual(result['display_var_values'], {'k': 6, 'R': 36, 'T': 2})
+        self.assertAlmostEqual(result['correct_answers'][0], 20.0)
+        self.assertNotIn('q', result['var_values'])
+        self.assertNotIn('q', result['display_var_values'])
+        self.assertNotIn('{{q}}', result['problem_text'])
+
+    def test_derived_values_use_strict_visible_ranges(self):
+        result = self.generate(
+            ranges={'k': (1.5, 30), 'R': (0.5, 35), 'T': (0.5, 3)},
+        )
+
+        self.assertIsNone(result)
+
+    def test_hidden_placeholder_in_problem_text_is_rejected(self):
+        result = self.generate(problem_text='q={{q}}, R={{R}}, k={{k}}, T={{T}}')
+
+        self.assertIsNone(result)
+
+    def test_unsafe_derived_expression_is_rejected(self):
+        strategy = make_derived_strategy()
+        strategy['derived_vars']['k'] = "__import__('os').system('echo unsafe')"
+
+        self.assertIsNone(self.generate(strategy=strategy))
+
+    def test_main_generation_flow_dispatches_derived_mode(self):
+        template = make_derived_template(make_derived_strategy())
+        template['variables'] = 'k[1.5,30],R[0.5,405],T[0.5,3]'
+        template['answer_units'] = 'm/s^2'
+
+        with patch.object(question_generation_service, 'get_template', return_value=template):
+            result = question_generation_service.generate_problem_from_template(template['id'])
+
+        self.assertEqual(result['generation_mode'], 'derived_inverse_v1')
+        self.assertNotIn('q', result['var_values'])
 
 
 if __name__ == '__main__':
