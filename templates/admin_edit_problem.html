@@ -20,6 +20,28 @@
                     <h5 class="mb-0"><i class="bi bi-pencil me-2"></i> 编辑题目信息</h5>
                 </div>
                 <div class="card-body">
+                    <div class="template-import-panel">
+                        <div class="d-flex align-items-center mb-2">
+                            <i class="bi bi-magic me-2"></i>
+                            <strong>粘贴模板并替换</strong>
+                        </div>
+                        <p class="small mb-2">
+                            粘贴完整或部分题目模板后，系统只替换模板中已经提供的字段；没有提供的字段保持当前内容不变。
+                            图片无法由浏览器自动选择，如需更换请继续使用下方上传框。
+                        </p>
+                        <textarea class="form-control font-monospace" id="template_import" rows="6"
+                                  placeholder="粘贴需要更新的完整或部分模板，例如：{'name': '新名称', 'generation_strategy': {...}}"></textarea>
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="parse_template_btn">
+                                <i class="bi bi-lightning-charge"></i> 识别并替换
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="clear_template_btn">
+                                <i class="bi bi-x-circle"></i> 清空粘贴内容
+                            </button>
+                        </div>
+                        <div class="small mt-2 d-none" id="template_import_status"></div>
+                    </div>
+
                     <form method="POST" enctype="multipart/form-data">
                         <div class="mb-3">
                             <label for="paper_id" class="form-label">所属题库</label>
@@ -87,6 +109,7 @@
                                 支持格式：PNG, JPG, GIF, SVG。最大16MB。
                                 {% endif %}
                             </div>
+                            <div class="form-text text-primary d-none" id="detected_image_hint"></div>
                         </div>
 
                         <div class="mb-3">
@@ -186,4 +209,17 @@
         </div>
     </div>
 </div>
+
+<script src="{{ url_for('static', filename='js/problem-template-import.js') }}"></script>
+
+<style>
+.template-import-panel {
+    color: #055160;
+    background-color: #cff4fc;
+    border: 1px solid #9eeaf9;
+    border-radius: 8px;
+    padding: 15px 20px;
+    margin-bottom: 1rem;
+}
+</style>
 {% endblock %}
