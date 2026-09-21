@@ -813,18 +813,17 @@ def _problem_var_fingerprint(problem_data):
 
 
 def fetch_distinct_problem(template_id, previous_problem_data=None, max_attempts=5):
-    """Fetch a retry problem and avoid returning the same variable set when possible."""
+    """Fetch retry problems from Redis and avoid repeating the previous variables."""
     previous_fingerprint = _problem_var_fingerprint(previous_problem_data)
     if previous_fingerprint is None:
         return fetch_problem_from_pool(template_id)
 
     last_token = None
     last_problem_data = None
-    for attempt in range(max_attempts):
-        if attempt == 0:
-            token, problem_data = fetch_problem_from_pool(template_id)
-        else:
-            token, problem_data = generate_and_cache_problem(template_id)
+    for _ in range(max_attempts):
+        # Every retry uses the Redis pool. fetch_problem_from_pool keeps the
+        # existing emergency generation fallback only when the pool is empty.
+        token, problem_data = fetch_problem_from_pool(template_id)
 
         if not problem_data:
             continue

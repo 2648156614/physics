@@ -675,7 +675,7 @@ def create_exam_blueprint(deps):
                 session['current_problem']['answered_correctly'] = False
                 next_problem_id = problem_id
     
-                # 答错时生成新题目（不再限制尝试次数）
+                # 答错时从 Redis 题目池抽取新题（不再限制尝试次数）
                 new_token, new_problem_data = fetch_distinct_problem(actual_id, problem_data)
     
                 if new_problem_data:
@@ -700,7 +700,7 @@ def create_exam_blueprint(deps):
                         'token': new_token
                     })
     
-                    logger.info("已生成新题目: problem_id=%s actual_id=%s", problem_id, actual_id)
+                    logger.info("已从题目池获取新题: problem_id=%s actual_id=%s", problem_id, actual_id)
                     logger.debug(
                         "新题目详情: var_values=%s correct_answers=%s",
                         new_problem_data['var_values'],
