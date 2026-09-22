@@ -5,6 +5,8 @@ from urllib.parse import quote
 
 from flask import Blueprint, abort, send_from_directory
 
+from services.exam_paper_service import paper_has_unfinished_exam
+
 
 def build_problem_image_html(image_filename, template_name):
     url_filename = quote(image_filename or '')
@@ -164,14 +166,14 @@ def create_question_blueprint(deps):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute("SELECT id, name, is_enabled FROM exam_papers WHERE id = %s", (paper_id,))
+            cursor.execute("SELECT id, name, is_enabled FROM exam_papers WHERE id = %s FOR UPDATE", (paper_id,))
             paper = cursor.fetchone()
             if not paper:
                 flash('题库不存在', 'danger')
                 return redirect(url_for('admin_dashboard'))
             new_status = not bool(paper['is_enabled'])
-            if not new_status and _paper_has_started_exam(paper_id):
-                flash('该题库正在被已有学生进入的考试使用，不能关闭。请先保留题库状态，避免学生考试中断。', 'danger')
+            if not new_status and paper_has_unfinished_exam(cursor, paper_id):
+                flash('该题库仍有关联的未开考或正在考试批次，全部批次结束后才能关闭。', 'danger')
                 return redirect(url_for('admin_dashboard', paper_id=paper_id))
             cursor.execute("UPDATE exam_papers SET is_enabled = %s WHERE id = %s", (new_status, paper_id))
             conn.commit()

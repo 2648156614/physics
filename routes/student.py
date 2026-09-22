@@ -674,6 +674,9 @@ def create_student_blueprint(deps):
             else:
                 preferred_paper_id = None if self_view else request.args.get('paper_id', type=int)
                 selected_paper_id = resolve_selected_exam_paper_id(preferred_paper_id)
+                if self_view and not selected_paper_id:
+                    flash('当前没有可查看的已开启题库。', 'info')
+                    return redirect(url_for('dashboard'))
                 total_problems = get_total_problem_count(selected_paper_id)
                 problem_template_filter, problem_template_params = build_enabled_paper_filter('t', selected_paper_id)
                 response_filter, response_params = build_enabled_paper_filter('ur', selected_paper_id)
@@ -894,9 +897,16 @@ def create_student_blueprint(deps):
     @bp.route('/student/profile')
     @login_required
     def student_profile():
-        """展示当前学生的学情画像：错因雷达 + 薄弱知识点 + 最近作答。"""
+        """展示主页当前所选题库的学生学情画像。"""
         user_id = session.get('user_id')
-        paper_id = request.args.get('paper_id', type=int)
+        paper_id = resolve_selected_exam_paper_id()
+        if not paper_id:
+            return render_template(
+                'student_profile.html',
+                empty=True,
+                username=session.get('username'),
+                paper_id=None,
+            )
         profile = get_student_profile(user_id, paper_id)
 
         if not profile or profile['total'] == 0:

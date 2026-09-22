@@ -49,7 +49,7 @@
                             <label class="form-label">题库</label>
                             <select class="form-select exam-paper-select" name="paper_id" required>
                                 {% for paper in exam_papers %}
-                                <option value="{{ paper.id }}" data-template-count="{{ paper.template_count }}">{{ paper.name }}（{{ paper.template_count }}题）</option>
+                                <option value="{{ paper.id }}" data-template-count="{{ paper.template_count }}">{{ paper.name }}（{{ paper.template_count }}题{% if not paper.is_enabled %}，当前关闭，保存后自动开启{% endif %}）</option>
                                 {% endfor %}
                             </select>
                         </div>
@@ -148,7 +148,7 @@
                             <label class="form-label">题库</label>
                             <select class="form-select exam-paper-select" name="paper_id" required>
                                 {% for paper in exam_papers %}
-                                <option value="{{ paper.id }}" data-template-count="{{ paper.template_count }}" {% if editing_exam.paper_id == paper.id %}selected{% endif %}>{{ paper.name }}（{{ paper.template_count }}题）</option>
+                                <option value="{{ paper.id }}" data-template-count="{{ paper.template_count }}" {% if editing_exam.paper_id == paper.id %}selected{% endif %}>{{ paper.name }}（{{ paper.template_count }}题{% if not paper.is_enabled %}，当前关闭，保存后自动开启{% endif %}）</option>
                                 {% endfor %}
                             </select>
                         </div>

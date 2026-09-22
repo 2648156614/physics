@@ -14,6 +14,7 @@ from services.exam_batch_service import (
     EXAM_STUDENT_STATUS_LABELS,
     classify_exam_student_status,
 )
+from services.exam_paper_service import ensure_exam_paper_enabled
 
 
 def create_admin_blueprint(deps):
@@ -78,6 +79,14 @@ def create_admin_blueprint(deps):
         finally:
             cursor.close()
             conn.close()
+
+
+    def _finish_auto_enabled_paper(paper_id, auto_enabled):
+        if not auto_enabled:
+            return
+        invalidate_exam_paper_cache(paper_id)
+        schedule_exam_paper_prewarm(paper_id)
+        flash('所选题库原本处于关闭状态，已随考试设置自动开启并开始预热题目池。', 'info')
 
 
     def _normalize_text(value):
@@ -375,7 +384,7 @@ def create_admin_blueprint(deps):
         return render_template(
             'admin_exams.html',
             exams=get_all_exams(),
-            exam_papers=get_exam_papers(include_disabled=False),
+            exam_papers=get_exam_papers(include_disabled=True),
             class_options=class_options,
             major_options=major_options,
             course_options=course_options,
@@ -593,7 +602,9 @@ def create_admin_blueprint(deps):
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+        paper_auto_enabled = False
         try:
+            paper_auto_enabled = ensure_exam_paper_enabled(cursor, exam['paper_id'])
             missing_count = 0
             if assign_type == 'student':
                 if not upload_file or not upload_file.filename or not allowed_excel_file(upload_file.filename):
@@ -608,6 +619,7 @@ def create_admin_blueprint(deps):
             )
             conn.commit()
             clear_exam_metadata_cache()
+            _finish_auto_enabled_paper(exam['paper_id'], paper_auto_enabled)
             message = f'批次创建成功，已分配 {student_count} 名学生。'
             if missing_count:
                 message += f' 另有 {missing_count} 行未匹配到账户。'
@@ -698,7 +710,7 @@ def create_admin_blueprint(deps):
                 raise ValueError('批次不存在。')
             if batch.get('status') == 'archived':
                 raise ValueError('归档批次不能再修改结束时间。')
-            cursor.execute('SELECT status FROM exams WHERE id = %s', (exam_id,))
+            cursor.execute('SELECT status, paper_id FROM exams WHERE id = %s', (exam_id,))
             exam = cursor.fetchone()
             if not exam or exam.get('status') == 'archived':
                 raise ValueError('归档考试不能再修改结束时间。')
@@ -706,11 +718,13 @@ def create_admin_blueprint(deps):
                 raise ValueError('结束时间必须晚于开始时间。')
             if batch.get('end_time') and new_end_time <= batch['end_time']:
                 raise ValueError('只能延长结束时间，不能缩短。')
+            paper_auto_enabled = ensure_exam_paper_enabled(cursor, exam['paper_id'])
             cursor.execute('UPDATE exam_batches SET end_time = %s WHERE id = %s', (new_end_time, batch_id))
             if batch.get('is_default'):
                 cursor.execute('UPDATE exams SET end_time = %s WHERE id = %s', (new_end_time, exam_id))
             conn.commit()
             clear_exam_metadata_cache()
+            _finish_auto_enabled_paper(exam['paper_id'], paper_auto_enabled)
             flash(f"批次《{batch['name']}》结束时间已延长。", 'success')
         except (ValueError, mysql.connector.Error) as err:
             conn.rollback()
@@ -743,7 +757,9 @@ def create_admin_blueprint(deps):
         start_time_raw = (request.form.get('start_time') or '').strip()
         end_time_raw = (request.form.get('end_time') or '').strip()
 
-        available_question_count = len(get_problem_templates_by_paper(paper_id)) if paper_id else 0
+        available_question_count = len(
+            get_problem_templates_by_paper(paper_id, enabled_only=False)
+        ) if paper_id else 0
         if not name or not paper_id or not question_count:
             flash('请填写考试名称、选择题库并设置抽题数量。', 'danger')
             return redirect(url_for('admin.admin_exams'))
@@ -773,7 +789,9 @@ def create_admin_blueprint(deps):
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+        paper_auto_enabled = False
         try:
+            paper_auto_enabled = ensure_exam_paper_enabled(cursor, paper_id)
             cursor.execute(
                 """
                 INSERT INTO exams (name, paper_id, question_count, exam_type, start_time, end_time, status)
@@ -873,6 +891,7 @@ def create_admin_blueprint(deps):
             )
             conn.commit()
             clear_exam_metadata_cache()
+            _finish_auto_enabled_paper(paper_id, paper_auto_enabled)
             if assign_type == 'student' and missing_rows:
                 return _build_missing_accounts_response(missing_rows, name)
             flash(f'考试创建成功，首个批次已分配 {batch_student_count} 名学生。', 'success')
@@ -919,7 +938,9 @@ def create_admin_blueprint(deps):
         end_time_raw = (request.form.get('end_time') or '').strip()
         replace_student_assignments = False
 
-        available_question_count = len(get_problem_templates_by_paper(paper_id)) if paper_id else 0
+        available_question_count = len(
+            get_problem_templates_by_paper(paper_id, enabled_only=False)
+        ) if paper_id else 0
         if not name or not paper_id or not question_count:
             flash('请填写考试名称、选择题库并设置抽题数量。', 'danger')
             return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
@@ -968,7 +989,9 @@ def create_admin_blueprint(deps):
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+        paper_auto_enabled = False
         try:
+            paper_auto_enabled = ensure_exam_paper_enabled(cursor, paper_id)
             cursor.execute(
                 "SELECT * FROM exam_batches WHERE exam_id = %s AND is_default = TRUE LIMIT 1 FOR UPDATE",
                 (exam_id,),
@@ -1009,7 +1032,9 @@ def create_admin_blueprint(deps):
 
             old_question_count = existing_exam.get('question_count')
             if old_question_count is None and int(existing_exam['paper_id']) == paper_id:
-                old_paper_count = len(get_problem_templates_by_paper(paper_id))
+                old_paper_count = len(
+                    get_problem_templates_by_paper(paper_id, enabled_only=False)
+                )
                 stored_question_count = None if question_count == old_paper_count else question_count
             else:
                 stored_question_count = question_count
@@ -1120,6 +1145,7 @@ def create_admin_blueprint(deps):
                     )
                     conn.commit()
                     clear_exam_metadata_cache()
+                    _finish_auto_enabled_paper(paper_id, paper_auto_enabled)
                     flash('考试更新成功，已保留原有学生名单。', 'success')
                     return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
             else:
@@ -1149,6 +1175,7 @@ def create_admin_blueprint(deps):
                 )
             conn.commit()
             clear_exam_metadata_cache()
+            _finish_auto_enabled_paper(paper_id, paper_auto_enabled)
             if assign_type == 'student' and missing_rows:
                 return _build_missing_accounts_response(missing_rows, name)
             flash(f'考试更新成功，已设置 {len(assignments)} 条分配规则。', 'success')
@@ -1221,7 +1248,7 @@ def create_admin_blueprint(deps):
         return render_template(
             'admin_exams.html',
             exams=get_all_exams(),
-            exam_papers=get_exam_papers(include_disabled=False),
+            exam_papers=get_exam_papers(include_disabled=True),
             class_options=class_options,
             major_options=major_options,
             course_options=course_options,

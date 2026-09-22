@@ -174,16 +174,26 @@ def create_exam_blueprint(deps):
     @bp.route('/history')
     @login_required
     def history():
-        """获取答题历史"""
+        """获取主页当前所选题库的答题历史。"""
         conn = None
+        selected_paper_id = None
+        selected_exam_id = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor(dictionary=True)
-            selected_exam_id = resolve_selected_exam_id()
-            selected_exam = get_exam_by_id(selected_exam_id) if selected_exam_id else None
-            selected_paper_id = selected_exam['paper_id'] if selected_exam else resolve_selected_exam_paper_id()
-            response_filter = "r.exam_id = %s" if selected_exam_id else "COALESCE(r.paper_id, t.paper_id) = %s"
-            response_filter_param = selected_exam_id if selected_exam_id else selected_paper_id
+            selected_paper_id = resolve_selected_exam_paper_id()
+            selected_exam_id = session.get('selected_exam_id')
+            if not selected_paper_id:
+                return render_template(
+                    'history.html',
+                    responses=[],
+                    stats=None,
+                    username=session['username'],
+                    selected_paper_id=None,
+                    selected_exam_id=selected_exam_id,
+                )
+            response_filter = "COALESCE(r.paper_id, t.paper_id) = %s"
+            response_filter_param = selected_paper_id
     
             # 获取答题记录
             cursor.execute(f"""
