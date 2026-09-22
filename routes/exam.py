@@ -17,9 +17,16 @@ def create_exam_blueprint(deps):
     @login_required
     def dashboard():
         try:
-            selected_exam_id = resolve_selected_exam_id(request.args.get('exam_id', type=int))
             available_exams = [] if session.get('username') == 'admin' else get_user_available_exams(session['user_id'])
-            exam_access = get_user_exam_access(session['user_id'], selected_exam_id)
+            selected_exam_id = resolve_selected_exam_id(
+                request.args.get('exam_id', type=int),
+                available_exams=available_exams,
+            )
+            exam_access = get_user_exam_access(
+                session['user_id'],
+                selected_exam_id,
+                available_exams=available_exams,
+            )
             available_papers = get_enabled_exam_papers()
             selected_paper_id = exam_access.get('paper_id') or resolve_selected_exam_paper_id()
             selected_paper = get_exam_paper_by_id(selected_paper_id) if selected_paper_id else None

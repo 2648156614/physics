@@ -21,6 +21,7 @@ from config import (
     DEFAULT_AVATAR,
     DEFAULT_EXAM_PAPER_NAME,
     POOL_LOW_WATER,
+    POOL_PREWARM_PAUSE_SECONDS,
     POOL_REFILL_BATCH,
     POOL_TARGET,
 )
@@ -161,7 +162,7 @@ def get_exam_paper_by_id(paper_id):
         conn.close()
 
 
-def get_user_exam_access(user_id, exam_id=None):
+def get_user_exam_access(user_id, exam_id=None, available_exams=None):
     """Only exam batches control access now."""
     now = datetime.now()
     if session.get('username') == 'admin':
@@ -178,7 +179,8 @@ def get_user_exam_access(user_id, exam_id=None):
             'message': None,
         }
 
-    available_exams = get_user_available_exams(user_id)
+    if available_exams is None:
+        available_exams = get_user_available_exams(user_id)
     if not available_exams:
         return {
             'allowed': False,
@@ -462,11 +464,12 @@ def user_can_access_exam(user_id, exam_id):
     return any(int(exam['id']) == int(exam_id) for exam in get_user_available_exams(user_id))
 
 
-def resolve_selected_exam_id(preferred_exam_id=None):
+def resolve_selected_exam_id(preferred_exam_id=None, available_exams=None):
     if session.get('username') == 'admin':
         return None
 
-    available_exams = get_user_available_exams(session.get('user_id'))
+    if available_exams is None:
+        available_exams = get_user_available_exams(session.get('user_id'))
     if not available_exams:
         session.pop('selected_exam_id', None)
         return None
@@ -874,14 +877,39 @@ def prewarm_pools(paper_id=None, enabled_only=True):
         cursor.close()
         conn.close()
 
+    batch_size = max(1, min(POOL_REFILL_BATCH, POOL_TARGET))
+    pause_seconds = max(0.0, min(float(POOL_PREWARM_PAUSE_SECONDS), 5.0))
+    remaining_by_template = {}
     for template_id in template_ids:
         pool_size = get_pool_size(template_id)
-        if pool_size < POOL_TARGET:
-            to_add = POOL_TARGET - pool_size
-            print(f"[PREWARM] 模板 {template_id} 补货 {to_add} 道")
-            refill_problem_pool(template_id, to_add)
+        remaining = max(0, POOL_TARGET - pool_size)
+        if remaining:
+            remaining_by_template[template_id] = remaining
         else:
             print(f"[PREWARM] 模板 {template_id} 池已满足，当前 {pool_size}")
+
+    # Round-robin small batches prevent one large template pool from
+    # monopolizing CPU and database connections during live traffic.
+    while remaining_by_template:
+        made_progress = False
+        for template_id in list(remaining_by_template):
+            to_add = min(batch_size, remaining_by_template[template_id])
+            created = refill_problem_pool(template_id, to_add)
+            print(
+                f"[PREWARM] 模板 {template_id} 分批补货 "
+                f"{created}/{to_add} 道，计划剩余 {max(0, remaining_by_template[template_id] - created)} 道"
+            )
+            if created <= 0:
+                remaining_by_template.pop(template_id, None)
+            else:
+                made_progress = True
+                remaining_by_template[template_id] -= created
+                if remaining_by_template[template_id] <= 0:
+                    remaining_by_template.pop(template_id, None)
+            if pause_seconds:
+                time.sleep(pause_seconds)
+        if not made_progress:
+            break
     print(f"[PREWARM] 预热完成 paper_id={paper_id or 'enabled'} templates={len(template_ids)}")
 
 
