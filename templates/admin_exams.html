@@ -66,6 +66,15 @@
                         <input class="form-control exam-question-count" type="number" name="question_count" min="1" required>
                         <div class="form-text exam-question-count-hint"></div>
                     </div>
+                    <div class="border rounded p-3 bg-light">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" name="seb_required" id="seb-required">
+                            <label class="form-check-label fw-semibold" for="seb-required">使用 Safe Exam Browser 安全考试</label>
+                        </div>
+                        <label class="form-label" for="seb-config-key">SEB Config Key</label>
+                        <input class="form-control font-monospace" id="seb-config-key" name="seb_config_key" maxlength="64" placeholder="保存 .seb 配置后粘贴 64 位 Config Key">
+                        <div class="form-text">可以先留空创建考试，获得启动与退出地址后制作 .seb 文件，再回来补充 Config Key。</div>
+                    </div>
                     <div>
                         <label class="form-label">首个批次名称</label>
                         <input class="form-control" name="batch_name" required value="默认批次" placeholder="例如：机电一班上午场">
@@ -164,6 +173,22 @@
                         <label class="form-label">每名学生抽取题数</label>
                         <input class="form-control exam-question-count" type="number" name="question_count" min="1" required value="{{ editing_exam.question_count or '' }}">
                         <div class="form-text exam-question-count-hint"></div>
+                    </div>
+                    <div class="border rounded p-3 bg-light">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" name="seb_required" id="edit-seb-required" {% if editing_exam.seb_required %}checked{% endif %}>
+                            <label class="form-check-label fw-semibold" for="edit-seb-required">使用 Safe Exam Browser 安全考试</label>
+                        </div>
+                        <label class="form-label" for="edit-seb-config-key">SEB Config Key</label>
+                        <input class="form-control font-monospace" id="edit-seb-config-key" name="seb_config_key" maxlength="64" value="{{ editing_exam.seb_config_key or '' }}" placeholder="64 位 Config Key">
+                        {% if editing_exam.seb_quit_token %}
+                        <div class="small mt-3">
+                            <div class="text-muted">SEB Start URL</div>
+                            <code class="user-select-all">{{ url_for('exam.seb_start', exam_id=editing_exam.id, _external=True) }}</code>
+                            <div class="text-muted mt-2">SEB Quit URL</div>
+                            <code class="user-select-all">{{ url_for('exam.seb_quit', token=editing_exam.seb_quit_token, _external=True) }}</code>
+                        </div>
+                        {% endif %}
                     </div>
                     <div class="row g-3">
                         <div class="col-md-6">
@@ -264,6 +289,9 @@
                         <td>
                             <div class="fw-semibold">{{ exam.name }}</div>
                             <small class="text-muted">{{ '补考' if exam.exam_type == 'retake' else '正式考试' }}</small>
+                            {% if exam.seb_required %}
+                            <span class="badge bg-dark ms-1">SEB{% if not exam.seb_config_key %}待配置{% endif %}</span>
+                            {% endif %}
                         </td>
                         <td>{{ exam.paper_name }}</td>
                         <td>{{ exam.question_count if exam.question_count else '全部' }}</td>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>考试已完成</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            min-height: 100vh;
+            margin: 0;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            background: #f3f5f7;
+            color: #172033;
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        }
+        main {
+            width: min(520px, 100%);
+            padding: 32px;
+            border: 1px solid #d9dee7;
+            border-radius: 8px;
+            background: #fff;
+            text-align: center;
+            box-shadow: 0 12px 32px rgba(18, 32, 51, 0.08);
+        }
+        h1 { margin: 0 0 12px; font-size: 1.65rem; }
+        p { margin: 0; color: #5f6b7a; line-height: 1.7; }
+    </style>
+</head>
+<body>
+<main>
+    {% if invalid %}
+    <h1>退出地址无效</h1>
+    <p>请联系监考教师检查本场考试的 SEB 配置。</p>
+    {% else %}
+    <h1>完成状态已保存</h1>
+    <p>{{ exam_name }} 已结束，Safe Exam Browser 将允许您退出。</p>
+    {% endif %}
+</main>
+</body>
+</html>

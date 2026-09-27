@@ -444,11 +444,45 @@
                             <i class="bi bi-arrow-clockwise me-1"></i> 刷新题目
                         </button>
                     </div>
+                    {% if seb_required and problem_id == total_problems %}
+                    <div class="secure-finish-panel" id="secure-finish-panel">
+                        <div>
+                            <div class="secure-finish-title"><i class="bi bi-door-open me-1"></i>已到最后一页</div>
+                            <div class="secure-finish-note">无论本题是否答对，都可以确认完成并退出安全考试。</div>
+                        </div>
+                        <button type="button" class="btn btn-outline-dark" id="secure-finish-btn">
+                            确认完成并退出
+                        </button>
+                    </div>
+                    {% endif %}
                 </form>
                     </section>
                 </div>
             </div>
         </div>
+
+        {% if seb_required and problem_id == total_problems %}
+        <div class="modal fade" id="secureFinishModal" tabindex="-1" aria-labelledby="secureFinishModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="secureFinishModalLabel">确认完成考试</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="mb-2" id="secure-finish-summary">正在核对答题进度...</p>
+                        <div class="alert alert-warning mb-0" id="secure-finish-warning" hidden>
+                            仍有题目未答对。确认后也可以退出，请先确认这符合您的意愿。
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">继续答题</button>
+                        <button type="button" class="btn btn-dark" id="secure-finish-confirm">确认并退出</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
 
         <!-- 动态变量表 -->
         <div class="card mt-3" id="variables-card">
@@ -1804,6 +1838,7 @@ let timerInterval = null;
 const problemId = {{ problem_id }};
 const answerCount = {{ answer_count }};
 const totalProblems = {{ total_problems }};
+const sebRequired = {{ 'true' if seb_required else 'false' }};
 let totalAttempts = {{ total_attempts }};
 let timerInitialized = false;  // 添加标志防止重复初始化
 const displayMapping = {{ display_mapping | tojson }};
@@ -2462,7 +2497,7 @@ function handleCompletedProblem() {
 
     const nextBtn = document.getElementById('next-btn');
     if (nextBtn) {
-        nextBtn.style.display = 'inline-block';
+        nextBtn.style.display = (sebRequired && problemId === totalProblems) ? 'none' : 'inline-block';
     }
 
     showMessage('该题已完成，无需再次作答', 'success');
@@ -2674,7 +2709,8 @@ document.getElementById('answer-form').addEventListener('submit', async function
             if (data.correct) {
                 // 回答正确
                 showMessage(data.message, 'success');
-                document.getElementById('next-btn').style.display = 'inline-block';
+                document.getElementById('next-btn').style.display =
+                    (sebRequired && problemId === totalProblems) ? 'none' : 'inline-block';
                 submitBtn.style.display = 'none';
                 disableInputs();
                 clearInterval(timerInterval);  // 停止计时器
@@ -2691,6 +2727,8 @@ document.getElementById('answer-form').addEventListener('submit', async function
                     setTimeout(() => {
                         navigateToProblem(data.next_problem);
                     }, 3000);
+                } else if (sebRequired) {
+                    showTempMessage('本题结果已保存，请使用下方按钮确认完成并退出。', 'success');
                 } else {
                     setTimeout(() => {
                         showTempMessage('恭喜完成所有题目！3秒后返回主页...', 'success');
@@ -2732,6 +2770,53 @@ document.getElementById('next-btn').addEventListener('click', function() {
         window.location.href = '{{ url_for("dashboard") }}';
     }
 });
+
+const secureFinishButton = document.getElementById('secure-finish-btn');
+if (secureFinishButton) {
+    const finishModalElement = document.getElementById('secureFinishModal');
+    const finishModal = new bootstrap.Modal(finishModalElement);
+    const finishSummary = document.getElementById('secure-finish-summary');
+    const finishWarning = document.getElementById('secure-finish-warning');
+    const finishConfirm = document.getElementById('secure-finish-confirm');
+
+    secureFinishButton.addEventListener('click', async function() {
+        secureFinishButton.disabled = true;
+        finishSummary.textContent = '正在核对答题进度...';
+        finishWarning.hidden = true;
+        try {
+            const response = await fetch('{{ url_for("exam.secure_finish_summary") }}', {method: 'POST'});
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || '无法获取答题进度');
+            }
+            finishSummary.textContent = `共 ${data.total_count} 题，已答对 ${data.completed_count} 题，未完成 ${data.incomplete_count} 题。`;
+            finishWarning.hidden = data.incomplete_count === 0;
+            finishModal.show();
+        } catch (error) {
+            showMessage(error.message, 'error');
+        } finally {
+            secureFinishButton.disabled = false;
+        }
+    });
+
+    finishConfirm.addEventListener('click', async function() {
+        finishConfirm.disabled = true;
+        finishConfirm.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>正在保存';
+        try {
+            const response = await fetch('{{ url_for("exam.secure_finish") }}', {method: 'POST'});
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || '完成状态保存失败');
+            }
+            markExpectedPageTransition();
+            window.location.assign(data.quit_url);
+        } catch (error) {
+            showMessage(error.message, 'error');
+            finishConfirm.disabled = false;
+            finishConfirm.textContent = '确认并退出';
+        }
+    });
+}
 
 // 刷新题目按钮
 document.getElementById('refresh-btn').addEventListener('click', function() {
@@ -3296,6 +3381,29 @@ window.toggleInputMode = function() {
     margin: 0;
 }
 
+.secure-finish-panel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 14px;
+    padding: 12px 14px;
+    border: 1px solid #d7dce2;
+    border-radius: 8px;
+    background: #f8f9fa;
+}
+
+.secure-finish-title {
+    color: #212529;
+    font-weight: 700;
+}
+
+.secure-finish-note {
+    margin-top: 2px;
+    color: #6c757d;
+    font-size: 0.86rem;
+}
+
 .mobile-problem-nav-toggle {
     display: none;
 }
@@ -3451,6 +3559,17 @@ window.toggleInputMode = function() {
     .answer-actions .btn {
         flex: 1 1 0;
         min-width: 120px;
+    }
+
+    .secure-finish-panel {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .secure-finish-panel .btn {
+        min-height: 44px;
+        width: 100%;
     }
 
     #answer-inputs .row .col-md-6 {

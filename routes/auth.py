@@ -378,7 +378,12 @@ def login():
                     flash('当前密码强度不足，请尽快修改为强密码。', 'warning')
 
                 flash('登录成功！', 'success')
-                response = redirect(url_for('dashboard'))
+                pending_seb_exam_id = session.get('pending_seb_exam_id')
+                if pending_seb_exam_id and user['username'] != 'admin':
+                    response = redirect(url_for('exam.seb_continue', exam_id=pending_seb_exam_id))
+                else:
+                    session.pop('pending_seb_exam_id', None)
+                    response = redirect(url_for('dashboard'))
                 response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
                 return response
 

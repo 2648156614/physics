@@ -27,6 +27,8 @@ LOGIN_AUDIT_QUEUE_MAXSIZE = int(os.getenv('LOGIN_AUDIT_QUEUE_MAXSIZE', 20000))
 LOGIN_AUDIT_BATCH_SIZE = int(os.getenv('LOGIN_AUDIT_BATCH_SIZE', 200))
 LOGIN_AUDIT_FLUSH_INTERVAL_SECONDS = float(os.getenv('LOGIN_AUDIT_FLUSH_INTERVAL_SECONDS', 0.5))
 UPGRADE_LEGACY_PASSWORD_ON_LOGIN = os.getenv('UPGRADE_LEGACY_PASSWORD_ON_LOGIN', 'false').lower() in ('1', 'true', 'yes', 'on')
+SEB_INTEGRATION_ENABLED = os.getenv('SEB_INTEGRATION_ENABLED', 'true').lower() in ('1', 'true', 'yes', 'on')
+TRUST_PROXY_HEADERS = os.getenv('TRUST_PROXY_HEADERS', 'false').lower() in ('1', 'true', 'yes', 'on')
 
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
 POOL_TARGET = int(os.getenv('POOL_TARGET', 50))
