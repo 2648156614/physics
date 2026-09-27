@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}需要安全考试浏览器{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="mx-auto" style="max-width: 620px;">
+        <div class="border rounded bg-white p-4 p-md-5 shadow-sm">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <i class="bi bi-shield-lock fs-1 text-primary" aria-hidden="true"></i>
+                <div>
+                    <div class="text-muted small">安全考试模式</div>
+                    <h2 class="h4 mb-0">请使用 Safe Exam Browser 进入</h2>
+                </div>
+            </div>
+            <p class="mb-3">{{ message }}</p>
+            {% if exam %}
+            <div class="rounded bg-light p-3 mb-3">
+                <div class="small text-muted">当前考试</div>
+                <div class="fw-semibold">{{ exam.name }}</div>
+            </div>
+            {% endif %}
+            <p class="text-muted small mb-4">关闭此页面，打开监考教师发放的 .seb 配置文件。进入后仍使用原学号和密码登录。</p>
+            <a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}">返回首页</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

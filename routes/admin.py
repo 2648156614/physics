@@ -2,6 +2,7 @@
 
 
 import io
+import uuid
 from datetime import datetime
 
 from openpyxl import Workbook
@@ -15,6 +16,7 @@ from services.exam_batch_service import (
     classify_exam_student_status,
 )
 from services.exam_paper_service import ensure_exam_paper_enabled
+from services.seb_exam_service import normalize_config_key, parse_checkbox
 
 
 def create_admin_blueprint(deps):
@@ -756,6 +758,13 @@ def create_admin_blueprint(deps):
         batch_name = (request.form.get('batch_name') or '默认批次').strip()
         start_time_raw = (request.form.get('start_time') or '').strip()
         end_time_raw = (request.form.get('end_time') or '').strip()
+        seb_required = parse_checkbox(request.form.get('seb_required'))
+        seb_config_key_raw = (request.form.get('seb_config_key') or '').strip()
+        seb_config_key = normalize_config_key(seb_config_key_raw) if seb_config_key_raw else None
+
+        if seb_config_key_raw and not seb_config_key:
+            flash('SEB Config Key 必须是 64 位十六进制字符。', 'danger')
+            return redirect(url_for('admin.admin_exams'))
 
         available_question_count = len(
             get_problem_templates_by_paper(paper_id, enabled_only=False)
@@ -794,10 +803,23 @@ def create_admin_blueprint(deps):
             paper_auto_enabled = ensure_exam_paper_enabled(cursor, paper_id)
             cursor.execute(
                 """
-                INSERT INTO exams (name, paper_id, question_count, exam_type, start_time, end_time, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'published')
+                INSERT INTO exams (
+                    name, paper_id, question_count, exam_type, start_time, end_time, status,
+                    seb_required, seb_config_key, seb_quit_token
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, 'published', %s, %s, %s)
                 """,
-                (name, paper_id, question_count, exam_type if exam_type in {'normal', 'retake'} else 'normal', start_time, end_time)
+                (
+                    name,
+                    paper_id,
+                    question_count,
+                    exam_type if exam_type in {'normal', 'retake'} else 'normal',
+                    start_time,
+                    end_time,
+                    seb_required,
+                    seb_config_key,
+                    uuid.uuid4().hex,
+                )
             )
             exam_id = cursor.lastrowid
             frozen_question_count = replace_exam_question_pool(cursor, exam_id, paper_id)
@@ -936,6 +958,15 @@ def create_admin_blueprint(deps):
         upload_file = request.files.get('student_file')
         start_time_raw = (request.form.get('start_time') or '').strip()
         end_time_raw = (request.form.get('end_time') or '').strip()
+        seb_required = parse_checkbox(request.form.get('seb_required'))
+        seb_config_key_raw = (request.form.get('seb_config_key') or '').strip()
+        if seb_config_key_raw:
+            seb_config_key = normalize_config_key(seb_config_key_raw)
+            if not seb_config_key:
+                flash('SEB Config Key 必须是 64 位十六进制字符。', 'danger')
+                return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
+        else:
+            seb_config_key = existing_exam.get('seb_config_key')
         replace_student_assignments = False
 
         available_question_count = len(
@@ -1042,7 +1073,11 @@ def create_admin_blueprint(deps):
                 int(existing_exam['paper_id']) != paper_id or
                 old_question_count != stored_question_count
             )
-            if question_config_changed:
+            security_config_changed = (
+                bool(existing_exam.get('seb_required')) != seb_required or
+                (existing_exam.get('seb_config_key') or None) != (seb_config_key or None)
+            )
+            if question_config_changed or security_config_changed:
                 cursor.execute(
                     """
                     SELECT (
@@ -1054,8 +1089,10 @@ def create_admin_blueprint(deps):
                 )
                 if (cursor.fetchone() or {}).get('started'):
                     conn.rollback()
-                    flash('已有学生进入过答题页面，不能再修改题库或抽题数量。', 'danger')
+                    flash('已有学生进入过答题页面，不能再修改题库、抽题数量或安全考试配置。', 'danger')
                     return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
+
+            if question_config_changed:
                 cursor.execute('DELETE FROM exam_user_questions WHERE exam_id = %s', (exam_id,))
                 frozen_question_count = replace_exam_question_pool(cursor, exam_id, paper_id)
                 if frozen_question_count < question_count:
@@ -1070,10 +1107,24 @@ def create_admin_blueprint(deps):
                     exam_type = %s,
                     start_time = %s,
                     end_time = %s,
-                    status = 'published'
+                    status = 'published',
+                    seb_required = %s,
+                    seb_config_key = %s,
+                    seb_quit_token = COALESCE(seb_quit_token, %s)
                 WHERE id = %s
                 """,
-                (name, paper_id, stored_question_count, exam_type if exam_type in {'normal', 'retake'} else 'normal', start_time, end_time, exam_id)
+                (
+                    name,
+                    paper_id,
+                    stored_question_count,
+                    exam_type if exam_type in {'normal', 'retake'} else 'normal',
+                    start_time,
+                    end_time,
+                    seb_required,
+                    seb_config_key,
+                    uuid.uuid4().hex,
+                    exam_id,
+                )
             )
 
             assignments = []

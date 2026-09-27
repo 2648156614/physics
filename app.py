@@ -24,6 +24,7 @@ from config import (
     POOL_PREWARM_PAUSE_SECONDS,
     POOL_REFILL_BATCH,
     POOL_TARGET,
+    SEB_INTEGRATION_ENABLED,
 )
 from db import get_db_connection
 from extensions import RedisError, app, logger
@@ -39,6 +40,11 @@ from services.redis_cache_service import (
 )
 from services import question_generation_service
 from services.exam_assignment_service import select_exam_template_ids
+from services.seb_exam_service import (
+    build_finish_summary,
+    normalize_config_key,
+    verify_config_key_request,
+)
 from routes.auth import auth_bp, get_avatar_choices, login_required
 from routes.admin import create_admin_blueprint
 from routes.exam import create_exam_blueprint
@@ -365,6 +371,90 @@ def get_exam_by_id(exam_id):
         if getattr(err, 'errno', None) == 1146:
             return None
         raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def is_seb_exam_required(exam):
+    return bool(SEB_INTEGRATION_ENABLED and exam and exam.get('seb_required'))
+
+
+def validate_seb_exam_request(exam, absolute_url, received_hash):
+    if not is_seb_exam_required(exam):
+        return True, None
+    config_key = normalize_config_key(exam.get('seb_config_key'))
+    if not config_key:
+        return False, '该考试尚未完成安全浏览器配置，请联系监考教师。'
+    if not verify_config_key_request(absolute_url, config_key, received_hash):
+        return False, '该考试必须使用教师指定的 Safe Exam Browser 配置进入。'
+    return True, None
+
+
+def record_secure_exam_entry(user_id, exam_id, batch_id=None):
+    conn = get_db_connection()
+    if not conn:
+        return False
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO exam_secure_sessions (
+                exam_id, batch_id, user_id, status, first_started_at, last_seen_at
+            ) VALUES (%s, %s, %s, 'active', NOW(), NOW())
+            ON DUPLICATE KEY UPDATE
+                batch_id = VALUES(batch_id),
+                status = 'active',
+                last_seen_at = NOW()
+            """,
+            (exam_id, batch_id, user_id),
+        )
+        conn.commit()
+        return True
+    except mysql.connector.Error:
+        conn.rollback()
+        logger.exception('记录安全考试进入状态失败')
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def finish_secure_exam_session(user_id, exam_id, batch_id, completed_count, total_count):
+    summary = build_finish_summary(completed_count, total_count)
+    conn = get_db_connection()
+    if not conn:
+        return False, summary
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO exam_secure_sessions (
+                exam_id, batch_id, user_id, status, first_started_at, last_seen_at,
+                exit_confirmed_at, completed_count, total_count
+            ) VALUES (%s, %s, %s, 'exit_confirmed', NOW(), NOW(), NOW(), %s, %s)
+            ON DUPLICATE KEY UPDATE
+                batch_id = VALUES(batch_id),
+                status = 'exit_confirmed',
+                last_seen_at = NOW(),
+                exit_confirmed_at = NOW(),
+                completed_count = VALUES(completed_count),
+                total_count = VALUES(total_count)
+            """,
+            (
+                exam_id,
+                batch_id,
+                user_id,
+                summary['completed_count'],
+                summary['total_count'],
+            ),
+        )
+        conn.commit()
+        return True, summary
+    except mysql.connector.Error:
+        conn.rollback()
+        logger.exception('保存安全考试退出状态失败')
+        return False, summary
     finally:
         cursor.close()
         conn.close()
@@ -1904,6 +1994,55 @@ def ensure_exam_batch_schema(cursor):
     """)
 
 
+def ensure_seb_exam_schema(cursor):
+    """Add opt-in Safe Exam Browser settings without changing existing exams."""
+    cursor.execute("SHOW COLUMNS FROM exams LIKE 'seb_required'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "ALTER TABLE exams ADD COLUMN seb_required BOOLEAN NOT NULL DEFAULT FALSE AFTER status"
+        )
+        print('已添加 exams.seb_required 列')
+
+    cursor.execute("SHOW COLUMNS FROM exams LIKE 'seb_config_key'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "ALTER TABLE exams ADD COLUMN seb_config_key CHAR(64) DEFAULT NULL AFTER seb_required"
+        )
+        print('已添加 exams.seb_config_key 列')
+
+    cursor.execute("SHOW COLUMNS FROM exams LIKE 'seb_quit_token'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "ALTER TABLE exams ADD COLUMN seb_quit_token CHAR(32) DEFAULT NULL AFTER seb_config_key"
+        )
+        print('已添加 exams.seb_quit_token 列')
+
+    cursor.execute("SHOW INDEX FROM exams WHERE Key_name = 'uq_exams_seb_quit_token'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "ALTER TABLE exams ADD UNIQUE KEY uq_exams_seb_quit_token (seb_quit_token)"
+        )
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS exam_secure_sessions (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            exam_id INT NOT NULL,
+            batch_id INT DEFAULT NULL,
+            user_id INT NOT NULL,
+            status VARCHAR(24) NOT NULL DEFAULT 'active',
+            first_started_at DATETIME NOT NULL,
+            last_seen_at DATETIME NOT NULL,
+            exit_confirmed_at DATETIME DEFAULT NULL,
+            completed_count INT NOT NULL DEFAULT 0,
+            total_count INT NOT NULL DEFAULT 0,
+            UNIQUE KEY uq_exam_secure_user (exam_id, user_id),
+            INDEX idx_exam_secure_status (exam_id, status),
+            FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+
 def ensure_question_lifecycle_schema(cursor):
     """Add non-destructive question versioning and freeze each exam's question pool."""
     cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'status'")
@@ -2018,14 +2157,19 @@ def repair_database():
                 start_time DATETIME NULL,
                 end_time DATETIME NULL,
                 status VARCHAR(20) DEFAULT 'published',
+                seb_required BOOLEAN NOT NULL DEFAULT FALSE,
+                seb_config_key CHAR(64) DEFAULT NULL,
+                seb_quit_token CHAR(32) DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (paper_id) REFERENCES exam_papers(id)
+                FOREIGN KEY (paper_id) REFERENCES exam_papers(id),
+                UNIQUE KEY uq_exams_seb_quit_token (seb_quit_token)
             )
         """)
         cursor.execute("SHOW COLUMNS FROM exams LIKE 'question_count'")
         if not cursor.fetchone():
             cursor.execute("ALTER TABLE exams ADD COLUMN question_count INT DEFAULT NULL AFTER paper_id")
             print("已添加 exams.question_count 列")
+        ensure_seb_exam_schema(cursor)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS exam_assignments (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -2252,10 +2396,15 @@ def initialize_database():
         start_time DATETIME NULL,
         end_time DATETIME NULL,
         status VARCHAR(20) DEFAULT 'published',
+        seb_required BOOLEAN NOT NULL DEFAULT FALSE,
+        seb_config_key CHAR(64) DEFAULT NULL,
+        seb_quit_token CHAR(32) DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (paper_id) REFERENCES exam_papers(id)
+        FOREIGN KEY (paper_id) REFERENCES exam_papers(id),
+        UNIQUE KEY uq_exams_seb_quit_token (seb_quit_token)
     )
     """)
+    ensure_seb_exam_schema(cursor)
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS exam_assignments (

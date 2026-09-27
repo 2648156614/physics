@@ -1,9 +1,110 @@
 from flask import Blueprint
 
+from services.seb_exam_service import SEB_CONFIG_KEY_HEADER, build_finish_summary
+
 
 def create_exam_blueprint(deps):
     globals().update(deps)
     bp = Blueprint('exam', __name__)
+
+    def seb_guard(exam, api=False):
+        valid, message = validate_seb_exam_request(
+            exam,
+            request.url,
+            request.headers.get(SEB_CONFIG_KEY_HEADER),
+        )
+        if valid:
+            return None
+        if api:
+            return jsonify({
+                'success': False,
+                'seb_required': True,
+                'message': message,
+            }), 403
+        return render_template('seb_required.html', exam=exam, message=message), 403
+
+    def secure_exam_progress(exam_id, paper_id):
+        display_mapping = get_user_exam_problem_display_info(
+            session['user_id'], exam_id, paper_id
+        )
+        actual_ids = [item['actual_id'] for item in display_mapping.values()]
+        completion_map = get_completion_status_map(
+            session['user_id'], paper_id, actual_ids, exam_id
+        ) if actual_ids else {}
+        completed_count = sum(1 for completed in completion_map.values() if completed)
+        return (
+            display_mapping,
+            completion_map,
+            build_finish_summary(completed_count, len(display_mapping)),
+        )
+
+    @bp.route('/seb/start/<int:exam_id>')
+    def seb_start(exam_id):
+        exam = get_exam_by_id(exam_id)
+        if not exam or not is_seb_exam_required(exam):
+            return render_template('seb_required.html', exam=exam, message='该考试未启用安全考试模式。'), 404
+        blocked = seb_guard(exam)
+        if blocked:
+            return blocked
+        session['pending_seb_exam_id'] = exam_id
+        if session.get('user_id'):
+            return redirect(url_for('exam.seb_continue', exam_id=exam_id))
+        return redirect(url_for('auth.login'))
+
+    @bp.route('/seb/continue/<int:exam_id>')
+    @login_required
+    def seb_continue(exam_id):
+        exam = get_exam_by_id(exam_id)
+        if not exam or not user_can_access_exam(session['user_id'], exam_id):
+            session.pop('pending_seb_exam_id', None)
+            flash('您不在该考试的参考名单中。', 'danger')
+            return redirect(url_for('dashboard'))
+        blocked = seb_guard(exam)
+        if blocked:
+            return blocked
+        exam_access = get_user_exam_access(session['user_id'], exam_id)
+        if not exam_access['allowed']:
+            flash(exam_access['message'], 'warning')
+            return redirect(url_for('dashboard', exam_id=exam_id))
+        session['selected_exam_id'] = exam_id
+        session['selected_exam_paper_id'] = exam['paper_id']
+        session['selected_exam_batch_id'] = exam_access.get('batch_id')
+        session.pop('pending_seb_exam_id', None)
+        display_mapping, completion_map, summary = secure_exam_progress(exam_id, exam['paper_id'])
+        target_problem = len(display_mapping)
+        if not summary['all_completed']:
+            target_problem = next(
+                (
+                    item['display_number']
+                    for item in display_mapping.values()
+                    if not completion_map.get(item['actual_id'], False)
+                ),
+                1,
+            )
+        return redirect(url_for('problem_ajax', problem_id=max(1, target_problem)))
+
+    @bp.route('/seb/quit/<token>')
+    def seb_quit(token):
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True) if conn else None
+        exam = None
+        try:
+            if cursor:
+                cursor.execute(
+                    'SELECT id, name FROM exams WHERE seb_quit_token = %s LIMIT 1',
+                    (token,),
+                )
+                exam = cursor.fetchone()
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+        if not exam:
+            return render_template('seb_finished.html', exam_name=None, invalid=True), 404
+        exam_name = exam['name']
+        session.clear()
+        return render_template('seb_finished.html', exam_name=exam_name, invalid=False)
 
     # 主应用路由
     @bp.route('/')
@@ -78,6 +179,7 @@ def create_exam_blueprint(deps):
                 selected_paper_id=selected_paper_id,
                 available_exams=available_exams,
                 selected_exam=selected_exam,
+                seb_required=is_seb_exam_required(selected_exam),
                 selected_exam_id=selected_exam_id,
                 has_available_papers=has_available_papers,
                 exam_access=exam_access
@@ -311,6 +413,10 @@ def create_exam_blueprint(deps):
                     'exam_blocked': True,
                     'exam_status': exam_access.get('status')
                 }), 403
+            exam = get_exam_by_id(selected_exam_id)
+            blocked = seb_guard(exam, api=True)
+            if blocked:
+                return blocked
     
             # 根据显示序号获取实际ID
             paper_id = exam_access.get('paper_id') or resolve_selected_exam_paper_id()
@@ -375,6 +481,10 @@ def create_exam_blueprint(deps):
         if not exam_access['allowed']:
             flash(exam_access['message'], 'warning')
             return redirect(url_for('dashboard'))
+        exam = get_exam_by_id(selected_exam_id)
+        blocked = seb_guard(exam)
+        if blocked:
+            return blocked
     
         # 根据显示序号获取实际ID
         paper_id = exam_access.get('paper_id') or resolve_selected_exam_paper_id()
@@ -481,6 +591,13 @@ def create_exam_blueprint(deps):
             print(f"=== Ajax问题页面结束 ===\n")
     
         is_completed = is_problem_completed(session['user_id'], actual_id, paper_id, selected_exam_id)
+        seb_required = is_seb_exam_required(exam)
+        if seb_required and session.get('seb_entry_recorded_exam_id') != selected_exam_id:
+            if record_secure_exam_entry(
+                session['user_id'], selected_exam_id, exam_access.get('batch_id')
+            ):
+                session['seb_entry_recorded_exam_id'] = selected_exam_id
+                session.modified = True
     
         return render_template('problem_ajax.html',
                                problem=problem_data,
@@ -491,7 +608,8 @@ def create_exam_blueprint(deps):
                                total_problems=total_problems,
                                display_mapping=display_mapping,
                                display_to_actual=display_to_actual,
-                               is_completed=is_completed)
+                               is_completed=is_completed,
+                               seb_required=seb_required)
     
     
     @bp.route('/api/submit/<int:problem_id>', methods=['POST'])  # 保持参数名为 problem_id
@@ -514,6 +632,10 @@ def create_exam_blueprint(deps):
                     if exam_access.get('exam_end_time') else None,
                 'exam_status': exam_access.get('status')
             }), 403
+            exam = get_exam_by_id(selected_exam_id)
+            blocked = seb_guard(exam, api=True)
+            if blocked:
+                return blocked
     
             data = request.get_json()
             logger.info("提交答案: problem_id=%s", problem_id)
@@ -716,7 +838,7 @@ def create_exam_blueprint(deps):
                         'new_problem_text': new_problem_data['problem_text'],
                         'token': new_token
                     })
-    
+
                     logger.info("已从题目池获取新题: problem_id=%s actual_id=%s", problem_id, actual_id)
                     logger.debug(
                         "新题目详情: var_values=%s correct_answers=%s",
@@ -770,6 +892,64 @@ def create_exam_blueprint(deps):
             logger.exception("服务器错误: %s", e)
             return jsonify({'success': False, 'message': f'服务器错误: {str(e)}'})
 
+    @bp.route('/api/exam/secure-finish-summary', methods=['POST'])
+    @login_required
+    def secure_finish_summary():
+        current_problem_state = session.get('current_problem') or {}
+        exam_id = resolve_selected_exam_id(
+            current_problem_state.get('exam_id') or session.get('selected_exam_id')
+        )
+        exam_access = get_user_exam_access(session['user_id'], exam_id)
+        if not exam_access['allowed'] and exam_access.get('status') != 'ended':
+            return jsonify({'success': False, 'message': exam_access['message']}), 403
+        exam = get_exam_by_id(exam_id)
+        if not is_seb_exam_required(exam):
+            return jsonify({'success': False, 'message': '该考试未启用安全考试模式。'}), 400
+        blocked = seb_guard(exam, api=True)
+        if blocked:
+            return blocked
+        display_mapping, _, summary = secure_exam_progress(exam_id, exam_access['paper_id'])
+        if current_problem_state.get('display_number') != len(display_mapping):
+            return jsonify({'success': False, 'message': '请先进入最后一题页面再确认完成。'}), 400
+        return jsonify({'success': True, **summary})
+
+    @bp.route('/api/exam/secure-finish', methods=['POST'])
+    @login_required
+    def secure_finish():
+        current_problem_state = session.get('current_problem') or {}
+        exam_id = resolve_selected_exam_id(
+            current_problem_state.get('exam_id') or session.get('selected_exam_id')
+        )
+        exam_access = get_user_exam_access(session['user_id'], exam_id)
+        if not exam_access['allowed'] and exam_access.get('status') != 'ended':
+            return jsonify({'success': False, 'message': exam_access['message']}), 403
+        exam = get_exam_by_id(exam_id)
+        if not is_seb_exam_required(exam):
+            return jsonify({'success': False, 'message': '该考试未启用安全考试模式。'}), 400
+        blocked = seb_guard(exam, api=True)
+        if blocked:
+            return blocked
+        display_mapping, _, summary = secure_exam_progress(exam_id, exam_access['paper_id'])
+        if current_problem_state.get('display_number') != len(display_mapping):
+            return jsonify({'success': False, 'message': '请先进入最后一题页面再确认完成。'}), 400
+        saved, summary = finish_secure_exam_session(
+            session['user_id'],
+            exam_id,
+            exam_access.get('batch_id'),
+            summary['completed_count'],
+            summary['total_count'],
+        )
+        if not saved:
+            return jsonify({'success': False, 'message': '完成状态保存失败，请重试。'}), 503
+        session.pop('seb_entry_recorded_exam_id', None)
+        session.pop('current_problem', None)
+        session.modified = True
+        return jsonify({
+            'success': True,
+            **summary,
+            'quit_url': url_for('exam.seb_quit', token=exam['seb_quit_token'], _external=True),
+        })
+
     # ===== 极简点选兜底：学生手动纠正刚提交的错因粗类 =====
     @bp.route('/api/correct_error_category', methods=['POST'])
     def correct_error_category():
@@ -777,6 +957,12 @@ def create_exam_blueprint(deps):
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({'success': False, 'message': '未登录'}), 401
+        current_problem_state = session.get('current_problem') or {}
+        exam_id = current_problem_state.get('exam_id') or session.get('selected_exam_id')
+        exam = get_exam_by_id(exam_id)
+        blocked = seb_guard(exam, api=True)
+        if blocked:
+            return blocked
 
         payload = request.get_json(silent=True) or {}
         response_ids = payload.get('response_ids') or []

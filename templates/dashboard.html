@@ -32,7 +32,7 @@
                     <i class="bi bi-play-circle me-2"></i>
                     <span id="exam-start-button-text">
                         {% if exam_access.allowed %}
-                            {% if completed_count > 0 %}继续{% endif %}学习
+                            {% if seb_required %}<i class="bi bi-shield-lock me-1"></i>{% endif %}{% if completed_count > 0 %}继续{% endif %}学习
                         {% else %}
                             {% if exam_access.status == 'ended' %}考试已结束{% else %}未到开考时间{% endif %}
                         {% endif %}
@@ -69,6 +69,12 @@
             </div>
         </div>
     </div>
+</div>
+{% endif %}
+
+{% if seb_required %}
+<div class="alert alert-light border shadow-sm">
+    <i class="bi bi-shield-lock me-2"></i>本场考试启用了 Safe Exam Browser。普通浏览器可以查看首页，进入答题时需要使用监考教师发放的 .seb 配置。
 </div>
 {% endif %}
 
