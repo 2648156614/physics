@@ -1,0 +1,23 @@
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./env.worker
+    environment:
+      FLASK_ENV: production
+      TZ: Asia/Shanghai
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-unknown}
+    ports:
+      - "${WORKER_LISTEN_PORT:-5000}:5000"
+    volumes:
+      - ../logs-worker:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=4)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 60s

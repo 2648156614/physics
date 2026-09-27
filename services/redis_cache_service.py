@@ -1,6 +1,7 @@
 import json
+import uuid
 
-from config import PROBLEM_TTL_SECONDS
+from config import PROBLEM_TTL_SECONDS, REDIS_LOCK_TTL_SECONDS
 from extensions import RedisError, logger, redis_client
 
 
@@ -10,6 +11,36 @@ def get_pool_key(template_id):
 
 def get_problem_key(token):
     return f"exam:problem:{token}"
+
+
+def acquire_distributed_lock(name, ttl_seconds=None):
+    """Acquire a cross-instance Redis lock and return its owner token."""
+    token = uuid.uuid4().hex
+    ttl = max(1, int(ttl_seconds or REDIS_LOCK_TTL_SECONDS))
+    acquired = redis_client.set(f"exam:lock:{name}", token, nx=True, ex=ttl)
+    return token if acquired else None
+
+
+def release_distributed_lock(name, token):
+    """Release a lock only when it is still owned by this caller."""
+    if not token:
+        return False
+    key = f"exam:lock:{name}"
+    script = """
+    if redis.call('get', KEYS[1]) == ARGV[1] then
+        return redis.call('del', KEYS[1])
+    end
+    return 0
+    """
+    try:
+        return bool(redis_client.eval(script, 1, key, token))
+    except (AttributeError, NotImplementedError):
+        if redis_client.get(key) == token:
+            return bool(redis_client.delete(key))
+        return False
+    except RedisError as err:
+        logger.warning("释放 Redis 分布式锁失败: name=%s error=%s", name, err)
+        return False
 
 
 def cache_problem_with_token(token, problem_data):

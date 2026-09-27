@@ -1,3 +1,5 @@
+from functools import wraps
+
 from flask import Blueprint
 
 from services.seb_exam_service import SEB_CONFIG_KEY_HEADER, build_finish_summary
@@ -6,6 +8,35 @@ from services.seb_exam_service import SEB_CONFIG_KEY_HEADER, build_finish_summar
 def create_exam_blueprint(deps):
     globals().update(deps)
     bp = Blueprint('exam', __name__)
+
+    def serialize_submission(view):
+        """Allow only one in-flight submission per student and displayed problem."""
+        @wraps(view)
+        def wrapped(problem_id, *args, **kwargs):
+            user_id = session.get('user_id')
+            current_state = session.get('current_problem') or {}
+            exam_id = current_state.get('exam_id') or session.get('selected_exam_id') or 'none'
+            lock_name = f"answer-submit:{user_id}:{exam_id}:{problem_id}"
+            try:
+                lock_token = acquire_distributed_lock(lock_name, ttl_seconds=30)
+            except RedisError as err:
+                logger.error("提交锁连接 Redis 失败: user_id=%s error=%s", user_id, err)
+                return jsonify({
+                    'success': False,
+                    'message': '提交服务暂时不可用，请稍后重试。',
+                }), 503
+            if not lock_token:
+                return jsonify({
+                    'success': False,
+                    'submission_in_progress': True,
+                    'message': '答案正在提交，请勿重复点击。',
+                }), 409
+            try:
+                return view(problem_id, *args, **kwargs)
+            finally:
+                release_distributed_lock(lock_name, lock_token)
+
+        return wrapped
 
     def seb_guard(exam, api=False):
         valid, message = validate_seb_exam_request(
@@ -614,6 +645,7 @@ def create_exam_blueprint(deps):
     
     @bp.route('/api/submit/<int:problem_id>', methods=['POST'])  # 保持参数名为 problem_id
     @login_required
+    @serialize_submission
     def api_submit(problem_id):
         """API接口：提交答案 - 内部将problem_id作为显示序号使用"""
         try:

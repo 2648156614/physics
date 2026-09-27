@@ -1,0 +1,54 @@
+upstream physics_web {
+    least_conn;
+    server web:5000 max_fails=3 fail_timeout=10s;
+    server ${WORKER_HOST}:${WORKER_PORT} max_fails=3 fail_timeout=10s;
+    keepalive 32;
+}
+
+upstream physics_primary {
+    server web:5000;
+    keepalive 8;
+}
+
+server {
+    listen 80;
+    server_name _;
+    client_max_body_size 20m;
+
+    location = /load-balancer-health {
+        access_log off;
+        default_type application/json;
+        return 200 '{"status":"healthy","service":"nginx"}';
+    }
+
+    # 管理操作和可变图片固定交给主节点，避免本地文件在两台机器间分裂。
+    location ^~ /admin {
+        proxy_pass http://physics_primary;
+        include /etc/nginx/proxy_params;
+    }
+
+    location ^~ /problem_image/ {
+        proxy_pass http://physics_primary;
+        include /etc/nginx/proxy_params;
+    }
+
+    location ^~ /static/images/ {
+        proxy_pass http://physics_primary;
+        include /etc/nginx/proxy_params;
+    }
+
+    location ^~ /static/avatars/ {
+        proxy_pass http://physics_primary;
+        include /etc/nginx/proxy_params;
+    }
+
+    location / {
+        proxy_pass http://physics_web;
+        include /etc/nginx/proxy_params;
+
+        # Nginx默认只会对GET/HEAD等幂等请求切换节点；这里绝不启用
+        # proxy_next_upstream non_idempotent，避免POST提交被自动重放。
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+        proxy_next_upstream_tries 2;
+    }
+}

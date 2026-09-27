@@ -2,6 +2,7 @@ import os
 import sys
 import logging
 from datetime import datetime
+from config import DEPLOYMENT_ROLE, INSTANCE_ID, RUN_DB_MIGRATIONS
 from app import (
     app,
     initialize_database,
@@ -67,16 +68,16 @@ if __name__ == '__main__':
     os.makedirs(get_upload_folder_path(), exist_ok=True)
 
     try:
-        # 初始化数据库（注意：多实例同时启动时可能会同时跑一遍）
-        print("📊 初始化数据库...")
-        initialize_database()
-        ensure_user_columns()
-        create_admin_user()
-        repair_database()
-        # 必须放在 repair_database() 之后：索引依赖 exam_id / switch_count 等后补字段。
-        # 原先只有 app.py 的 __main__ 里调用了它，而容器实际入口是本文件，
-        # 导致 9 个高并发关键索引在 Docker 部署下从未创建过。
-        ensure_performance_indexes()
+        if RUN_DB_MIGRATIONS:
+            print("📊 初始化数据库...")
+            initialize_database()
+            ensure_user_columns()
+            create_admin_user()
+            repair_database()
+            # 必须放在 repair_database() 之后：索引依赖后补字段。
+            ensure_performance_indexes()
+        else:
+            print("[INIT] 当前节点跳过数据库结构初始化")
         if os.environ.get("PREWARM_ON_START", "0").lower() in ("1", "true", "yes", "on"):
             print("[PREWARM] Prewarming enabled problem pools...")
             prewarm_pools()
@@ -85,6 +86,7 @@ if __name__ == '__main__':
         from waitress import serve
 
         print("🎯 服务器配置信息:")
+        print(f"   - 节点: {INSTANCE_ID} ({DEPLOYMENT_ROLE})")
         print(f"   - 地址: http://0.0.0.0:{port}")
         print(f"   - 线程数: {waitress_threads}")
         print(f"   - 最大连接: {waitress_connection_limit}")
