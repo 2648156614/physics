@@ -2898,6 +2898,16 @@ def ensure_performance_indexes():
                 'idx_users_teacher_exam_start',
                 "CREATE INDEX idx_users_teacher_exam_start ON users (teacher_name, exam_start_time, exam_end_time)"
             ),
+            (
+                'users',
+                'idx_users_class_id',
+                "CREATE INDEX idx_users_class_id ON users (class_name, id)"
+            ),
+            (
+                'users',
+                'idx_users_major_id',
+                "CREATE INDEX idx_users_major_id ON users (major, id)"
+            ),
         ]
 
         for table_name, index_name, ddl in index_definitions:
