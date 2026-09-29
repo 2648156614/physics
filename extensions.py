@@ -8,6 +8,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import (
     PERMANENT_SESSION_LIFETIME,
+    REQUIRE_REDIS,
     REDIS_URL,
     SECRET_KEY,
     TRUST_PROXY_HEADERS,
@@ -33,6 +34,9 @@ class InMemoryRedis:
         self._expires = {}
         self._lock = threading.RLock()
 
+    def ping(self):
+        return True
+
     def _cleanup_key(self, key):
         expires_at = self._expires.get(key)
         if expires_at is not None and expires_at <= time.time():
@@ -47,6 +51,19 @@ class InMemoryRedis:
             self._values[key] = value
             self._expires[key] = time.time() + int(ttl)
             self._lists.pop(key, None)
+        return True
+
+    def set(self, key, value, nx=False, ex=None):
+        with self._lock:
+            self._cleanup_key(key)
+            if nx and (key in self._values or key in self._lists):
+                return False
+            self._values[key] = value
+            self._lists.pop(key, None)
+            if ex is not None:
+                self._expires[key] = time.time() + int(ex)
+            else:
+                self._expires.pop(key, None)
         return True
 
     def get(self, key):
@@ -116,6 +133,8 @@ try:
     redis_client.ping()
     CACHE_BACKEND = 'redis'
 except Exception as err:
+    if REQUIRE_REDIS:
+        raise RuntimeError(f"Redis is required but unavailable: {err}") from err
     RedisError = Exception
     redis_client = InMemoryRedis()
     CACHE_BACKEND = 'memory'

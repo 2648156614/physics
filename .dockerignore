@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+deploy/env.primary
+deploy/env.worker
 
 # Windows 上产生的字节码缓存，带进 Linux 镜像纯属污染
 __pycache__/

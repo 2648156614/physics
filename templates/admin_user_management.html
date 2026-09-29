@@ -2,227 +2,208 @@
 {% block title %}用户管理{% endblock %}
 
 {% block content %}
-<div class="container">
-  <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2><i class="bi bi-people me-2"></i>用户管理</h2>
-  </div>
+<style>
+  .user-admin-page { --table-border: #dfe4ea; --muted-surface: #f6f8fa; --text-strong: #202938; color: var(--text-strong); }
+  .user-admin-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 20px; }
+  .user-admin-title { margin: 0 0 4px; font-size: 1.55rem; font-weight: 700; letter-spacing: 0; }
+  .user-admin-subtitle { margin: 0; color: #667085; font-size: .92rem; }
+  .user-admin-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .user-filter-panel { padding: 16px; margin-bottom: 14px; border: 1px solid var(--table-border); border-radius: 8px; background: #fff; }
+  .user-filter-grid { display: grid; grid-template-columns: minmax(220px, 1.5fr) repeat(3, minmax(150px, 1fr)) auto; gap: 10px; align-items: end; }
+  .user-filter-grid label { display: block; margin-bottom: 5px; color: #475467; font-size: .78rem; font-weight: 600; }
+  .user-table-panel { border: 1px solid var(--table-border); border-radius: 8px; background: #fff; overflow: hidden; }
+  .user-table-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 10px 14px; border-bottom: 1px solid var(--table-border); background: var(--muted-surface); color: #475467; font-size: .86rem; }
+  .user-table-scroll { height: clamp(360px, 58vh, 680px); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .user-data-table { width: 100%; min-width: 1120px; margin: 0; border-collapse: separate; border-spacing: 0; }
+  .user-data-table thead th { position: sticky; top: 0; z-index: 3; padding: 11px 12px; border-bottom: 1px solid #cfd6df; background: #f1f4f7; color: #344054; font-size: .78rem; font-weight: 700; white-space: nowrap; }
+  .user-data-table tbody td { padding: 12px; border-bottom: 1px solid #edf0f3; color: #344054; font-size: .88rem; vertical-align: middle; }
+  .user-data-table tbody tr:hover td { background: #f8fbff; }
+  .student-name-link { color: #175cd3; font-weight: 650; text-decoration: none; }
+  .student-name-link:hover { text-decoration: underline; }
+  .cell-secondary { display: block; margin-top: 2px; color: #98a2b3; font-size: .76rem; }
+  .status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #12b76a; vertical-align: 1px; }
+  .status-dot.locked { background: #f04438; }
+  .row-action-button { width: 34px; height: 34px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+  .user-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--table-border); }
+  .empty-users { padding: 64px 20px; color: #667085; text-align: center; }
 
-  <div class="card mb-4">
-    <div class="card-header">筛选用户</div>
-    <div class="card-body">
-      <form method="get" class="row g-3">
-        <div class="col-md-4"><input class="form-control" name="keyword" placeholder="学号或姓名" value="{{ keyword }}"></div>
-        <div class="col-md-3"><input class="form-control" name="class_name" placeholder="班级" value="{{ class_name }}"></div>
-        <div class="col-md-3"><input class="form-control" name="major" placeholder="专业" value="{{ major }}"></div>
-        <div class="col-md-2 d-grid"><button class="btn btn-primary" type="submit">筛选</button></div>
-      </form>
-      <div class="form-text mt-2">默认不展示全部学生，请按学号/姓名、班级或专业筛选后查看。</div>
+  @media (max-width: 1199.98px) { .user-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 767.98px) {
+    .user-admin-header, .user-table-meta, .user-pagination { align-items: stretch; flex-direction: column; }
+    .user-admin-actions > .btn, .user-admin-actions > .dropdown { flex: 1 1 auto; }
+    .user-admin-actions .dropdown > .btn { width: 100%; }
+    .user-filter-grid { grid-template-columns: 1fr; }
+    .user-table-scroll { height: 56vh; }
+    .user-pagination nav { overflow-x: auto; }
+  }
+</style>
+
+<div class="container-fluid user-admin-page px-lg-4">
+  <header class="user-admin-header">
+    <div>
+      <h1 class="user-admin-title">用户管理</h1>
+      <p class="user-admin-subtitle">管理学生账户、基础信息与登录状态，共 {{ all_user_count }} 名学生</p>
     </div>
-  </div>
-
-  <div class="card mb-4">
-    <div class="card-header">添加账户</div>
-    <div class="card-body">
-      <form method="post" action="{{ url_for('admin_add_user') }}" class="row g-3">
-        <div class="col-md-3"><input class="form-control" name="username" placeholder="学号" required></div>
-        <div class="col-md-2"><input class="form-control" name="name" placeholder="姓名" required></div>
-        <div class="col-md-3"><input class="form-control" name="major" placeholder="专业"></div>
-        <div class="col-md-2"><input class="form-control" name="class_name" placeholder="班级"></div>
-        <div class="col-md-2"><input class="form-control" name="teacher_name" placeholder="课程号"></div>
-        <div class="col-md-2"><input class="form-control" type="datetime-local" name="exam_start_time" title="开考时间"></div>
-        <div class="col-md-2"><input class="form-control" type="datetime-local" name="exam_end_time" title="结束时间"></div>
-        <div class="col-md-1 d-grid"><button class="btn btn-success" type="submit">添加</button></div>
-      </form>
-    </div>
-  </div>
-
-  <div class="card mb-4 border-primary">
-    <div class="card-header bg-primary text-white">批量修改学生信息</div>
-    <div class="card-body">
-      <form method="post" action="{{ url_for('admin_batch_update_users') }}" class="row g-3 align-items-end" id="batch-update-form">
-        <div class="col-md-3">
-          <label class="form-label">按班级筛选</label>
-          <input class="form-control" name="filter_class_name" id="batch-update-class" list="classUpdateList" placeholder="完整班级名称">
-          <datalist id="classUpdateList">
-            {% for group in class_groups %}
-            <option value="{{ group.name }}">{{ group.name }}（{{ group.student_count }}人）</option>
-            {% endfor %}
-          </datalist>
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">按专业筛选</label>
-          <input class="form-control" name="filter_major" id="batch-update-major" list="majorUpdateList" placeholder="完整专业名称">
-          <datalist id="majorUpdateList">
-            {% for group in major_groups %}
-            <option value="{{ group.name }}">{{ group.name }}（{{ group.student_count }}人）</option>
-            {% endfor %}
-          </datalist>
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">设置课程号</label>
-          <input class="form-control" name="teacher_name" id="batch-update-teacher" list="teacherDeleteList" placeholder="留空则不修改课程号">
-        </div>
-        <div class="col-md-3">
-          <div class="form-check mb-2">
-            <input class="form-check-input" type="checkbox" name="update_exam_time" value="1" id="batch-update-time">
-            <label class="form-check-label" for="batch-update-time">同时设置考试时间</label>
-          </div>
-          <div class="form-text">至少填写班级或专业；同时填写时取交集。</div>
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">开考时间</label>
-          <input class="form-control" type="datetime-local" name="exam_start_time" id="batch-update-start" disabled>
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">结束时间</label>
-          <input class="form-control" type="datetime-local" name="exam_end_time" id="batch-update-end" disabled>
-        </div>
-        <div class="col-md-2 d-grid">
-          <button class="btn btn-primary" type="submit">批量修改</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="card mb-4 border-danger">
-    <div class="card-header bg-danger text-white">批量删除学生</div>
-    <div class="card-body">
-      <form method="post" action="{{ url_for('admin_batch_delete_users') }}" class="row g-3 align-items-end" id="batch-delete-form">
-        <div class="col-md-3">
-          <label class="form-label">删除方式</label>
-          <select class="form-select" name="delete_by" id="batch-delete-by" required>
-            <option value="teacher_name">按课程号</option>
-            <option value="class_name">按班级</option>
-          </select>
-        </div>
-        <div class="col-md-5">
-          <label class="form-label">课程号或班级名称</label>
-          <input class="form-control" name="delete_value" id="batch-delete-value" list="teacherDeleteList" required placeholder="必须完整匹配名称">
-          <datalist id="teacherDeleteList">
-            {% for group in teacher_groups %}
-            <option value="{{ group.name }}">{{ group.name }}（{{ group.student_count }}人）</option>
-            {% endfor %}
-          </datalist>
-          <datalist id="classDeleteList">
-            {% for group in class_groups %}
-            <option value="{{ group.name }}">{{ group.name }}（{{ group.student_count }}人）</option>
-            {% endfor %}
-          </datalist>
-          <div class="form-text">只会删除完整匹配的学生，不会使用模糊匹配；管理员账号不会被删除。</div>
-        </div>
-        <div class="col-md-2 d-grid">
-          <button class="btn btn-danger" type="submit">批量删除</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">用户列表（筛选后显示，最多显示 500 条）</div>
-    <div class="card-body table-responsive">
-      {% if not has_user_filter %}
-      <div class="alert alert-info mb-0">
-        为避免学生数量过多导致页面卡顿，默认不加载全部学生。请先在上方输入筛选条件。
+    <div class="user-admin-actions">
+      <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#addUserModal"><i class="bi bi-person-plus me-1"></i>添加学生</button>
+      <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#importUsersModal"><i class="bi bi-upload me-1"></i>导入</button>
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-tools me-1"></i>批量操作</button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><button class="dropdown-item" type="button" data-bs-toggle="modal" data-bs-target="#batchUpdateModal"><i class="bi bi-pencil-square me-2"></i>批量修改</button></li>
+          <li><hr class="dropdown-divider"></li>
+          <li><button class="dropdown-item text-danger" type="button" data-bs-toggle="modal" data-bs-target="#batchDeleteModal"><i class="bi bi-trash3 me-2"></i>批量删除</button></li>
+        </ul>
       </div>
-      {% else %}
-      <table class="table table-bordered align-middle">
-        <thead><tr><th>学号</th><th>姓名</th><th>专业</th><th>班级</th><th>课程号</th><th>开考时间</th><th>结束时间</th><th>操作</th></tr></thead>
+    </div>
+  </header>
+
+  <section class="user-filter-panel" aria-label="学生筛选">
+    <form method="get" id="user-filter-form" class="user-filter-grid">
+      <div>
+        <label for="keyword">搜索</label>
+        <div class="input-group"><span class="input-group-text bg-white"><i class="bi bi-search"></i></span><input class="form-control" id="keyword" name="keyword" placeholder="输入学号或姓名" value="{{ keyword }}"></div>
+      </div>
+      <div><label for="class_name">班级</label><select class="form-select filter-auto-submit" id="class_name" name="class_name"><option value="">全部班级</option>{% for group in class_groups %}<option value="{{ group.name }}" {{ 'selected' if class_name == group.name else '' }}>{{ group.name }}（{{ group.student_count }}）</option>{% endfor %}</select></div>
+      <div><label for="major">专业</label><select class="form-select filter-auto-submit" id="major" name="major"><option value="">全部专业</option>{% for group in major_groups %}<option value="{{ group.name }}" {{ 'selected' if major == group.name else '' }}>{{ group.name }}（{{ group.student_count }}）</option>{% endfor %}</select></div>
+      <div><label for="teacher_name">课程号</label><select class="form-select filter-auto-submit" id="teacher_name" name="teacher_name"><option value="">全部课程号</option>{% for group in teacher_groups %}<option value="{{ group.name }}" {{ 'selected' if teacher_name == group.name else '' }}>{{ group.name }}（{{ group.student_count }}）</option>{% endfor %}</select></div>
+      <div class="d-flex gap-2">
+        <input type="hidden" name="per_page" value="{{ per_page }}">
+        <button class="btn btn-dark" type="submit">查询</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('admin_user_management', per_page=per_page) }}" title="清除筛选" aria-label="清除筛选"><i class="bi bi-arrow-counterclockwise"></i></a>
+      </div>
+    </form>
+  </section>
+
+  <section class="user-table-panel" aria-label="学生数据表格">
+    <div class="user-table-meta">
+      <span>找到 <strong>{{ total_users }}</strong> 名学生，当前显示 {{ page_start }}–{{ page_end }}</span>
+      <form method="get" class="d-flex align-items-center gap-2">
+        <input type="hidden" name="keyword" value="{{ keyword }}"><input type="hidden" name="class_name" value="{{ class_name }}"><input type="hidden" name="major" value="{{ major }}"><input type="hidden" name="teacher_name" value="{{ teacher_name }}">
+        <label for="per_page" class="text-nowrap">每页</label>
+        <select class="form-select form-select-sm" id="per_page" name="per_page" onchange="this.form.submit()">{% for size in [25, 50, 100] %}<option value="{{ size }}" {{ 'selected' if per_page == size else '' }}>{{ size }}</option>{% endfor %}</select>
+      </form>
+    </div>
+
+    <div class="user-table-scroll" tabindex="0">
+      <table class="user-data-table">
+        <thead><tr><th>学生</th><th>学号</th><th>专业</th><th>班级</th><th>课程号</th><th>考试时间</th><th>账号状态</th><th>创建时间</th><th class="text-center">操作</th></tr></thead>
         <tbody>
           {% for user in users %}
           <tr>
-            <form method="post" action="{{ url_for('admin_edit_user', user_id=user.id) }}">
-              <td><input class="form-control" name="username" value="{{ user.username }}" required></td>
-              <td><input class="form-control" name="name" value="{{ user.name or '' }}" required></td>
-              <td><input class="form-control" name="major" value="{{ user.major or '' }}"></td>
-              <td><input class="form-control" name="class_name" value="{{ user.class_name or '' }}"></td>
-              <td><input class="form-control" name="teacher_name" value="{{ user.teacher_name or '' }}"></td>
-              <td><input class="form-control" type="datetime-local" name="exam_start_time" value="{{ user.exam_start_time.strftime('%Y-%m-%dT%H:%M') if user.exam_start_time else '' }}"></td>
-              <td><input class="form-control" type="datetime-local" name="exam_end_time" value="{{ user.exam_end_time.strftime('%Y-%m-%dT%H:%M') if user.exam_end_time else '' }}"></td>
-              <td class="d-flex gap-2">
-                <button class="btn btn-sm btn-primary" type="submit">保存</button>
-            </form>
-                <form method="post" action="{{ url_for('admin_reset_user_password', user_id=user.id) }}" onsubmit="return confirm('确认将该学生密码重置为 @ncst + 学号后四位吗？')">
-                  <button class="btn btn-sm btn-outline-warning" type="submit">重置密码</button>
-                </form>
-                <form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('确认删除该用户吗？')">
-                  <button class="btn btn-sm btn-danger" type="submit">删除</button>
-                </form>
-              </td>
+            <td><a class="student-name-link" href="{{ url_for('admin_student_details', user_id=user.id) }}">{{ user.name or '未填写姓名' }}</a><span class="cell-secondary">ID {{ user.id }}</span></td>
+            <td class="fw-semibold">{{ user.username }}</td><td>{{ user.major or '—' }}</td><td>{{ user.class_name or '—' }}</td><td>{{ user.teacher_name or '—' }}</td>
+            <td>{% if user.exam_start_time or user.exam_end_time %}<span>{{ user.exam_start_time.strftime('%m-%d %H:%M') if user.exam_start_time else '未设置' }}</span><span class="cell-secondary">至 {{ user.exam_end_time.strftime('%m-%d %H:%M') if user.exam_end_time else '未设置' }}</span>{% else %}—{% endif %}</td>
+            <td>{% if user.is_locked %}<span><span class="status-dot locked"></span>已锁定</span>{% else %}<span><span class="status-dot"></span>正常</span>{% endif %}{% if not user.password_changed %}<span class="cell-secondary">待修改初始密码</span>{% endif %}</td>
+            <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '—' }}</td>
+            <td class="text-center">
+              <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary row-action-button" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" aria-expanded="false" title="学生操作"><i class="bi bi-three-dots-vertical"></i></button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                  <li><a class="dropdown-item" href="{{ url_for('admin_student_details', user_id=user.id) }}"><i class="bi bi-bar-chart me-2"></i>查看详情</a></li>
+                  <li><button class="dropdown-item edit-user-button" type="button" data-bs-toggle="modal" data-bs-target="#editUserModal" data-edit-url="{{ url_for('admin_edit_user', user_id=user.id) }}" data-username="{{ user.username|e }}" data-name="{{ (user.name or '')|e }}" data-major="{{ (user.major or '')|e }}" data-class-name="{{ (user.class_name or '')|e }}" data-teacher-name="{{ (user.teacher_name or '')|e }}" data-exam-start="{{ user.exam_start_time.strftime('%Y-%m-%dT%H:%M') if user.exam_start_time else '' }}" data-exam-end="{{ user.exam_end_time.strftime('%Y-%m-%dT%H:%M') if user.exam_end_time else '' }}"><i class="bi bi-pencil me-2"></i>编辑信息</button></li>
+                  <li><form method="post" action="{{ url_for('admin_reset_user_password', user_id=user.id) }}" onsubmit="return confirm('确认重置该学生的密码吗？')"><input type="hidden" name="return_to" value="{{ request.full_path }}"><button class="dropdown-item" type="submit"><i class="bi bi-key me-2"></i>重置密码</button></form></li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li><form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('确认删除该学生？相关答题记录也会被删除。')"><input type="hidden" name="return_to" value="{{ request.full_path }}"><button class="dropdown-item text-danger" type="submit"><i class="bi bi-trash3 me-2"></i>删除学生</button></form></li>
+                </ul>
+              </div>
+            </td>
           </tr>
-          {% else %}
-          <tr><td colspan="8" class="text-center text-muted">暂无符合条件的用户</td></tr>
-          {% endfor %}
+          {% else %}<tr><td colspan="9"><div class="empty-users"><i class="bi bi-search fs-2 d-block mb-2"></i>没有找到符合条件的学生</div></td></tr>{% endfor %}
         </tbody>
       </table>
-      {% endif %}
     </div>
-  </div>
+
+    <div class="user-pagination">
+      <span class="text-muted small">第 {{ page }} / {{ total_pages }} 页</span>
+      <nav aria-label="用户列表分页"><ul class="pagination pagination-sm mb-0">
+        <li class="page-item {{ 'disabled' if page <= 1 else '' }}"><a class="page-link" href="{{ url_for('admin_user_management', keyword=keyword, class_name=class_name, major=major, teacher_name=teacher_name, per_page=per_page, page=page-1) if page > 1 else '#' }}" aria-label="上一页"><i class="bi bi-chevron-left"></i></a></li>
+        {% for page_number in pagination_pages %}<li class="page-item {{ 'active' if page_number == page else '' }}"><a class="page-link" href="{{ url_for('admin_user_management', keyword=keyword, class_name=class_name, major=major, teacher_name=teacher_name, per_page=per_page, page=page_number) }}">{{ page_number }}</a></li>{% endfor %}
+        <li class="page-item {{ 'disabled' if page >= total_pages else '' }}"><a class="page-link" href="{{ url_for('admin_user_management', keyword=keyword, class_name=class_name, major=major, teacher_name=teacher_name, per_page=per_page, page=page+1) if page < total_pages else '#' }}" aria-label="下一页"><i class="bi bi-chevron-right"></i></a></li>
+      </ul></nav>
+    </div>
+  </section>
 </div>
+
+<div class="modal fade" id="addUserModal" tabindex="-1" aria-labelledby="addUserModalLabel" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+  <div class="modal-header"><h2 class="modal-title fs-5" id="addUserModalLabel">添加学生</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div>
+  <form method="post" action="{{ url_for('admin_add_user') }}"><input type="hidden" name="return_to" value="{{ request.full_path }}"><div class="modal-body"><div class="row g-3">
+    <div class="col-md-6"><label class="form-label">学号</label><input class="form-control" name="username" required></div><div class="col-md-6"><label class="form-label">姓名</label><input class="form-control" name="name" required></div>
+    <div class="col-md-6"><label class="form-label">专业</label><input class="form-control" name="major" list="majorList"></div><div class="col-md-6"><label class="form-label">班级</label><input class="form-control" name="class_name" list="classList"></div>
+    <div class="col-md-6"><label class="form-label">课程号</label><input class="form-control" name="teacher_name" list="teacherList"></div><div class="col-md-6"></div>
+    <div class="col-md-6"><label class="form-label">开考时间</label><input class="form-control" type="datetime-local" name="exam_start_time"></div><div class="col-md-6"><label class="form-label">结束时间</label><input class="form-control" type="datetime-local" name="exam_end_time"></div>
+  </div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit">确认添加</button></div></form>
+</div></div></div>
+
+<div class="modal fade" id="editUserModal" tabindex="-1" aria-labelledby="editUserModalLabel" aria-hidden="true"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+  <div class="modal-header"><h2 class="modal-title fs-5" id="editUserModalLabel">编辑学生信息</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div>
+  <form method="post" id="edit-user-form"><input type="hidden" name="return_to" value="{{ request.full_path }}"><div class="modal-body"><div class="row g-3">
+    <div class="col-md-6"><label class="form-label">学号</label><input class="form-control" name="username" id="edit-username" required></div><div class="col-md-6"><label class="form-label">姓名</label><input class="form-control" name="name" id="edit-name" required></div>
+    <div class="col-md-6"><label class="form-label">专业</label><input class="form-control" name="major" id="edit-major" list="majorList"></div><div class="col-md-6"><label class="form-label">班级</label><input class="form-control" name="class_name" id="edit-class" list="classList"></div>
+    <div class="col-md-6"><label class="form-label">课程号</label><input class="form-control" name="teacher_name" id="edit-teacher" list="teacherList"></div><div class="col-md-6"></div>
+    <div class="col-md-6"><label class="form-label">开考时间</label><input class="form-control" type="datetime-local" name="exam_start_time" id="edit-start"></div><div class="col-md-6"><label class="form-label">结束时间</label><input class="form-control" type="datetime-local" name="exam_end_time" id="edit-end"></div>
+  </div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit">保存修改</button></div></form>
+</div></div></div>
+
+<div class="modal fade" id="importUsersModal" tabindex="-1" aria-labelledby="importUsersModalLabel" aria-hidden="true"><div class="modal-dialog"><div class="modal-content">
+  <div class="modal-header"><h2 class="modal-title fs-5" id="importUsersModalLabel">批量导入学生</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div>
+  <form method="post" action="{{ url_for('admin_import_students') }}" enctype="multipart/form-data"><input type="hidden" name="return_to" value="{{ request.full_path }}"><div class="modal-body">
+    <label class="form-label" for="students_file">Excel 文件</label><input class="form-control" type="file" id="students_file" name="students_file" accept=".xlsx" required><div class="form-text mb-3">依次为学号、姓名、专业、班级、课程号，可包含表头。</div>
+    <label class="form-label">统一课程号</label><input class="form-control" name="teacher_name" placeholder="Excel课程号为空时使用">
+  </div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit">开始导入</button></div></form>
+</div></div></div>
+
+<div class="modal fade" id="batchUpdateModal" tabindex="-1" aria-labelledby="batchUpdateModalLabel" aria-hidden="true"><div class="modal-dialog modal-lg"><div class="modal-content">
+  <div class="modal-header"><h2 class="modal-title fs-5" id="batchUpdateModalLabel">批量修改学生</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div>
+  <form method="post" action="{{ url_for('admin_batch_update_users') }}" id="batch-update-form"><input type="hidden" name="return_to" value="{{ request.full_path }}"><div class="modal-body"><div class="row g-3">
+    <div class="col-md-6"><label class="form-label">完整班级名称</label><input class="form-control" name="filter_class_name" id="batch-update-class" list="classList"></div><div class="col-md-6"><label class="form-label">完整专业名称</label><input class="form-control" name="filter_major" id="batch-update-major" list="majorList"></div>
+    <div class="col-md-6"><label class="form-label">设置课程号</label><input class="form-control" name="teacher_name" id="batch-update-teacher" list="teacherList" placeholder="留空则不修改"></div><div class="col-md-6 d-flex align-items-end"><div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="update_exam_time" value="1" id="batch-update-time"><label class="form-check-label" for="batch-update-time">同时设置考试时间</label></div></div>
+    <div class="col-md-6"><label class="form-label">开考时间</label><input class="form-control" type="datetime-local" name="exam_start_time" id="batch-update-start" disabled></div><div class="col-md-6"><label class="form-label">结束时间</label><input class="form-control" type="datetime-local" name="exam_end_time" id="batch-update-end" disabled></div>
+  </div><div class="form-text mt-3">至少填写班级或专业；两个条件都填写时只修改同时符合的学生。</div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit">确认修改</button></div></form>
+</div></div></div>
+
+<div class="modal fade" id="batchDeleteModal" tabindex="-1" aria-labelledby="batchDeleteModalLabel" aria-hidden="true"><div class="modal-dialog"><div class="modal-content">
+  <div class="modal-header"><h2 class="modal-title fs-5" id="batchDeleteModalLabel">批量删除学生</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div>
+  <form method="post" action="{{ url_for('admin_batch_delete_users') }}" id="batch-delete-form"><input type="hidden" name="return_to" value="{{ request.full_path }}"><div class="modal-body">
+    <div class="alert alert-danger">删除后会同时清理这些学生的答题记录，且无法恢复。</div><label class="form-label">删除方式</label><select class="form-select mb-3" name="delete_by" id="batch-delete-by"><option value="teacher_name">按课程号</option><option value="class_name">按班级</option></select>
+    <label class="form-label" for="batch-delete-value">完整匹配值</label><input class="form-control" name="delete_value" id="batch-delete-value" list="teacherList" required>
+  </div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-danger" type="submit">确认删除</button></div></form>
+</div></div></div>
+
+<datalist id="classList">{% for group in class_groups %}<option value="{{ group.name }}">{% endfor %}</datalist>
+<datalist id="majorList">{% for group in major_groups %}<option value="{{ group.name }}">{% endfor %}</datalist>
+<datalist id="teacherList">{% for group in teacher_groups %}<option value="{{ group.name }}">{% endfor %}</datalist>
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-  const deleteBy = document.getElementById('batch-delete-by');
-  const deleteValue = document.getElementById('batch-delete-value');
-  const deleteForm = document.getElementById('batch-delete-form');
-  const updateForm = document.getElementById('batch-update-form');
-  const updateClass = document.getElementById('batch-update-class');
-  const updateMajor = document.getElementById('batch-update-major');
-  const updateTeacher = document.getElementById('batch-update-teacher');
+  document.querySelectorAll('.filter-auto-submit').forEach(function (select) { select.addEventListener('change', function () { document.getElementById('user-filter-form').submit(); }); });
+  const editForm = document.getElementById('edit-user-form');
+  document.querySelectorAll('.edit-user-button').forEach(function (button) {
+    button.addEventListener('click', function () {
+      editForm.action = button.dataset.editUrl;
+      document.getElementById('edit-username').value = button.dataset.username;
+      document.getElementById('edit-name').value = button.dataset.name;
+      document.getElementById('edit-major').value = button.dataset.major;
+      document.getElementById('edit-class').value = button.dataset.className;
+      document.getElementById('edit-teacher').value = button.dataset.teacherName;
+      document.getElementById('edit-start').value = button.dataset.examStart;
+      document.getElementById('edit-end').value = button.dataset.examEnd;
+    });
+  });
   const updateTime = document.getElementById('batch-update-time');
   const updateStart = document.getElementById('batch-update-start');
   const updateEnd = document.getElementById('batch-update-end');
-
-  function updateDeleteList() {
-    deleteValue.value = '';
-    deleteValue.setAttribute('list', deleteBy.value === 'class_name' ? 'classDeleteList' : 'teacherDeleteList');
-    deleteValue.placeholder = deleteBy.value === 'class_name' ? '请输入完整班级名称' : '请输入完整课程号';
-  }
-
-  deleteBy.addEventListener('change', updateDeleteList);
-  updateDeleteList();
-
-  deleteForm.addEventListener('submit', function (event) {
-    const label = deleteBy.value === 'class_name' ? '班级' : '课程号';
-    const value = deleteValue.value.trim();
-    if (!value) {
-      event.preventDefault();
-      return;
-    }
-    const confirmed = confirm(`确认删除${label}为“${value}”的所有学生？\n\n该操作会同时删除这些学生的答题记录，且不可恢复。`);
-    if (!confirmed) {
-      event.preventDefault();
-    }
+  updateTime.addEventListener('change', function () { updateStart.disabled = !updateTime.checked; updateEnd.disabled = !updateTime.checked; if (!updateTime.checked) { updateStart.value = ''; updateEnd.value = ''; } });
+  document.getElementById('batch-update-form').addEventListener('submit', function (event) {
+    const className = document.getElementById('batch-update-class').value.trim(); const major = document.getElementById('batch-update-major').value.trim(); const teacher = document.getElementById('batch-update-teacher').value.trim();
+    if (!className && !major) { event.preventDefault(); alert('请至少填写班级或专业。'); return; }
+    if (!teacher && !updateTime.checked) { event.preventDefault(); alert('请填写课程号或选择修改考试时间。'); return; }
+    if (!confirm('确认批量修改符合条件的学生吗？')) event.preventDefault();
   });
-
-  updateTime.addEventListener('change', function () {
-    updateStart.disabled = !updateTime.checked;
-    updateEnd.disabled = !updateTime.checked;
-    if (!updateTime.checked) {
-      updateStart.value = '';
-      updateEnd.value = '';
-    }
-  });
-
-  updateForm.addEventListener('submit', function (event) {
-    const className = updateClass.value.trim();
-    const major = updateMajor.value.trim();
-    const teacher = updateTeacher.value.trim();
-    if (!className && !major) {
-      alert('请至少填写一个筛选条件：班级或专业。');
-      event.preventDefault();
-      return;
-    }
-    if (!teacher && !updateTime.checked) {
-      alert('请填写要设置的课程号，或勾选同时设置考试时间。');
-      event.preventDefault();
-      return;
-    }
-    const target = [className ? `班级“${className}”` : '', major ? `专业“${major}”` : ''].filter(Boolean).join('且');
-    const actions = [teacher ? `课程号改为“${teacher}”` : '', updateTime.checked ? '更新考试时间' : ''].filter(Boolean).join('，');
-    if (!confirm(`确认将${target}的学生${actions}？`)) {
-      event.preventDefault();
-    }
-  });
+  const deleteBy = document.getElementById('batch-delete-by'); const deleteValue = document.getElementById('batch-delete-value');
+  function syncDeleteInput() { deleteValue.value = ''; deleteValue.setAttribute('list', deleteBy.value === 'class_name' ? 'classList' : 'teacherList'); deleteValue.placeholder = deleteBy.value === 'class_name' ? '输入完整班级名称' : '输入完整课程号'; }
+  deleteBy.addEventListener('change', syncDeleteInput); syncDeleteInput();
+  document.getElementById('batch-delete-form').addEventListener('submit', function (event) { if (!confirm('确认执行批量删除？该操作无法恢复。')) event.preventDefault(); });
 });
 </script>
 {% endblock %}

@@ -1315,6 +1315,13 @@ def create_admin_blueprint(deps):
     @login_required(db_check=True)
     def admin_import_students():
         """管理员批量导入学生（xlsx：学号、姓名、专业、班级、课程号）。"""
+        return_to = (request.form.get('return_to') or '').strip()
+
+        def import_redirect():
+            if return_to.startswith('/admin/users') and not return_to.startswith('//'):
+                return redirect(return_to)
+            return redirect(url_for('admin_dashboard'))
+
         if session.get('username') != 'admin':
             flash('权限不足', 'danger')
             return redirect(url_for('dashboard'))
@@ -1322,11 +1329,11 @@ def create_admin_blueprint(deps):
         upload_file = request.files.get('students_file')
         if not upload_file or upload_file.filename == '':
             flash('请先选择要导入的 xlsx 文件', 'danger')
-            return redirect(url_for('admin_dashboard'))
+            return import_redirect()
     
         if not allowed_excel_file(upload_file.filename):
             flash('文件格式错误，仅支持 .xlsx', 'danger')
-            return redirect(url_for('admin_dashboard'))
+            return import_redirect()
     
         default_teacher_name = (request.form.get('teacher_name') or '').strip()
     
@@ -1346,11 +1353,11 @@ def create_admin_blueprint(deps):
                 raw_rows.append((student_id, student_name, major, class_name, teacher_name))
         except Exception as e:
             flash(f'读取 xlsx 失败：{e}', 'danger')
-            return redirect(url_for('admin_dashboard'))
+            return import_redirect()
     
         if not raw_rows:
             flash('未读取到有效数据，请检查文件内容', 'warning')
-            return redirect(url_for('admin_dashboard'))
+            return import_redirect()
     
         normalized_rows = raw_rows
         first_id, first_name, first_major, first_class, first_teacher = raw_rows[0]
@@ -1372,12 +1379,12 @@ def create_admin_blueprint(deps):
     
         if not valid_rows:
             flash('未找到可导入的学号数据', 'warning')
-            return redirect(url_for('admin_dashboard'))
+            return import_redirect()
     
         conn = get_db_connection()
         if not conn:
             flash('数据库连接失败', 'danger')
-            return redirect(url_for('admin_dashboard'))
+            return import_redirect()
     
         inserted_count = 0
         updated_count = 0
@@ -1428,7 +1435,7 @@ def create_admin_blueprint(deps):
                 cursor.close()
             conn.close()
     
-        return redirect(url_for('admin_dashboard'))
+        return import_redirect()
     
     
     @bp.route('/admin/export/all-student-analytics')

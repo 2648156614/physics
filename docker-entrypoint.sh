@@ -65,7 +65,7 @@ PYEOF
 # 但多实例部署时内存缓存不共享，所以这里给出明确告警。
 echo "[WAIT] 正在等待 Redis (${REDIS_URL:-redis://redis:6379/0}) ..."
 python - <<'PYEOF'
-import os, time
+import os, sys, time
 import redis
 
 url = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -82,7 +82,10 @@ while time.time() < deadline:
             print(f"[WAIT] Redis 尚未就绪: {err}")
         time.sleep(2)
 else:
-    print("[WARN] Redis 等待超时，应用将降级为内存缓存（题目池不跨实例共享）")
+    if os.getenv("REQUIRE_REDIS", "false").lower() in ("1", "true", "yes", "on"):
+        print("[FATAL] Redis 等待超时；当前部署要求共享 Redis，容器退出")
+        sys.exit(1)
+    print("[WARN] Redis 等待超时，应用将降级为内存缓存（仅适用于本地单机开发）")
 PYEOF
 
 # ---------- 4) 启动应用 ----------

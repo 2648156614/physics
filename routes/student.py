@@ -5,6 +5,12 @@ def create_student_blueprint(deps):
     globals().update(deps)
     bp = Blueprint('student', __name__)
 
+    def user_management_redirect():
+        target = (request.form.get('return_to') or '').strip()
+        if target.startswith('/admin/users') and not target.startswith('//'):
+            return redirect(target)
+        return redirect(url_for('admin_user_management'))
+
     @bp.route('/api/user/<int:user_id>/completion')
     def check_completion(user_id):
         """检查用户完成状态 - 公开API"""
@@ -134,7 +140,7 @@ def create_student_blueprint(deps):
     @bp.route('/admin/users')
     @login_required
     def admin_user_management():
-        """管理员用户管理页面：仅展示基础信息。"""
+        """管理员用户管理页面：服务端筛选和分页的数据表格。"""
         if session.get('username') != 'admin':
             flash('权限不足', 'danger')
             return redirect(url_for('dashboard'))
@@ -142,34 +148,57 @@ def create_student_blueprint(deps):
         keyword = (request.args.get('keyword') or '').strip()
         class_name = (request.args.get('class_name') or '').strip()
         major = (request.args.get('major') or '').strip()
-        has_user_filter = bool(keyword or class_name or major)
+        teacher_name = (request.args.get('teacher_name') or '').strip()
+        page = max(1, request.args.get('page', default=1, type=int) or 1)
+        requested_per_page = request.args.get('per_page', default=50, type=int) or 50
+        per_page = requested_per_page if requested_per_page in (25, 50, 100) else 50
     
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         try:
-            users = []
-            if has_user_filter:
-                query = """
-                    SELECT id, username, name, major, class_name, teacher_name, exam_start_time, exam_end_time, created_at
-                    FROM users
-                    WHERE username != 'admin'
-                """
-                params = []
+            where_clauses = ["username != 'admin'"]
+            params = []
+            if keyword:
+                where_clauses.append("(username LIKE %s OR name LIKE %s)")
+                like = f"%{keyword}%"
+                params.extend([like, like])
+            if class_name:
+                where_clauses.append("class_name = %s")
+                params.append(class_name)
+            if major:
+                where_clauses.append("major = %s")
+                params.append(major)
+            if teacher_name:
+                where_clauses.append("teacher_name = %s")
+                params.append(teacher_name)
 
-                if keyword:
-                    query += " AND (username LIKE %s OR name LIKE %s)"
-                    like = f"%{keyword}%"
-                    params.extend([like, like])
-                if class_name:
-                    query += " AND class_name LIKE %s"
-                    params.append(f"%{class_name}%")
-                if major:
-                    query += " AND major LIKE %s"
-                    params.append(f"%{major}%")
+            where_sql = " AND ".join(where_clauses)
+            cursor.execute(f"SELECT COUNT(*) AS total FROM users WHERE {where_sql}", params)
+            total_users = int((cursor.fetchone() or {}).get('total') or 0)
+            total_pages = max(1, (total_users + per_page - 1) // per_page)
+            page = min(page, total_pages)
+            offset = (page - 1) * per_page
 
-                query += " ORDER BY created_at DESC, id DESC LIMIT 500"
-                cursor.execute(query, params)
-                users = cursor.fetchall()
+            cursor.execute(
+                f"""
+                SELECT id, username, name, major, class_name, teacher_name,
+                       exam_start_time, exam_end_time, created_at,
+                       password_changed,
+                       CASE
+                           WHEN login_locked_until IS NOT NULL AND login_locked_until > NOW() THEN 1
+                           ELSE 0
+                       END AS is_locked
+                FROM users
+                WHERE {where_sql}
+                ORDER BY created_at DESC, id DESC
+                LIMIT %s OFFSET %s
+                """,
+                [*params, per_page, offset],
+            )
+            users = cursor.fetchall()
+
+            cursor.execute("SELECT COUNT(*) AS total FROM users WHERE username != 'admin'")
+            all_user_count = int((cursor.fetchone() or {}).get('total') or 0)
     
             cursor.execute(
                 """
@@ -219,7 +248,15 @@ def create_student_blueprint(deps):
             keyword=keyword,
             class_name=class_name,
             major=major,
-            has_user_filter=has_user_filter,
+            teacher_name=teacher_name,
+            page=page,
+            per_page=per_page,
+            total_users=total_users,
+            all_user_count=all_user_count,
+            total_pages=total_pages,
+            pagination_pages=range(max(1, page - 2), min(total_pages, page + 2) + 1),
+            page_start=(offset + 1) if total_users else 0,
+            page_end=min(offset + per_page, total_users),
             teacher_groups=teacher_groups,
             class_groups=class_groups,
             major_groups=major_groups
@@ -282,7 +319,7 @@ def create_student_blueprint(deps):
             cursor.close()
             conn.close()
     
-        return redirect(url_for('admin_user_management'))
+        return user_management_redirect()
     
     
     @bp.route('/admin/users/<int:user_id>/edit', methods=['POST'])
@@ -335,7 +372,7 @@ def create_student_blueprint(deps):
             cursor.close()
             conn.close()
     
-        return redirect(url_for('admin_user_management'))
+        return user_management_redirect()
 
 
     @bp.route('/admin/users/<int:user_id>/reset_password', methods=['POST'])
@@ -378,7 +415,7 @@ def create_student_blueprint(deps):
             cursor.close()
             conn.close()
 
-        return redirect(request.referrer or url_for('admin_user_management'))
+        return user_management_redirect()
     
     
     @bp.route('/admin/users/batch_update', methods=['POST'])
@@ -452,7 +489,7 @@ def create_student_blueprint(deps):
             cursor.close()
             conn.close()
     
-        return redirect(url_for('admin_user_management'))
+        return user_management_redirect()
     
     
     @bp.route('/admin/users/batch_delete', methods=['POST'])
@@ -510,7 +547,7 @@ def create_student_blueprint(deps):
             cursor.close()
             conn.close()
     
-        return redirect(url_for('admin_user_management'))
+        return user_management_redirect()
     
     
     @bp.route('/admin/users/<int:user_id>/delete', methods=['POST'])
@@ -536,7 +573,7 @@ def create_student_blueprint(deps):
             cursor.close()
             conn.close()
     
-        return redirect(url_for('admin_user_management'))
+        return user_management_redirect()
     
     
     # 管理员功能 - 学生详细答题情况

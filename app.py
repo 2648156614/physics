@@ -20,6 +20,7 @@ from werkzeug.security import generate_password_hash
 from config import (
     DEFAULT_AVATAR,
     DEFAULT_EXAM_PAPER_NAME,
+    INSTANCE_ID,
     POOL_LOW_WATER,
     POOL_PREWARM_PAUSE_SECONDS,
     POOL_REFILL_BATCH,
@@ -27,8 +28,9 @@ from config import (
     SEB_INTEGRATION_ENABLED,
 )
 from db import get_db_connection
-from extensions import RedisError, app, logger
+from extensions import CACHE_BACKEND, RedisError, app, logger, redis_client
 from services.redis_cache_service import (
+    acquire_distributed_lock,
     cache_problem_with_token,
     delete_cache_patterns,
     delete_problem_pool,
@@ -37,6 +39,7 @@ from services.redis_cache_service import (
     get_problem_by_token,
     pop_problem_from_pool,
     push_problem_to_pool,
+    release_distributed_lock,
 )
 from services import question_generation_service
 from services.exam_assignment_service import select_exam_template_ids
@@ -863,11 +866,18 @@ def schedule_problem_pool_refill(template_id):
         problem_pool_refilling.add(template_id)
 
     def _run():
+        distributed_lock_name = f"problem-pool-refill:{template_id}"
+        distributed_lock_token = None
         try:
+            distributed_lock_token = acquire_distributed_lock(distributed_lock_name, ttl_seconds=300)
+            if not distributed_lock_token:
+                return
             refill_problem_pool(template_id, POOL_REFILL_BATCH)
         except Exception as err:
             logger.warning("后台补充题目池失败: template_id=%s error=%s", template_id, err)
         finally:
+            if distributed_lock_token:
+                release_distributed_lock(distributed_lock_name, distributed_lock_token)
             with problem_pool_refill_lock:
                 problem_pool_refilling.discard(template_id)
 
@@ -935,6 +945,19 @@ def fetch_distinct_problem(template_id, previous_problem_data=None, max_attempts
 
 
 def prewarm_pools(paper_id=None, enabled_only=True):
+    lock_scope = paper_id if paper_id is not None else 'enabled'
+    distributed_lock_name = f"problem-pool-prewarm:{lock_scope}"
+    distributed_lock_token = acquire_distributed_lock(distributed_lock_name, ttl_seconds=3600)
+    if not distributed_lock_token:
+        print(f"[PREWARM] 其他节点正在预热 paper_id={paper_id or 'enabled'}，本节点跳过")
+        return
+    try:
+        return _prewarm_pools_unlocked(paper_id=paper_id, enabled_only=enabled_only)
+    finally:
+        release_distributed_lock(distributed_lock_name, distributed_lock_token)
+
+
+def _prewarm_pools_unlocked(paper_id=None, enabled_only=True):
     print(f"[PREWARM] 开始预热题目池 paper_id={paper_id or 'enabled'}")
     conn = get_db_connection()
     if not conn:
@@ -2875,6 +2898,16 @@ def ensure_performance_indexes():
                 'idx_users_teacher_exam_start',
                 "CREATE INDEX idx_users_teacher_exam_start ON users (teacher_name, exam_start_time, exam_end_time)"
             ),
+            (
+                'users',
+                'idx_users_class_id',
+                "CREATE INDEX idx_users_class_id ON users (class_name, id)"
+            ),
+            (
+                'users',
+                'idx_users_major_id',
+                "CREATE INDEX idx_users_major_id ON users (major, id)"
+            ),
         ]
 
         for table_name, index_name, ddl in index_definitions:
@@ -3424,10 +3457,14 @@ def health_check():
     payload = {
         'status': 'healthy',
         'database': 'unknown',
+        'redis': 'unknown',
+        'instance': INSTANCE_ID,
         'version': os.getenv('APP_VERSION', 'unknown'),
         'build_time': os.getenv('APP_BUILD_TIME', 'unknown'),
     }
     try:
+        redis_client.ping()
+        payload['redis'] = CACHE_BACKEND
         # 检查数据库连接
         conn = get_db_connection()
         if conn and conn.is_connected():

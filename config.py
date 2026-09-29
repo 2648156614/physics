@@ -15,6 +15,9 @@ def get_required_env(name):
 
 
 SECRET_KEY = get_required_env('SECRET_KEY')
+INSTANCE_ID = os.getenv('INSTANCE_ID', 'physics-standalone').strip() or 'physics-standalone'
+DEPLOYMENT_ROLE = os.getenv('DEPLOYMENT_ROLE', 'standalone').strip().lower() or 'standalone'
+RUN_DB_MIGRATIONS = os.getenv('RUN_DB_MIGRATIONS', 'true').lower() in ('1', 'true', 'yes', 'on')
 
 SESSION_IDLE_TIMEOUT_SECONDS = 60 * 60
 PERMANENT_SESSION_LIFETIME = timedelta(seconds=SESSION_IDLE_TIMEOUT_SECONDS)
@@ -31,6 +34,8 @@ SEB_INTEGRATION_ENABLED = os.getenv('SEB_INTEGRATION_ENABLED', 'true').lower() i
 TRUST_PROXY_HEADERS = os.getenv('TRUST_PROXY_HEADERS', 'false').lower() in ('1', 'true', 'yes', 'on')
 
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+REQUIRE_REDIS = os.getenv('REQUIRE_REDIS', 'false').lower() in ('1', 'true', 'yes', 'on')
+REDIS_LOCK_TTL_SECONDS = int(os.getenv('REDIS_LOCK_TTL_SECONDS', '300'))
 POOL_TARGET = int(os.getenv('POOL_TARGET', 50))
 POOL_LOW_WATER = int(os.getenv('POOL_LOW_WATER', 25))
 POOL_REFILL_BATCH = int(os.getenv('POOL_REFILL_BATCH', 10))
@@ -51,11 +56,11 @@ MYSQL_CONNECTOR_POOL_MAX_SIZE = 32
 DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 32))
 DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
 
-UPLOAD_FOLDER = 'static/images'
+UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'static/images')
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'svg'}
 MAX_FILE_SIZE = 16 * 1024 * 1024
 
-AVATAR_FOLDER = 'static/avatars'
+AVATAR_FOLDER = os.getenv('AVATAR_FOLDER', 'static/avatars')
 AVATAR_ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.svg'}
 DEFAULT_AVATAR = 'default.svg'
 
