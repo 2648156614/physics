@@ -137,7 +137,8 @@ def create_question_blueprint(deps):
         is_enabled = request.form.get('is_enabled') == '1'
         if not name:
             flash('题库名称不能为空', 'danger')
-            return redirect(url_for('admin_dashboard'))
+            return redirect(url_for('admin_manage_problems', action='create'))
+        new_paper_id = None
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
@@ -150,11 +151,14 @@ def create_question_blueprint(deps):
             flash('题库创建成功', 'success')
         except mysql.connector.Error as err:
             conn.rollback()
+            new_paper_id = None
             flash(f'题库创建失败：{err}', 'danger')
         finally:
             cursor.close()
             conn.close()
-        return redirect(url_for('admin_dashboard'))
+        if new_paper_id is not None:
+            return redirect(url_for('admin_manage_problems', paper_id=new_paper_id))
+        return redirect(url_for('admin_manage_problems'))
     
     
     @bp.route('/admin/exam_papers/<int:paper_id>/toggle', methods=['POST'])
@@ -170,11 +174,11 @@ def create_question_blueprint(deps):
             paper = cursor.fetchone()
             if not paper:
                 flash('题库不存在', 'danger')
-                return redirect(url_for('admin_dashboard'))
+                return redirect(url_for('admin_manage_problems'))
             new_status = not bool(paper['is_enabled'])
             if not new_status and paper_has_unfinished_exam(cursor, paper_id):
                 flash('该题库仍有关联的未开考或正在考试批次，全部批次结束后才能关闭。', 'danger')
-                return redirect(url_for('admin_dashboard', paper_id=paper_id))
+                return redirect(url_for('admin_manage_problems'))
             cursor.execute("UPDATE exam_papers SET is_enabled = %s WHERE id = %s", (new_status, paper_id))
             conn.commit()
             deleted_cache_count = invalidate_exam_paper_cache(paper_id)
@@ -189,7 +193,7 @@ def create_question_blueprint(deps):
         finally:
             cursor.close()
             conn.close()
-        return redirect(url_for('admin_dashboard', paper_id=paper_id))
+        return redirect(url_for('admin_manage_problems'))
     
     
     @bp.route('/admin/exam_papers/<int:paper_id>/export')

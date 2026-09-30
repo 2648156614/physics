@@ -26,28 +26,208 @@ def create_admin_blueprint(deps):
     @bp.route('/admin')
     @login_required
     def admin_dashboard():
-        """管理员主页"""
+        """Administrator operations overview."""
         if session.get('username') != 'admin':
             flash('权限不足', 'danger')
             return redirect(url_for('dashboard'))
-    
-        selected_paper_id = resolve_selected_exam_paper_id(
-            request.args.get('paper_id', type=int),
-            include_disabled_for_admin=True
-        )
-        selected_paper = get_exam_paper_by_id(selected_paper_id) if selected_paper_id else None
-        total_problems = get_total_problem_count(selected_paper_id)
+
+        now = datetime.now()
+        dashboard_stats = {
+            'total_students': 0,
+            'enabled_papers': 0,
+            'total_papers': 0,
+            'locked_students': 0,
+            'today_students': 0,
+            'active_exams': 0,
+        }
+        active_batches = []
+        upcoming_batches = []
+        recent_batches = []
+        attention_items = []
+        schedule_rows = []
+
+        conn = get_db_connection()
+        if conn:
+            cursor = conn.cursor(dictionary=True)
+            try:
+                cursor.execute(
+                    """
+                    SELECT
+                        (SELECT COUNT(*) FROM users WHERE username != 'admin') AS total_students,
+                        (SELECT COUNT(*) FROM exam_papers WHERE is_enabled = TRUE) AS enabled_papers,
+                        (SELECT COUNT(*) FROM exam_papers) AS total_papers,
+                        (
+                            SELECT COUNT(*) FROM users
+                            WHERE username != 'admin'
+                              AND login_locked_until IS NOT NULL
+                              AND login_locked_until > NOW()
+                        ) AS locked_students,
+                        (
+                            SELECT COUNT(DISTINCT s.user_id)
+                            FROM exam_batch_students s
+                            JOIN exam_batches b ON b.id = s.batch_id
+                            JOIN exams e ON e.id = b.exam_id
+                            WHERE e.status = 'published'
+                              AND b.status = 'active'
+                              AND b.start_time < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+                              AND b.end_time >= CURDATE()
+                        ) AS today_students,
+                        (
+                            SELECT COUNT(DISTINCT e.id)
+                            FROM exams e
+                            JOIN exam_batches b ON b.exam_id = e.id
+                            WHERE e.status = 'published'
+                              AND b.status = 'active'
+                              AND b.start_time <= NOW()
+                              AND b.end_time > NOW()
+                        ) AS active_exams
+                    """
+                )
+                summary = cursor.fetchone() or {}
+                for key in dashboard_stats:
+                    dashboard_stats[key] = int(summary.get(key) or 0)
+
+                cursor.execute(
+                    """
+                    SELECT
+                        b.id AS batch_id, b.exam_id, b.name AS batch_name,
+                        b.start_time, b.end_time,
+                        e.name AS exam_name, e.question_count, e.seb_required,
+                        ep.name AS paper_name, ep.is_enabled AS paper_enabled,
+                        (
+                            SELECT COUNT(*)
+                            FROM exam_batch_students s
+                            WHERE s.batch_id = b.id
+                        ) AS student_count,
+                        (
+                            SELECT COUNT(DISTINCT q.user_id)
+                            FROM exam_user_questions q
+                            WHERE q.batch_id = b.id
+                        ) AS entered_count,
+                        COALESCE(
+                            NULLIF((SELECT COUNT(*) FROM exam_question_pool eqp WHERE eqp.exam_id = e.id), 0),
+                            (
+                                SELECT COUNT(*)
+                                FROM problem_templates pt
+                                WHERE pt.paper_id = e.paper_id
+                                  AND COALESCE(pt.status, 'active') = 'active'
+                            )
+                        ) AS available_question_count
+                    FROM exam_batches b
+                    JOIN exams e ON e.id = b.exam_id
+                    JOIN exam_papers ep ON ep.id = e.paper_id
+                    WHERE e.status = 'published'
+                      AND b.status = 'active'
+                      AND b.start_time IS NOT NULL
+                      AND b.end_time IS NOT NULL
+                      AND b.end_time >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+                      AND b.start_time <= DATE_ADD(NOW(), INTERVAL 7 DAY)
+                    ORDER BY b.start_time, b.id
+                    LIMIT 24
+                    """
+                )
+                schedule_rows = cursor.fetchall()
+            except mysql.connector.Error as err:
+                print(f'加载管理员工作台失败: {err}')
+                attention_items.append({
+                    'level': 'danger',
+                    'title': '管理工作台数据加载失败',
+                    'detail': '数据库可以连接，但暂时无法读取考试运行数据。',
+                    'url': url_for('admin_dashboard'),
+                    'action': '重新检查',
+                })
+            finally:
+                cursor.close()
+                conn.close()
+
+            for batch in schedule_rows:
+                batch['student_count'] = int(batch.get('student_count') or 0)
+                batch['entered_count'] = int(batch.get('entered_count') or 0)
+                batch['available_question_count'] = int(batch.get('available_question_count') or 0)
+                if batch['start_time'] <= now < batch['end_time']:
+                    batch['schedule_status'] = 'active'
+                    active_batches.append(batch)
+                elif batch['start_time'] > now:
+                    batch['schedule_status'] = 'upcoming'
+                    upcoming_batches.append(batch)
+                else:
+                    batch['schedule_status'] = 'ended'
+                    recent_batches.append(batch)
+
+            if dashboard_stats['total_papers'] == 0:
+                attention_items.append({
+                    'level': 'danger',
+                    'title': '尚未创建题库',
+                    'detail': '创建考试前需要先准备题库和题目。',
+                    'url': url_for('admin_manage_problems'),
+                    'action': '前往题库管理',
+                })
+            elif dashboard_stats['enabled_papers'] == 0:
+                attention_items.append({
+                    'level': 'warning',
+                    'title': '当前没有开启的题库',
+                    'detail': '学生暂时无法切换题库进行练习。',
+                    'url': url_for('admin_manage_problems'),
+                    'action': '检查题库',
+                })
+
+            if dashboard_stats['locked_students']:
+                attention_items.append({
+                    'level': 'warning',
+                    'title': f"{dashboard_stats['locked_students']} 个学生账号处于临时锁定状态",
+                    'detail': '可能由连续输错密码造成，请在考试前确认。',
+                    'url': url_for('admin_user_management'),
+                    'action': '查看用户',
+                })
+
+            checked_exams = set()
+            for batch in [*active_batches, *upcoming_batches]:
+                if batch['student_count'] == 0:
+                    attention_items.append({
+                        'level': 'warning',
+                        'title': f"《{batch['exam_name']}》的“{batch['batch_name']}”没有学生",
+                        'detail': '该批次已经排期，但尚未分配参考学生。',
+                        'url': url_for('admin.admin_exam_detail', exam_id=batch['exam_id']),
+                        'action': '检查批次',
+                    })
+                if batch['exam_id'] in checked_exams:
+                    continue
+                checked_exams.add(batch['exam_id'])
+                requested = int(batch.get('question_count') or 0)
+                available = batch['available_question_count']
+                if requested and available < requested:
+                    attention_items.append({
+                        'level': 'danger',
+                        'title': f"《{batch['exam_name']}》可用题目不足",
+                        'detail': f'计划抽取 {requested} 题，题库当前只有 {available} 道可用题目。',
+                        'url': url_for('admin.admin_exam_detail', exam_id=batch['exam_id']),
+                        'action': '处理考试',
+                    })
+                if not batch.get('paper_enabled'):
+                    attention_items.append({
+                        'level': 'danger',
+                        'title': f"《{batch['exam_name']}》使用的题库已关闭",
+                        'detail': '未开始或正在进行的考试题库应保持开启。',
+                        'url': url_for('admin_manage_problems'),
+                        'action': '检查题库',
+                    })
+        else:
+            attention_items.append({
+                'level': 'danger',
+                'title': '数据库连接失败',
+                'detail': '暂时无法加载考试运行数据，请检查数据库服务。',
+                'url': url_for('admin_dashboard'),
+                'action': '重新检查',
+            })
 
         return render_template(
             'admin_dashboard.html',
-            exam_papers=get_exam_papers(include_disabled=True),
-            selected_paper_id=selected_paper_id,
-            selected_paper=selected_paper,
-            stats={'stats': {}, 'today_stats': {}},
-            total_problems=total_problems,
-            recent_completions=[],
-            incomplete_students=[],
-            exams=get_all_exams(),
+            dashboard_now=now,
+            dashboard_stats=dashboard_stats,
+            attention_items=attention_items,
+            active_batches=active_batches,
+            upcoming_batches=upcoming_batches,
+            recent_batches=recent_batches,
         )
 
 

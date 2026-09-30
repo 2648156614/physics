@@ -176,6 +176,7 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+  {% if request.args.get('action') == 'import' %}bootstrap.Modal.getOrCreateInstance(document.getElementById('importUsersModal')).show();{% endif %}
   document.querySelectorAll('.filter-auto-submit').forEach(function (select) { select.addEventListener('change', function () { document.getElementById('user-filter-form').submit(); }); });
   const editForm = document.getElementById('edit-user-form');
   document.querySelectorAll('.edit-user-button').forEach(function (button) {
