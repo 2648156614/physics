@@ -131,7 +131,7 @@ def create_admin_blueprint(deps):
                 print(f'加载管理员工作台失败: {err}')
                 attention_items.append({
                     'level': 'danger',
-                    'title': '管理工作台数据加载失败',
+                    'title': '首页数据加载失败',
                     'detail': '数据库可以连接，但暂时无法读取考试运行数据。',
                     'url': url_for('admin_dashboard'),
                     'action': '重新检查',

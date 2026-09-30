@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}管理工作台{% endblock %}
+{% block title %}首页{% endblock %}
 
 {% block content %}
 <style>
@@ -91,31 +91,6 @@
     .status-dot.upcoming { background: #2e90fa; }
     .status-dot.ended { background: #98a2b3; }
     .empty-schedule { padding: 42px 16px; border-bottom: 1px solid var(--workbench-border); color: var(--workbench-muted); text-align: center; }
-    .management-links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--workbench-border); }
-    .management-link {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        min-width: 0;
-        padding: 17px 18px;
-        color: inherit;
-        text-decoration: none;
-    }
-    .management-link + .management-link { border-left: 1px solid var(--workbench-border); }
-    .management-link:hover { color: inherit; background: #f8fbff; }
-    .management-link-icon {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 36px;
-        height: 36px;
-        flex: 0 0 36px;
-        border-radius: 6px;
-        color: #175cd3;
-        background: #eff6ff;
-    }
-    .management-link-title { font-size: .9rem; font-weight: 650; }
-    .management-link-note { margin-top: 2px; color: var(--workbench-muted); font-size: .76rem; }
     @media (max-width: 991.98px) {
         .workbench-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .workbench-stat:nth-child(3) { border-left: 0; border-top: 1px solid var(--workbench-border); }
@@ -127,8 +102,6 @@
         .workbench-actions .btn { flex: 1 1 calc(50% - 8px); }
         .attention-row { grid-template-columns: 10px minmax(0, 1fr); }
         .attention-row .btn { grid-column: 2; justify-self: start; }
-        .management-links { grid-template-columns: 1fr; }
-        .management-link + .management-link { border-top: 1px solid var(--workbench-border); border-left: 0; }
     }
 </style>
 
@@ -159,7 +132,7 @@
 <div class="container-fluid admin-workbench px-lg-4">
     <header class="workbench-header">
         <div>
-            <h1 class="workbench-title">管理工作台</h1>
+            <h1 class="workbench-title">首页</h1>
             <p class="workbench-subtitle">{{ dashboard_now.strftime('%Y-%m-%d %H:%M') }} · 优先查看正在进行的考试和需要处理的事项</p>
         </div>
         <div class="workbench-actions" aria-label="常用操作">
@@ -221,15 +194,5 @@
     </section>
     {% endif %}
 
-    <section class="workbench-panel" aria-labelledby="management-heading">
-        <div class="workbench-panel-header">
-            <div><h2 class="workbench-panel-title" id="management-heading">管理入口</h2><div class="workbench-panel-note">具体设置和批量操作在对应页面完成</div></div>
-        </div>
-        <div class="management-links">
-            <a class="management-link" href="{{ url_for('admin.admin_exams') }}"><span class="management-link-icon"><i class="bi bi-calendar-check"></i></span><span><span class="management-link-title">考试管理</span><span class="management-link-note d-block">考试、批次、学生范围与答题数据</span></span></a>
-            <a class="management-link" href="{{ url_for('admin_user_management') }}"><span class="management-link-icon"><i class="bi bi-people"></i></span><span><span class="management-link-title">用户管理</span><span class="management-link-note d-block">学生账户、导入、筛选和密码管理</span></span></a>
-            <a class="management-link" href="{{ url_for('admin_manage_problems') }}"><span class="management-link-icon"><i class="bi bi-journals"></i></span><span><span class="management-link-title">题库管理</span><span class="management-link-note d-block">题库开关、题目和历史版本</span></span></a>
-        </div>
-    </section>
 </div>
 {% endblock %}
