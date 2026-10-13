@@ -310,7 +310,7 @@
     }
 </style>
 
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<script src="{{ url_for('static', filename='vendor/echarts-5.5.1/echarts.min.js') }}"></script>
 
 {% set completed_count = filtered_students | selectattr('completed_all') | list | length %}
 {% set incomplete_count = total_students - completed_count %}

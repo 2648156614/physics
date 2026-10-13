@@ -2380,23 +2380,16 @@ async function updateProblemText(newProblemText) {
 
     await new Promise(resolve => setTimeout(resolve, 300));
 
-    // 更新题目文本
-    mathFormulaDiv.innerHTML = newProblemText;
-
-    // 使用淡入效果
-    mathFormulaDiv.style.opacity = '0';
-    await new Promise(resolve => setTimeout(resolve, 50));
-    mathFormulaDiv.style.opacity = '1';
-
-    // 重新渲染数学公式
-    if (window.MathJax) {
-        MathJax.typesetPromise([mathFormulaDiv]).catch(console.error);
-    }
-
-    // 关键：更新蒙版布局
-    setTimeout(() => {
+    try {
+        // 等待初始排版，清理旧公式记录，再更新内容和排版。
+        await window.physicsMath.typeset([mathFormulaDiv], () => {
+            mathFormulaDiv.innerHTML = newProblemText;
+        });
+    } finally {
+        mathFormulaDiv.style.opacity = '1';
+        // 公式和字体就绪后再计算蒙版位置。
         updateSpotlightLayout();
-    }, 500); // 给DOM一些时间完全更新
+    }
 }
 
 // 更新题目参数和正确答案
@@ -2828,6 +2821,10 @@ document.getElementById('refresh-btn').addEventListener('click', function() {
 
 // 页面初始化
 document.addEventListener('DOMContentLoaded', function() {
+    {% if resumed_problem_url %}
+    // 恢复到未完成题目后同步地址，刷新时仍停留在同一题，无需再次跳转。
+    window.history.replaceState(window.history.state, '', {{ resumed_problem_url | tojson }});
+    {% endif %}
     console.log('动态问题页面加载完成');
     console.log('页面加载时间:', new Date().toLocaleTimeString());
     console.log('开始计时时间:', new Date(startTime).toLocaleTimeString());
@@ -2847,6 +2844,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 初始化蒙版系统
     initSpotlightSystem();
+    window.physicsMath.ready.then(updateSpotlightLayout).catch(console.error);
 
     // 初始化双模式输入系统
     initDualModeInput();

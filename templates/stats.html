@@ -210,7 +210,8 @@
         </div>
     </div>
 
-    <!-- 图表JavaScript -->
+    <!-- 图表JavaScript，仅统计页面加载 -->
+    <script src="{{ url_for('static', filename='vendor/chartjs-4.5.1/chart.umd.js') }}"></script>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         // 正确率环形图

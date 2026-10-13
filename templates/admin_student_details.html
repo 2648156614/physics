@@ -129,8 +129,8 @@
     }
 </style>
 
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script src="{{ url_for('static', filename='vendor/gsap-3.12.5/gsap.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/gsap-3.12.5/ScrollTrigger.min.js') }}"></script>
 
 {% set correct_rate = (overall_stats.total_correct / overall_stats.total_attempts * 100) if overall_stats.total_attempts > 0 else 0 %}
 <div class="student-story-page">

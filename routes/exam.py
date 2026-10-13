@@ -1,6 +1,7 @@
 from functools import wraps
+from time import perf_counter
 
-from flask import Blueprint
+from flask import Blueprint, make_response
 
 from services.seb_exam_service import SEB_CONFIG_KEY_HEADER, build_finish_summary
 
@@ -77,23 +78,28 @@ def create_exam_blueprint(deps):
         blocked = seb_guard(exam)
         if blocked:
             return blocked
+        # A fresh SEB launch always asks for credentials on shared computers.
+        # Clear the old student's identity and question state only after the
+        # entry URL has passed SEB validation.
+        session.clear()
         session['pending_seb_exam_id'] = exam_id
-        if session.get('user_id'):
-            return redirect(url_for('exam.seb_continue', exam_id=exam_id))
-        return redirect(url_for('auth.login'))
+        response = redirect(url_for('auth.login'))
+        response.headers['Cache-Control'] = 'no-store'
+        return response
 
     @bp.route('/seb/continue/<int:exam_id>')
     @login_required
     def seb_continue(exam_id):
         exam = get_exam_by_id(exam_id)
-        if not exam or not user_can_access_exam(session['user_id'], exam_id):
+        available_exams = get_user_available_exams(session['user_id'])
+        if not exam or not any(int(item['id']) == exam_id for item in available_exams):
             session.pop('pending_seb_exam_id', None)
             flash('您不在该考试的参考名单中。', 'danger')
             return redirect(url_for('dashboard'))
         blocked = seb_guard(exam)
         if blocked:
             return blocked
-        exam_access = get_user_exam_access(session['user_id'], exam_id)
+        exam_access = get_user_exam_access(session['user_id'], exam_id, available_exams=available_exams)
         if not exam_access['allowed']:
             flash(exam_access['message'], 'warning')
             return redirect(url_for('dashboard', exam_id=exam_id))
@@ -101,18 +107,10 @@ def create_exam_blueprint(deps):
         session['selected_exam_paper_id'] = exam['paper_id']
         session['selected_exam_batch_id'] = exam_access.get('batch_id')
         session.pop('pending_seb_exam_id', None)
-        display_mapping, completion_map, summary = secure_exam_progress(exam_id, exam['paper_id'])
-        target_problem = len(display_mapping)
-        if not summary['all_completed']:
-            target_problem = next(
-                (
-                    item['display_number']
-                    for item in display_mapping.values()
-                    if not completion_map.get(item['actual_id'], False)
-                ),
-                1,
-            )
-        return redirect(url_for('problem_ajax', problem_id=max(1, target_problem)))
+        # Select the first unfinished question in the answer-page request.
+        # This avoids loading/persisting the assignment twice across workers.
+        session['seb_resume_exam_id'] = exam_id
+        return redirect(url_for('problem_ajax', problem_id=1))
 
     @bp.route('/seb/quit/<token>')
     def seb_quit(token):
@@ -503,12 +501,35 @@ def create_exam_blueprint(deps):
     @login_required
     def problem_ajax(problem_id):
         """支持Ajax的问题页面 - 内部将problem_id作为显示序号使用"""
+        request_started = perf_counter()
+        stage_started = request_started
+        timings = []
+
+        def mark_stage(name):
+            nonlocal stage_started
+            now = perf_counter()
+            timings.append((name, (now - stage_started) * 1000))
+            stage_started = now
+
         debug_request_logs = os.getenv('DEBUG_REQUEST_LOGS', '0').lower() in ('1', 'true', 'yes', 'on')
         if debug_request_logs:
             print(f"\n=== Ajax问题页面开始 ===")
             print(f"显示序号: {problem_id}")
-        selected_exam_id = resolve_selected_exam_id(request.args.get('exam_id', type=int))
-        exam_access = get_user_exam_access(session['user_id'], selected_exam_id)
+        available_exams = (
+            None if session.get('username') == 'admin'
+            else get_user_available_exams(session['user_id'])
+        )
+        selected_exam_id = resolve_selected_exam_id(
+            request.args.get('exam_id', type=int), available_exams=available_exams
+        )
+        resume_exam_id = session.get('seb_resume_exam_id')
+        if resume_exam_id and selected_exam_id != resume_exam_id:
+            session.pop('seb_resume_exam_id', None)
+            flash('该考试当前不可访问，请联系管理员。', 'danger')
+            return redirect(url_for('dashboard'))
+        exam_access = get_user_exam_access(
+            session['user_id'], selected_exam_id, available_exams=available_exams
+        )
         if not exam_access['allowed']:
             flash(exam_access['message'], 'warning')
             return redirect(url_for('dashboard'))
@@ -516,6 +537,7 @@ def create_exam_blueprint(deps):
         blocked = seb_guard(exam)
         if blocked:
             return blocked
+        mark_stage('access')
     
         # 根据显示序号获取实际ID
         paper_id = exam_access.get('paper_id') or resolve_selected_exam_paper_id()
@@ -525,6 +547,20 @@ def create_exam_blueprint(deps):
             for actual_id, info in display_mapping.items()
         }
         total_problems = len(display_mapping)
+        mark_stage('assignment')
+        completion_map = None
+        if resume_exam_id and resume_exam_id == selected_exam_id and is_seb_exam_required(exam):
+            actual_ids = [item['actual_id'] for item in display_mapping.values()]
+            completion_map = get_completion_status_map(
+                session['user_id'], paper_id, actual_ids, selected_exam_id
+            ) if actual_ids else {}
+            ordered_questions = sorted(display_mapping.values(), key=lambda item: item['display_number'])
+            problem_id = next(
+                (item['display_number'] for item in ordered_questions
+                 if not completion_map.get(item['actual_id'], False)),
+                ordered_questions[-1]['display_number'] if ordered_questions else 1,
+            )
+        mark_stage('resume')
         actual_id = display_to_actual.get(problem_id)
     
         # 1. 验证题目序号
@@ -601,6 +637,7 @@ def create_exam_blueprint(deps):
             session['current_problem']['exam_id'] = selected_exam_id
             session['current_problem']['batch_id'] = exam_access.get('batch_id')
             session['current_problem']['user_id'] = session['user_id']
+        mark_stage('problem')
     
         # 3. 检查是否已经完成
         if session['current_problem'].get('answered_correctly', False):
@@ -621,7 +658,10 @@ def create_exam_blueprint(deps):
             print(f"当前题目参数: {problem_data['var_values']}")
             print(f"=== Ajax问题页面结束 ===\n")
     
-        is_completed = is_problem_completed(session['user_id'], actual_id, paper_id, selected_exam_id)
+        is_completed = (
+            completion_map.get(actual_id, False) if completion_map is not None
+            else is_problem_completed(session['user_id'], actual_id, paper_id, selected_exam_id)
+        )
         seb_required = is_seb_exam_required(exam)
         if seb_required and session.get('seb_entry_recorded_exam_id') != selected_exam_id:
             if record_secure_exam_entry(
@@ -629,8 +669,9 @@ def create_exam_blueprint(deps):
             ):
                 session['seb_entry_recorded_exam_id'] = selected_exam_id
                 session.modified = True
+        mark_stage('progress')
     
-        return render_template('problem_ajax.html',
+        response = make_response(render_template('problem_ajax.html',
                                problem=problem_data,
                                problem_id=problem_id,  # 传递显示序号到模板
                                total_attempts=total_attempts,
@@ -640,7 +681,24 @@ def create_exam_blueprint(deps):
                                display_mapping=display_mapping,
                                display_to_actual=display_to_actual,
                                is_completed=is_completed,
-                               seb_required=seb_required)
+                               resumed_problem_url=(
+                                   url_for('problem_ajax', problem_id=problem_id)
+                                   if completion_map is not None else None
+                               ),
+                               seb_required=seb_required))
+        session.pop('seb_resume_exam_id', None)
+        mark_stage('template')
+        total_ms = (perf_counter() - request_started) * 1000
+        response.headers['Server-Timing'] = ', '.join(
+            f'{name};dur={duration:.1f}' for name, duration in timings
+        ) + f', total;dur={total_ms:.1f}'
+        if total_ms >= 1000:
+            logger.warning(
+                '答题页加载较慢: user_id=%s exam_id=%s problem_id=%s timings=%s',
+                session['user_id'], selected_exam_id, problem_id,
+                response.headers['Server-Timing'],
+            )
+        return response
     
     
     @bp.route('/api/submit/<int:problem_id>', methods=['POST'])  # 保持参数名为 problem_id

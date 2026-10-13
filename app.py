@@ -888,7 +888,12 @@ def fetch_problem_from_pool(template_id):
     """Get a problem quickly; refill the pool asynchronously when it is low."""
     problem_data = pop_problem_from_pool(template_id)
     if not problem_data:
+        generation_started = time.perf_counter()
         result = generate_and_cache_problem(template_id)
+        logger.info(
+            '题目池为空，现场生成: template_id=%s generation_ms=%.1f',
+            template_id, (time.perf_counter() - generation_started) * 1000,
+        )
         schedule_problem_pool_refill(template_id)
         return result
 
