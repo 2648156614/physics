@@ -39,7 +39,7 @@
                 <h5 class="mb-0"><i class="bi bi-calendar-plus me-2"></i>新建 / 分配考试</h5>
             </div>
             <div class="card-body">
-                <form method="post" action="{{ url_for('admin.admin_create_exam') }}" enctype="multipart/form-data" class="vstack gap-3">
+                <form method="post" action="{{ url_for('admin.admin_create_exam') }}" enctype="multipart/form-data" class="vstack gap-3" data-roster-preview="create_exam">
                     <div>
                         <label class="form-label">考试名称</label>
                         <input class="form-control" name="name" required placeholder="例如：2025-2026 学年期末补考">
@@ -147,7 +147,7 @@
                 <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin.admin_exams') }}">关闭</a>
             </div>
             <div class="card-body">
-                <form method="post" action="{{ url_for('admin.admin_update_exam', exam_id=editing_exam.id) }}" enctype="multipart/form-data" class="vstack gap-3">
+                <form method="post" action="{{ url_for('admin.admin_update_exam', exam_id=editing_exam.id) }}" enctype="multipart/form-data" class="vstack gap-3" data-roster-preview="update_exam" data-exam-id="{{ editing_exam.id }}">
                     <div>
                         <label class="form-label">考试名称</label>
                         <input class="form-control" name="name" required value="{{ editing_exam.name }}">
@@ -403,3 +403,5 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 </script>
 {% endblock %}
+
+{% block scripts %}<script src="{{ url_for('static', filename='js/exam-roster-preview.js') }}"></script>{% endblock %}

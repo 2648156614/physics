@@ -812,6 +812,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/answer-submission.js') }}"></script>
 <script>
 // 蒙版系统配置 - 在这里修改参数
 const SPOTLIGHT_CONFIG = {
@@ -2563,12 +2564,97 @@ function setupInputListeners() {
     }
 }
 
+let unresolvedSubmissionId = null;
+function handleSubmissionData(data) {
+    const submitBtn = document.getElementById('submit-btn');
+    if (data.already_completed) {
+        showMessage(data.message || '该题已完成，无需再次作答', 'info');
+        handleCompletedProblem();
+        resetSubmitButton();
+        return;
+    }
+
+    if (data.success) {
+        if (data.correct) {
+            // 回答正确
+            showMessage(data.message, 'success');
+            document.getElementById('next-btn').style.display =
+                (sebRequired && problemId === totalProblems) ? 'none' : 'inline-block';
+            submitBtn.style.display = 'none';
+            disableInputs();
+            clearInterval(timerInterval);  // 停止计时器
+
+            // 更新完成状态显示
+            updateProblemSidebar();
+
+            // 自动跳转到下一题
+            if (data.next_problem) {
+                setTimeout(() => {
+                    showTempMessage(`3秒后自动跳转到第${data.next_problem}题...`, 'info');
+                }, 500);
+
+                setTimeout(() => {
+                    navigateToProblem(data.next_problem);
+                }, 3000);
+            } else if (sebRequired) {
+                showTempMessage('本题结果已保存，请使用下方按钮确认完成并退出。', 'success');
+            } else {
+                setTimeout(() => {
+                    showTempMessage('恭喜完成所有题目！3秒后返回主页...', 'success');
+                }, 500);
+
+                setTimeout(() => {
+                    window.location.href = '{{ url_for("dashboard") }}';
+                }, 3000);
+            }
+        } else {
+            // 回答错误 - 更新尝试次数显示
+            totalAttempts = data.total_attempts;
+            updateAttemptsDisplay();
+
+            const correctAnswerMessage = formatCorrectAnswers(data.correct_answers);
+            showErrorCorrection(data.response_ids || [], correctAnswerMessage);
+            scheduleProblemRegeneration(data);
+        }
+    } else {
+        showMessage(data.message || '提交失败，当前输入已保留。', 'error');
+        if (data.saved) {
+            isSubmitting = false;
+            submitBtn.disabled = true;
+            submitBtn.textContent = '答案已保存，请联系监考教师';
+        } else { resetSubmitButton(); }
+    }
+
+}
+
+async function checkPendingSubmission(id) {
+    showMessage('正在核对提交结果，请勿重复提交……', 'info');
+    const data = await ExamSubmission.recover(id);
+    if (data) {
+        unresolvedSubmissionId = null;
+        handleSubmissionData(data);
+    } else {
+        unresolvedSubmissionId = id;
+        showMessage('暂时无法确认答案是否保存。当前输入已保留，请再次核对或联系监考教师，勿重复提交。', 'warning');
+        resetSubmitButton();
+        document.getElementById('submit-btn').textContent = '再次核对提交结果';
+    }
+}
+
 // 处理表单提交
 document.getElementById('answer-form').addEventListener('submit', async function(e) {
     e.preventDefault();
 
     if (isSubmitting) {
         console.log('正在提交中，忽略重复提交');
+        return;
+    }
+
+    if (unresolvedSubmissionId) {
+        isSubmitting = true;
+        document.getElementById('submit-btn').disabled = true;
+        document.getElementById('submit-btn').textContent = '正在核对提交结果……';
+        await checkPendingSubmission(unresolvedSubmissionId);
         return;
     }
 
@@ -2579,6 +2665,8 @@ document.getElementById('answer-form').addEventListener('submit', async function
 
     const submitBtn = document.getElementById('submit-btn');
     const answerData = getAnswerData();
+    const submissionId = ExamSubmission.newId();
+    answerData.submission_id = submissionId;
 
     // 更新按钮状态
     isSubmitting = true;
@@ -2590,79 +2678,18 @@ document.getElementById('answer-form').addEventListener('submit', async function
     console.log('当前正确答案:', currentCorrectAnswers);
 
     try {
-        const response = await fetch('/api/submit/' + problemId, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(answerData)
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP错误: ${response.status}`);
-        }
-
-        const data = await response.json();
-        console.log('API响应:', data);
-
-        if (data.already_completed) {
-            showMessage(data.message || '该题已完成，无需再次作答', 'info');
-            handleCompletedProblem();
-            resetSubmitButton();
-            return;
-        }
-
-        if (data.success) {
-            if (data.correct) {
-                // 回答正确
-                showMessage(data.message, 'success');
-                document.getElementById('next-btn').style.display =
-                    (sebRequired && problemId === totalProblems) ? 'none' : 'inline-block';
-                submitBtn.style.display = 'none';
-                disableInputs();
-                clearInterval(timerInterval);  // 停止计时器
-
-                // 更新完成状态显示
-                updateProblemSidebar();
-
-                // 自动跳转到下一题
-                if (data.next_problem) {
-                    setTimeout(() => {
-                        showTempMessage(`3秒后自动跳转到第${data.next_problem}题...`, 'info');
-                    }, 500);
-
-                    setTimeout(() => {
-                        navigateToProblem(data.next_problem);
-                    }, 3000);
-                } else if (sebRequired) {
-                    showTempMessage('本题结果已保存，请使用下方按钮确认完成并退出。', 'success');
-                } else {
-                    setTimeout(() => {
-                        showTempMessage('恭喜完成所有题目！3秒后返回主页...', 'success');
-                    }, 500);
-
-                    setTimeout(() => {
-                        window.location.href = '{{ url_for("dashboard") }}';
-                    }, 3000);
-                }
-            } else {
-                // 回答错误 - 更新尝试次数显示
-                totalAttempts = data.total_attempts;
-                updateAttemptsDisplay();
-
-                const correctAnswerMessage = formatCorrectAnswers(data.correct_answers);
-                showErrorCorrection(data.response_ids || [], correctAnswerMessage);
-                scheduleProblemRegeneration(data);
-            }
-        } else {
-            showMessage('提交失败: ' + data.message, 'error');
-            resetSubmitButton();
-        }
+        const response = await ExamSubmission.send('/api/submit/' + problemId, answerData);
+        const data = await ExamSubmission.read(response);
+        handleSubmissionData(data);
 
     } catch (error) {
         console.error('提交错误:', error);
-        showMessage('网络错误: ' + error.message, 'error');
-        resetSubmitButton();
+        if (error.uncertain !== false) {
+            await checkPendingSubmission(submissionId);
+        } else {
+            showMessage(error.message, 'error');
+            resetSubmitButton();
+        }
     }
 });
 

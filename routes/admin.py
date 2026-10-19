@@ -2,6 +2,10 @@
 
 
 import io
+from flask import current_app
+from itsdangerous import URLSafeTimedSerializer, BadSignature
+import hashlib
+import json
 import uuid
 from datetime import datetime
 
@@ -433,6 +437,128 @@ def create_admin_blueprint(deps):
         return [('student', str(user_id)) for user_id in sorted(matched_ids)], missing_count
 
 
+    def _build_roster_preview(cursor, upload_file, target, exam_id=None, batch_id=None, mode='replace'):
+        if mode not in {'append', 'replace'}:
+            raise ValueError('无效的名单导入方式。')
+        if not upload_file or not upload_file.filename or not allowed_excel_file(upload_file.filename):
+            raise ValueError('请上传包含学号或姓名的 .xlsx 文件。')
+        upload_file.stream.seek(0)
+        file_hash = hashlib.sha256(upload_file.stream.read()).hexdigest()
+        upload_file.stream.seek(0)
+        try:
+            parsed_rows = _parse_exam_import_rows(upload_file)
+        except Exception:
+            raise ValueError('无法读取 Excel，请确认文件是有效的 .xlsx 工作簿。') from None
+        upload_file.stream.seek(0)
+        if not parsed_rows:
+            raise ValueError('Excel 中没有读取到可用的学号或姓名。')
+        matched_ids, missing_rows = set(), []
+        for row in parsed_rows:
+            matched = None
+            reason = '未找到对应的系统账户'
+            if row['student_id']:
+                cursor.execute("SELECT id FROM users WHERE username != 'admin' AND username = %s LIMIT 2", (row['student_id'],))
+                rows = cursor.fetchall()
+                matched = rows[0] if len(rows) == 1 else None
+            if not matched and row['student_name']:
+                cursor.execute("SELECT id FROM users WHERE username != 'admin' AND TRIM(name) = %s LIMIT 2", (row['student_name'],))
+                rows = cursor.fetchall()
+                matched = rows[0] if len(rows) == 1 else None
+                if len(rows) > 1:
+                    reason = '存在同名账户，请填写准确学号'
+            if matched:
+                matched_ids.add(int(matched['id']))
+            else:
+                missing_rows.append(dict(row_no=row['row_no'], username=row['identifier'], name=row['student_name'], reason=reason))
+        current = []
+        if batch_id:
+            cursor.execute('''SELECT u.id, u.username, u.name FROM exam_batch_students s
+                              JOIN users u ON u.id = s.user_id
+                              WHERE s.batch_id = %s AND s.is_active = TRUE ORDER BY u.id''', (batch_id,))
+            current = cursor.fetchall()
+        current_ids = {int(row['id']) for row in current}
+        incoming = []
+        if matched_ids:
+            slots = ', '.join(['%s'] * len(matched_ids))
+            cursor.execute(f'SELECT id, username, name FROM users WHERE id IN ({slots}) ORDER BY id', sorted(matched_ids))
+            incoming = cursor.fetchall()
+        conflicts = []
+        if exam_id and matched_ids:
+            slots = ', '.join(['%s'] * len(matched_ids))
+            cursor.execute(f'''SELECT u.id, u.username, u.name FROM exam_batch_students s
+                               JOIN users u ON u.id = s.user_id
+                               WHERE s.exam_id = %s AND s.batch_id != %s AND s.user_id IN ({slots})
+                               ORDER BY u.id''', [exam_id, batch_id or 0, *sorted(matched_ids)])
+            conflicts = cursor.fetchall()
+        result = {
+            'added': [row for row in incoming if int(row['id']) not in current_ids],
+            'retained': current if mode == 'append' else [row for row in current if int(row['id']) in matched_ids],
+            'removed': [] if mode == 'append' else [row for row in current if int(row['id']) not in matched_ids],
+            'missing': missing_rows, 'conflicts': conflicts,
+            'mode': mode, 'can_confirm': bool(matched_ids) and not conflicts,
+            'duplicate_count': len(parsed_rows) - len(missing_rows) - len(matched_ids),
+        }
+        digest = hashlib.sha256(json.dumps(
+            [target, exam_id, batch_id, file_hash, result, session.get('user_id', session.get('username'))],
+            sort_keys=True, ensure_ascii=False, default=str,
+        ).encode('utf-8')).hexdigest()
+        return result, digest
+
+
+    def _require_roster_preview(cursor, upload_file, target, exam_id=None, batch_id=None, mode='replace'):
+        result, digest = _build_roster_preview(cursor, upload_file, target, exam_id, batch_id, mode)
+        try:
+            reviewed = URLSafeTimedSerializer(current_app.secret_key, salt='exam-roster-preview').loads(
+                request.form.get('roster_preview_token', ''), max_age=900)
+        except BadSignature:
+            raise ValueError('请先预览 Excel 名单，并确认增减情况后再保存。') from None
+        if not result['can_confirm'] or reviewed != digest:
+            raise ValueError('文件、导入方式或学生名单已变化，请重新预览后确认。')
+
+
+    @bp.route('/admin/exams/roster-preview', methods=['POST'])
+    @login_required
+    def admin_roster_preview():
+        if session.get('username') != 'admin':
+            return jsonify(success=False, message='权限不足。'), 403
+        target = request.form.get('preview_target')
+        if target not in {'create_exam', 'update_exam', 'create_batch', 'update_batch'}:
+            return jsonify(success=False, message='无效的预览入口。'), 400
+        exam_id = request.form.get('exam_id', type=int) if target != 'create_exam' else None
+        batch_id = None
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            if target != 'create_exam':
+                cursor.execute('SELECT status FROM exams WHERE id = %s', (exam_id,))
+                exam = cursor.fetchone()
+                if not exam or exam.get('status') == 'archived':
+                    raise ValueError('考试不存在或已归档。')
+            if target == 'update_exam':
+                cursor.execute('SELECT id FROM exam_batches WHERE exam_id = %s AND is_default = TRUE LIMIT 1', (exam_id,))
+                batch_id = (cursor.fetchone() or {}).get('id')
+                if not batch_id:
+                    raise ValueError('默认批次不存在。')
+            if target == 'update_batch':
+                batch_id = request.form.get('batch_id', type=int)
+                cursor.execute('SELECT status FROM exam_batches WHERE id = %s AND exam_id = %s', (batch_id, exam_id))
+                if (cursor.fetchone() or {}).get('status') != 'active':
+                    raise ValueError('批次不存在或已归档。')
+            mode = (request.form.get('student_import_mode', 'append') if target == 'update_exam'
+                    else request.form.get('roster_mode', 'append') if target == 'update_batch' else 'replace')
+            result, digest = _build_roster_preview(cursor, request.files.get('student_file'), target, exam_id, batch_id, mode)
+            result['success'] = True
+            result['token'] = URLSafeTimedSerializer(current_app.secret_key, salt='exam-roster-preview').dumps(digest) if result['can_confirm'] else ''
+            response = jsonify(result)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except (ValueError, mysql.connector.Error) as err:
+            return jsonify(success=False, message=str(err)), 400
+        finally:
+            cursor.close()
+            conn.close()
+
+
     def _create_exam_batch(cursor, exam_id, name, start_time, end_time, assignments, is_default=False):
         batch_name = (name or '').strip() or ('默认批次' if is_default else '考试批次')
         user_ids = _resolve_assignment_user_ids(cursor, assignments)
@@ -803,6 +929,7 @@ def create_admin_blueprint(deps):
             if assign_type == 'student':
                 if not upload_file or not upload_file.filename or not allowed_excel_file(upload_file.filename):
                     raise ValueError('请上传包含学号或姓名的 .xlsx 文件。')
+                _require_roster_preview(cursor, upload_file, 'create_batch', exam_id=exam_id)
                 assignments, missing_count = _resolve_uploaded_student_assignments(cursor, upload_file)
             else:
                 if not assign_values:
@@ -857,6 +984,7 @@ def create_admin_blueprint(deps):
                     upload_file = request.files.get('student_file')
                     if not upload_file or not upload_file.filename or not allowed_excel_file(upload_file.filename):
                         raise ValueError('请上传包含学号或姓名的 .xlsx 文件。')
+                    _require_roster_preview(cursor, upload_file, 'update_batch', exam_id, batch_id, request.form.get('roster_mode', 'append'))
                     assignments, missing_count = _resolve_uploaded_student_assignments(cursor, upload_file)
                     if missing_count:
                         flash(f'名单中有 {missing_count} 行未匹配到账户。', 'warning')
@@ -1057,6 +1185,8 @@ def create_admin_blueprint(deps):
         cursor = conn.cursor(dictionary=True)
         paper_auto_enabled = False
         try:
+            if assign_type == 'student':
+                _require_roster_preview(cursor, upload_file, 'create_exam')
             paper_auto_enabled = ensure_exam_paper_enabled(cursor, paper_id)
             cursor.execute(
                 """
@@ -1172,7 +1302,7 @@ def create_admin_blueprint(deps):
             clear_exam_metadata_cache()
             _finish_auto_enabled_paper(paper_id, paper_auto_enabled)
             if assign_type == 'student' and missing_rows:
-                return _build_missing_accounts_response(missing_rows, name)
+                flash(f'有 {len(missing_rows)} 行未匹配账户，已按预览结果跳过。', 'warning')
             flash(f'考试创建成功，首个批次已分配 {batch_student_count} 名学生。', 'success')
         except ValueError as err:
             conn.rollback()
@@ -1299,6 +1429,8 @@ def create_admin_blueprint(deps):
             default_batch = cursor.fetchone()
             if not default_batch:
                 raise ValueError('默认批次不存在，请先重新部署以完成数据迁移。')
+            if replace_student_assignments:
+                _require_roster_preview(cursor, upload_file, 'update_exam', exam_id, default_batch['id'], request.form.get('student_import_mode', 'append'))
             if schedule_restricts_access(default_batch, start_time, end_time) and not parse_checkbox(request.form.get('confirm_time_change')):
                 raise ValueError('推迟开始或提前结束可能中断正在作答的学生，请勾选时间调整确认后保存。')
             if assign_type == 'student' and not replace_student_assignments:
@@ -1473,7 +1605,7 @@ def create_admin_blueprint(deps):
             clear_exam_metadata_cache()
             _finish_auto_enabled_paper(paper_id, paper_auto_enabled)
             if assign_type == 'student' and missing_rows:
-                return _build_missing_accounts_response(missing_rows, name)
+                flash(f'有 {len(missing_rows)} 行未匹配账户，已按预览结果跳过。', 'warning')
             flash(f'考试更新成功，已设置 {len(assignments)} 条分配规则。', 'success')
         except (ValueError, mysql.connector.Error) as err:
             conn.rollback()

@@ -1,9 +1,11 @@
 from functools import wraps
 from time import perf_counter
+import json
 
 from flask import Blueprint, make_response
 
 from services.seb_exam_service import SEB_CONFIG_KEY_HEADER, build_finish_summary
+from services.submission_receipt_service import receipt_key, answer_fingerprint, restore_receipt_state
 
 
 def create_exam_blueprint(deps):
@@ -17,6 +19,14 @@ def create_exam_blueprint(deps):
             user_id = session.get('user_id')
             current_state = session.get('current_problem') or {}
             exam_id = current_state.get('exam_id') or session.get('selected_exam_id') or 'none'
+            payload = request.get_json(silent=True) or {}
+            submission_id = payload.get('submission_id')
+            key = None
+            if submission_id:
+                try:
+                    key = receipt_key(user_id, submission_id)
+                except ValueError as err:
+                    return jsonify(success=False, message=str(err)), 400
             lock_name = f"answer-submit:{user_id}:{exam_id}:{problem_id}"
             try:
                 lock_token = acquire_distributed_lock(lock_name, ttl_seconds=30)
@@ -33,11 +43,57 @@ def create_exam_blueprint(deps):
                     'message': '答案正在提交，请勿重复点击。',
                 }), 409
             try:
-                return view(problem_id, *args, **kwargs)
+                if key:
+                    fingerprint = answer_fingerprint(payload, exam_id, problem_id)
+                    try:
+                        previous = redis_client.get(key)
+                        if previous:
+                            previous = json.loads(previous)
+                            if previous.get('fingerprint') != fingerprint:
+                                return jsonify(success=False, message='提交内容已变化，请勿重复提交。'), 409
+                            if previous.get('state') == 'done':
+                                restore_receipt_state(previous, session)
+                                return jsonify(previous['data']), previous['status']
+                            return jsonify(success=False, submission_in_progress=True, message='正在核对提交结果，请勿重复提交。'), 409
+                        redis_client.setex(key, 3600, json.dumps({'state': 'pending', 'fingerprint': fingerprint}))
+                    except (RedisError, ValueError):
+                        return jsonify(success=False, message='提交服务暂时不可用，答案尚未提交，请稍后重试。'), 503
+                source_token = current_state.get('token')
+                response = make_response(view(problem_id, *args, **kwargs))
+                if key:
+                    receipt = dict(state='done', fingerprint=fingerprint, data=response.get_json(),
+                                   status=response.status_code, source_token=source_token,
+                                   current_problem=session.get('current_problem'))
+                    try:
+                        redis_client.setex(key, 3600, json.dumps(receipt))
+                    except RedisError:
+                        logger.error('无法缓存提交回执: user_id=%s', user_id)
+                return response
             finally:
                 release_distributed_lock(lock_name, lock_token)
 
         return wrapped
+
+    @bp.route('/api/submissions/<submission_id>')
+    @login_required
+    def submission_status(submission_id):
+        try:
+            key = receipt_key(session['user_id'], submission_id)
+            raw = redis_client.get(key)
+            receipt = json.loads(raw) if raw else {'state': 'unknown'}
+            if receipt.get('state') == 'done':
+                restore_receipt_state(receipt, session)
+                body = dict(state='done', data=receipt['data'], status=receipt['status'])
+            else:
+                body = dict(state=receipt.get('state', 'unknown'))
+            response = jsonify(body)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except ValueError as err:
+            return jsonify(success=False, message=str(err)), 400
+        except RedisError:
+            return jsonify(success=False, message='暂时无法核对提交结果，请稍后再次核对。'), 503
+
 
     def seb_guard(exam, api=False):
         valid, message = validate_seb_exam_request(
@@ -868,8 +924,8 @@ def create_exam_blueprint(deps):
     
             if not save_success:
                 logger.error("保存答题记录失败: user_id=%s template_id=%s", user_id, template_id)
-                # 即使保存失败，也继续处理，但记录警告
-                session['current_problem']['save_failed'] = True
+                session['current_problem']['total_attempts'] = latest_attempt_count
+                return jsonify(success=False, saved=False, message='答案未能保存，当前输入已保留，请稍后重新提交。'), 503
     
             # 生成正确答案消息
             correct_answer_message = "正确答案: "
@@ -984,13 +1040,17 @@ def create_exam_blueprint(deps):
     
         except ValueError as e:
             logger.error("数值转换错误: %s", e)
-            return jsonify({'success': False, 'message': '请输入有效的数字格式'})
+            saved = bool(locals().get('save_success'))
+            return jsonify(success=False, saved=saved, message='答案已保存，但页面更新失败，请联系监考教师。' if saved else '请输入有效的数字格式'), 500 if saved else 400
         except KeyError as e:
             logger.error("缺少必要字段: %s", e)
-            return jsonify({'success': False, 'message': f'缺少必要字段: {str(e)}'})
+            saved = bool(locals().get('save_success'))
+            return jsonify(success=False, saved=saved, message='答案已保存，但页面更新失败，请联系监考教师。' if saved else '答题状态已失效，请联系监考教师协助恢复。'), 500 if saved else 400
         except Exception as e:
             logger.exception("服务器错误: %s", e)
-            return jsonify({'success': False, 'message': f'服务器错误: {str(e)}'})
+            saved = bool(locals().get('save_success'))
+            return jsonify(success=False, saved=saved,
+                           message='答案已保存，但页面更新失败，请联系监考教师协助恢复。' if saved else '服务暂时异常，当前输入已保留，请稍后重试。'), 500
 
     @bp.route('/api/exam/secure-finish-summary', methods=['POST'])
     @login_required

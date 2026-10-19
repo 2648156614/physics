@@ -11,6 +11,7 @@ from flask import (
     abort,
     current_app,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -243,6 +244,8 @@ def login_required(f=None, *, db_check=False):
         def decorated_function(*args, **kwargs):
             user_id = session.get('user_id')
             if not user_id:
+                if request.path.startswith('/api/'):
+                    return jsonify(success=False, login_required=True, message='登录已失效，请重新登录。当前输入已保留。'), 401
                 flash('请先登录！', 'danger')
                 return redirect(url_for('auth.login'))
 
@@ -286,6 +289,8 @@ def enforce_session_idle_timeout():
     last_activity = session.get('last_activity_ts')
     if last_activity and (now_ts - int(last_activity)) > SESSION_IDLE_TIMEOUT_SECONDS:
         session.clear()
+        if request.path.startswith('/api/'):
+            return jsonify(success=False, login_required=True, message='长时间未操作，登录已失效，请重新登录。当前输入已保留。'), 401
         flash('由于超过1小时未操作，账号已自动锁定，请重新登录。', 'warning')
         return redirect(url_for('auth.login'))
 

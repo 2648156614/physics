@@ -3,6 +3,7 @@ import logging
 import os
 from pathlib import Path
 import time
+from datetime import datetime
 import unittest
 from unittest.mock import Mock
 
@@ -54,7 +55,15 @@ class SebEntryRouteTests(unittest.TestCase):
             'is_problem_completed': Mock(return_value=False),
             'record_secure_exam_entry': Mock(return_value=True),
             'render_template': Mock(return_value='rendered question'),
+            'RedisError': RuntimeError,
+            'acquire_distributed_lock': Mock(return_value='lock'),
+            'release_distributed_lock': Mock(),
         }
+        self.receipts = {}
+        self.deps['redis_client'] = Mock(
+            get=Mock(side_effect=lambda key: self.receipts.get(key)),
+            setex=Mock(side_effect=lambda key, ttl, value: self.receipts.__setitem__(key, value)),
+        )
         spec = importlib.util.spec_from_file_location(
             'exam_routes_under_test', Path(__file__).parents[1] / 'routes/exam.py'
         )
@@ -71,6 +80,88 @@ class SebEntryRouteTests(unittest.TestCase):
         with self.client.session_transaction() as state:
             state['user_id'] = 25
             state['username'] = 'student'
+
+    def prepare_submission(self, save_success=True):
+        self.login_student()
+        # Blueprint dependencies are globals in the isolated route module.
+        namespace = self.app.view_functions['exam.api_submit'].__wrapped__.__wrapped__.__globals__
+        namespace.update({
+            'get_problem_by_token': Mock(return_value={'template_id':200,'correct_answers':[4.0],'answer_count':1,'problem_text':'test'}),
+            'is_problem_completed': Mock(return_value=False),
+            'get_latest_attempt_count': Mock(return_value=0), 'is_correct': lambda answer, expected: answer == expected,
+            'classify_error_type': Mock(return_value=None),
+            'save_user_response': Mock(return_value=(save_success,[101])),
+            'update_user_completion_status': Mock(return_value=False),
+        })
+        with self.client.session_transaction() as state:
+            state['current_problem'] = dict(exam_id=9,paper_id=10,batch_id=7,user_id=25,display_number=2,
+                                            actual_id=200,token='original-token',total_attempts=0)
+        return namespace
+
+    def test_successful_submission_receipt_replays_without_another_save(self):
+        namespace=self.prepare_submission()
+        payload=dict(answer=4,time_taken=5,submission_id='a'*32)
+        response=self.client.post('/api/submit/2',json=payload)
+        self.assertEqual(response.status_code,200)
+        self.assertTrue(response.get_json()['correct'])
+        replay=self.client.post('/api/submit/2',json=payload)
+        self.assertEqual(replay.get_json(),response.get_json())
+        namespace['save_user_response'].assert_called_once()
+        receipt=self.client.get('/api/submissions/'+'a'*32)
+        self.assertEqual(receipt.get_json()['state'],'done')
+        self.assertEqual(receipt.get_json()['data'],response.get_json())
+
+    def test_save_failure_does_not_report_correct_or_advance_student(self):
+        namespace=self.prepare_submission(save_success=False)
+        response=self.client.post('/api/submit/2',json=dict(answer=4,time_taken=5,submission_id='b'*32))
+        self.assertEqual(response.status_code,503)
+        self.assertFalse(response.get_json()['saved'])
+        self.assertNotIn('correct',response.get_json())
+        namespace['update_user_completion_status'].assert_not_called()
+        with self.client.session_transaction() as state:
+            self.assertEqual(state['current_problem']['total_attempts'],0)
+            self.assertEqual(state['current_problem']['token'],'original-token')
+
+    def test_specific_seb_and_exam_time_failures_reach_api_client(self):
+        self.prepare_submission()
+        self.deps['validate_seb_exam_request'].return_value=(False,'SEB 配置需要更新')
+        response=self.client.post('/api/submit/2',json=dict(answer=4,submission_id='c'*32))
+        self.assertEqual(response.status_code,403)
+        self.assertEqual(response.get_json()['message'],'SEB 配置需要更新')
+        self.deps['get_user_exam_access'].return_value=dict(allowed=False,message='考试已结束',server_time=datetime.now(),exam_start_time=None,exam_status='ended')
+        response=self.client.post('/api/submit/2',json=dict(answer=4,submission_id='d'*32))
+        self.assertEqual(response.status_code,403)
+        self.assertEqual(response.get_json()['message'],'考试已结束')
+
+    def test_receipt_is_scoped_to_current_student_and_unknown_stays_unknown(self):
+        self.prepare_submission()
+        self.client.post('/api/submit/2',json=dict(answer=4,time_taken=5,submission_id='e'*32))
+        with self.client.session_transaction() as state:
+            state['user_id']=99
+        self.assertEqual(self.client.get('/api/submissions/'+'e'*32).get_json()['state'],'unknown')
+
+    def test_altered_answer_with_same_receipt_cannot_be_saved_twice(self):
+        namespace=self.prepare_submission()
+        self.client.post('/api/submit/2',json=dict(answer=4,time_taken=5,submission_id='f'*32))
+        response=self.client.post('/api/submit/2',json=dict(answer=9,time_taken=5,submission_id='f'*32))
+        self.assertEqual(response.status_code,409)
+        namespace['save_user_response'].assert_called_once()
+
+    def test_error_after_database_save_is_reported_as_saved(self):
+        namespace=self.prepare_submission()
+        namespace['update_user_completion_status'].side_effect=RuntimeError('test failure after save')
+        response=self.client.post('/api/submit/2',json=dict(answer=4,time_taken=5,submission_id='9'*32))
+        self.assertEqual(response.status_code,500)
+        self.assertTrue(response.get_json()['saved'])
+        self.assertIn('答案已保存',response.get_json()['message'])
+        namespace['save_user_response'].assert_called_once()
+
+    def test_receipt_service_outage_prevents_an_untracked_save(self):
+        namespace=self.prepare_submission()
+        self.deps['redis_client'].get.side_effect=RuntimeError('test redis unavailable')
+        response=self.client.post('/api/submit/2',json=dict(answer=4,time_taken=5,submission_id='8'*32))
+        self.assertEqual(response.status_code,503)
+        namespace['save_user_response'].assert_not_called()
 
     def test_configuration_test_does_not_enter_exam_or_change_student_session(self):
         self.login_student()

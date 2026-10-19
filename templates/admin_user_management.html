@@ -44,7 +44,7 @@
       <h1 class="user-admin-title">用户管理</h1>
       <p class="user-admin-subtitle">管理学生账户、基础信息与登录状态，共 {{ all_user_count }} 名学生</p>
     </div>
-    <div class="user-admin-actions">
+    <div class="user-admin-actions"><a class="btn btn-outline-primary" href="{{ url_for('admin.admin_exams') }}">考试与批次安排</a>
       <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#addUserModal"><i class="bi bi-person-plus me-1"></i>添加学生</button>
       <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#importUsersModal"><i class="bi bi-upload me-1"></i>导入</button>
       <div class="dropdown">
@@ -87,13 +87,13 @@
 
     <div class="user-table-scroll" tabindex="0">
       <table class="user-data-table">
-        <thead><tr><th>学生</th><th>学号</th><th>专业</th><th>班级</th><th>课程号</th><th>考试时间</th><th>账号状态</th><th>创建时间</th><th class="text-center">操作</th></tr></thead>
+        <thead><tr><th>学生</th><th>学号</th><th>专业</th><th>班级</th><th>课程号</th><th>考试 / 批次</th><th>账号状态</th><th>创建时间</th><th class="text-center">操作</th></tr></thead>
         <tbody>
           {% for user in users %}
           <tr>
             <td><a class="student-name-link" href="{{ url_for('admin_student_details', user_id=user.id) }}">{{ user.name or '未填写姓名' }}</a><span class="cell-secondary">ID {{ user.id }}</span></td>
             <td class="fw-semibold">{{ user.username }}</td><td>{{ user.major or '—' }}</td><td>{{ user.class_name or '—' }}</td><td>{{ user.teacher_name or '—' }}</td>
-            <td>{% if user.exam_start_time or user.exam_end_time %}<span>{{ user.exam_start_time.strftime('%m-%d %H:%M') if user.exam_start_time else '未设置' }}</span><span class="cell-secondary">至 {{ user.exam_end_time.strftime('%m-%d %H:%M') if user.exam_end_time else '未设置' }}</span>{% else %}—{% endif %}</td>
+            <td>{% for batch in user.exam_batches[:2] %}<a class="d-block text-decoration-none" href="{{ url_for('admin.admin_exam_detail', exam_id=batch.exam_id, batch_id=batch.batch_id) }}">{{ batch.exam_name }} · {{ batch.batch_name }}</a><span class="cell-secondary">{{ batch.start_time.strftime('%m-%d %H:%M') if batch.start_time else '不限开始' }} 至 {{ batch.end_time.strftime('%m-%d %H:%M') if batch.end_time else '不限结束' }}</span>{% else %}<span class="text-muted">未安排考试</span>{% endfor %}{% if user.exam_batches|length > 2 %}<span class="cell-secondary">另有 {{ user.exam_batches|length - 2 }} 个批次</span>{% endif %}</td>
             <td>{% if user.is_locked %}<span><span class="status-dot locked"></span>已锁定</span>{% else %}<span><span class="status-dot"></span>正常</span>{% endif %}{% if not user.password_changed %}<span class="cell-secondary">待修改初始密码</span>{% endif %}</td>
             <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '—' }}</td>
             <td class="text-center">
@@ -101,7 +101,7 @@
                 <button class="btn btn-sm btn-outline-secondary row-action-button" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" aria-expanded="false" title="学生操作"><i class="bi bi-three-dots-vertical"></i></button>
                 <ul class="dropdown-menu dropdown-menu-end">
                   <li><a class="dropdown-item" href="{{ url_for('admin_student_details', user_id=user.id) }}"><i class="bi bi-bar-chart me-2"></i>查看详情</a></li>
-                  <li><button class="dropdown-item edit-user-button" type="button" data-bs-toggle="modal" data-bs-target="#editUserModal" data-edit-url="{{ url_for('admin_edit_user', user_id=user.id) }}" data-username="{{ user.username|e }}" data-name="{{ (user.name or '')|e }}" data-major="{{ (user.major or '')|e }}" data-class-name="{{ (user.class_name or '')|e }}" data-teacher-name="{{ (user.teacher_name or '')|e }}" data-exam-start="{{ user.exam_start_time.strftime('%Y-%m-%dT%H:%M') if user.exam_start_time else '' }}" data-exam-end="{{ user.exam_end_time.strftime('%Y-%m-%dT%H:%M') if user.exam_end_time else '' }}"><i class="bi bi-pencil me-2"></i>编辑信息</button></li>
+                  <li><button class="dropdown-item edit-user-button" type="button" data-bs-toggle="modal" data-bs-target="#editUserModal" data-edit-url="{{ url_for('admin_edit_user', user_id=user.id) }}" data-username="{{ user.username|e }}" data-name="{{ (user.name or '')|e }}" data-major="{{ (user.major or '')|e }}" data-class-name="{{ (user.class_name or '')|e }}" data-teacher-name="{{ (user.teacher_name or '')|e }}"><i class="bi bi-pencil me-2"></i>编辑信息</button></li>
                   <li><form method="post" action="{{ url_for('admin_reset_user_password', user_id=user.id) }}" onsubmit="return confirm('确认重置该学生的密码吗？')"><input type="hidden" name="return_to" value="{{ request.full_path }}"><button class="dropdown-item" type="submit"><i class="bi bi-key me-2"></i>重置密码</button></form></li>
                   <li><hr class="dropdown-divider"></li>
                   <li><form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('确认删除该学生？相关答题记录也会被删除。')"><input type="hidden" name="return_to" value="{{ request.full_path }}"><button class="dropdown-item text-danger" type="submit"><i class="bi bi-trash3 me-2"></i>删除学生</button></form></li>
@@ -131,7 +131,6 @@
     <div class="col-md-6"><label class="form-label">学号</label><input class="form-control" name="username" required></div><div class="col-md-6"><label class="form-label">姓名</label><input class="form-control" name="name" required></div>
     <div class="col-md-6"><label class="form-label">专业</label><input class="form-control" name="major" list="majorList"></div><div class="col-md-6"><label class="form-label">班级</label><input class="form-control" name="class_name" list="classList"></div>
     <div class="col-md-6"><label class="form-label">课程号</label><input class="form-control" name="teacher_name" list="teacherList"></div><div class="col-md-6"></div>
-    <div class="col-md-6"><label class="form-label">开考时间</label><input class="form-control" type="datetime-local" name="exam_start_time"></div><div class="col-md-6"><label class="form-label">结束时间</label><input class="form-control" type="datetime-local" name="exam_end_time"></div>
   </div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit">确认添加</button></div></form>
 </div></div></div>
 
@@ -141,7 +140,6 @@
     <div class="col-md-6"><label class="form-label">学号</label><input class="form-control" name="username" id="edit-username" required></div><div class="col-md-6"><label class="form-label">姓名</label><input class="form-control" name="name" id="edit-name" required></div>
     <div class="col-md-6"><label class="form-label">专业</label><input class="form-control" name="major" id="edit-major" list="majorList"></div><div class="col-md-6"><label class="form-label">班级</label><input class="form-control" name="class_name" id="edit-class" list="classList"></div>
     <div class="col-md-6"><label class="form-label">课程号</label><input class="form-control" name="teacher_name" id="edit-teacher" list="teacherList"></div><div class="col-md-6"></div>
-    <div class="col-md-6"><label class="form-label">开考时间</label><input class="form-control" type="datetime-local" name="exam_start_time" id="edit-start"></div><div class="col-md-6"><label class="form-label">结束时间</label><input class="form-control" type="datetime-local" name="exam_end_time" id="edit-end"></div>
   </div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit">保存修改</button></div></form>
 </div></div></div>
 
@@ -157,8 +155,7 @@
   <div class="modal-header"><h2 class="modal-title fs-5" id="batchUpdateModalLabel">批量修改学生</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button></div>
   <form method="post" action="{{ url_for('admin_batch_update_users') }}" id="batch-update-form"><input type="hidden" name="return_to" value="{{ request.full_path }}"><div class="modal-body"><div class="row g-3">
     <div class="col-md-6"><label class="form-label">完整班级名称</label><input class="form-control" name="filter_class_name" id="batch-update-class" list="classList"></div><div class="col-md-6"><label class="form-label">完整专业名称</label><input class="form-control" name="filter_major" id="batch-update-major" list="majorList"></div>
-    <div class="col-md-6"><label class="form-label">设置课程号</label><input class="form-control" name="teacher_name" id="batch-update-teacher" list="teacherList" placeholder="留空则不修改"></div><div class="col-md-6 d-flex align-items-end"><div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="update_exam_time" value="1" id="batch-update-time"><label class="form-check-label" for="batch-update-time">同时设置考试时间</label></div></div>
-    <div class="col-md-6"><label class="form-label">开考时间</label><input class="form-control" type="datetime-local" name="exam_start_time" id="batch-update-start" disabled></div><div class="col-md-6"><label class="form-label">结束时间</label><input class="form-control" type="datetime-local" name="exam_end_time" id="batch-update-end" disabled></div>
+    <div class="col-md-6"><label class="form-label">设置课程号</label><input class="form-control" name="teacher_name" id="batch-update-teacher" list="teacherList" placeholder="请输入课程号" required></div>
   </div><div class="form-text mt-3">至少填写班级或专业；两个条件都填写时只修改同时符合的学生。</div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit">确认修改</button></div></form>
 </div></div></div>
 
@@ -187,18 +184,12 @@ document.addEventListener('DOMContentLoaded', function () {
       document.getElementById('edit-major').value = button.dataset.major;
       document.getElementById('edit-class').value = button.dataset.className;
       document.getElementById('edit-teacher').value = button.dataset.teacherName;
-      document.getElementById('edit-start').value = button.dataset.examStart;
-      document.getElementById('edit-end').value = button.dataset.examEnd;
     });
   });
-  const updateTime = document.getElementById('batch-update-time');
-  const updateStart = document.getElementById('batch-update-start');
-  const updateEnd = document.getElementById('batch-update-end');
-  updateTime.addEventListener('change', function () { updateStart.disabled = !updateTime.checked; updateEnd.disabled = !updateTime.checked; if (!updateTime.checked) { updateStart.value = ''; updateEnd.value = ''; } });
   document.getElementById('batch-update-form').addEventListener('submit', function (event) {
     const className = document.getElementById('batch-update-class').value.trim(); const major = document.getElementById('batch-update-major').value.trim(); const teacher = document.getElementById('batch-update-teacher').value.trim();
     if (!className && !major) { event.preventDefault(); alert('请至少填写班级或专业。'); return; }
-    if (!teacher && !updateTime.checked) { event.preventDefault(); alert('请填写课程号或选择修改考试时间。'); return; }
+    if (!teacher) { event.preventDefault(); alert('请填写课程号。'); return; }
     if (!confirm('确认批量修改符合条件的学生吗？')) event.preventDefault();
   });
   const deleteBy = document.getElementById('batch-delete-by'); const deleteValue = document.getElementById('batch-delete-value');

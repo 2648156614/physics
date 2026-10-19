@@ -106,7 +106,7 @@
     </div>
 
     {% if exam.status != 'archived' %}<div class="collapse border-top pt-3" id="new-batch-form">
-        <form method="post" action="{{ url_for('admin.admin_create_exam_batch', exam_id=exam.id) }}" enctype="multipart/form-data" class="row g-3">
+        <form method="post" action="{{ url_for('admin.admin_create_exam_batch', exam_id=exam.id) }}" enctype="multipart/form-data" class="row g-3" data-roster-preview="create_batch" data-exam-id="{{ exam.id }}">
             <div class="col-md-4">
                 <label class="form-label">批次名称</label>
                 <input class="form-control" name="batch_name" required placeholder="例如：机电二班下午场">
@@ -182,7 +182,7 @@
 
     {% if exam.status != 'archived' and selected_batch.status == 'active' %}
     <div class="collapse border rounded p-3 mb-3" id="edit-batch-form">
-        <form method="post" action="{{ url_for('admin.admin_update_exam_batch', exam_id=exam.id, batch_id=selected_batch.id) }}" enctype="multipart/form-data" class="row g-3">
+        <form method="post" action="{{ url_for('admin.admin_update_exam_batch', exam_id=exam.id, batch_id=selected_batch.id) }}" enctype="multipart/form-data" class="row g-3" data-roster-preview="update_batch" data-exam-id="{{ exam.id }}" data-batch-id="{{ selected_batch.id }}">
             <div class="col-md-6">
                 <label class="form-label">开始时间</label>
                 <input class="form-control" type="datetime-local" name="start_time" value="{{ selected_batch.start_time.strftime('%Y-%m-%dT%H:%M') if selected_batch.start_time else '' }}">
@@ -339,3 +339,5 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 </script>
 {% endblock %}
+
+{% block scripts %}<script src="{{ url_for('static', filename='js/exam-roster-preview.js') }}"></script>{% endblock %}

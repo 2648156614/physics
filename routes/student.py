@@ -182,7 +182,7 @@ def create_student_blueprint(deps):
             cursor.execute(
                 f"""
                 SELECT id, username, name, major, class_name, teacher_name,
-                       exam_start_time, exam_end_time, created_at,
+                       created_at,
                        password_changed,
                        CASE
                            WHEN login_locked_until IS NOT NULL AND login_locked_until > NOW() THEN 1
@@ -196,6 +196,27 @@ def create_student_blueprint(deps):
                 [*params, per_page, offset],
             )
             users = cursor.fetchall()
+            for user in users:
+                user['exam_batches'] = []
+            if users:
+                placeholders = ', '.join(['%s'] * len(users))
+                cursor.execute(
+                    f"""
+                    SELECT s.user_id, e.id AS exam_id, e.name AS exam_name,
+                           b.id AS batch_id, b.name AS batch_name, b.start_time, b.end_time
+                    FROM exam_batch_students s
+                    JOIN exams e ON e.id = s.exam_id
+                    JOIN exam_batches b ON b.id = s.batch_id AND b.exam_id = e.id
+                    WHERE s.is_active = TRUE AND e.status = 'published' AND b.status = 'active'
+                      AND s.user_id IN ({placeholders})
+                    ORDER BY (b.end_time IS NULL OR b.end_time > NOW()) DESC, b.start_time DESC, e.id DESC
+                    """,
+                    [user['id'] for user in users],
+                )
+                user_map = {user['id']: user for user in users}
+                for assignment in cursor.fetchall():
+                    user_map[assignment['user_id']]['exam_batches'].append(assignment)
+
 
             cursor.execute("SELECT COUNT(*) AS total FROM users WHERE username != 'admin'")
             all_user_count = int((cursor.fetchone() or {}).get('total') or 0)
@@ -275,21 +296,9 @@ def create_student_blueprint(deps):
         major = (request.form.get('major') or '').strip()
         class_name = (request.form.get('class_name') or '').strip()
         teacher_name = (request.form.get('teacher_name') or '').strip()
-        exam_start_time_raw = (request.form.get('exam_start_time') or '').strip()
-        exam_end_time_raw = (request.form.get('exam_end_time') or '').strip()
     
         if not username or not name:
             flash('学号和姓名不能为空', 'danger')
-            return redirect(url_for('admin_user_management'))
-    
-        try:
-            exam_start_time = parse_exam_time(exam_start_time_raw)
-            exam_end_time = parse_exam_time(exam_end_time_raw)
-        except ValueError as err:
-            flash(str(err), 'danger')
-            return redirect(url_for('admin_user_management'))
-        if exam_start_time and exam_end_time and exam_end_time <= exam_start_time:
-            flash('结束时间必须晚于开始时间。', 'danger')
             return redirect(url_for('admin_user_management'))
     
         initial_password = build_initial_password(username)
@@ -305,10 +314,10 @@ def create_student_blueprint(deps):
     
             cursor.execute(
                 """
-                INSERT INTO users (username, name, major, class_name, teacher_name, exam_start_time, exam_end_time, password, password_changed, avatar_filename)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s)
+                INSERT INTO users (username, name, major, class_name, teacher_name, password, password_changed, avatar_filename)
+                VALUES (%s, %s, %s, %s, %s, %s, FALSE, %s)
                 """,
-                (username, name, major or None, class_name or None, teacher_name or None, exam_start_time, exam_end_time, password_hash, DEFAULT_AVATAR)
+                (username, name, major or None, class_name or None, teacher_name or None, password_hash, DEFAULT_AVATAR)
             )
             conn.commit()
             flash(f'账户已添加，初始密码：{initial_password}', 'success')
@@ -334,21 +343,9 @@ def create_student_blueprint(deps):
         class_name = (request.form.get('class_name') or '').strip()
         username = (request.form.get('username') or '').strip()
         teacher_name = (request.form.get('teacher_name') or '').strip()
-        exam_start_time_raw = (request.form.get('exam_start_time') or '').strip()
-        exam_end_time_raw = (request.form.get('exam_end_time') or '').strip()
     
         if not username or not name:
             flash('学号和姓名不能为空', 'danger')
-            return redirect(url_for('admin_user_management'))
-    
-        try:
-            exam_start_time = parse_exam_time(exam_start_time_raw)
-            exam_end_time = parse_exam_time(exam_end_time_raw)
-        except ValueError as err:
-            flash(str(err), 'danger')
-            return redirect(url_for('admin_user_management'))
-        if exam_start_time and exam_end_time and exam_end_time <= exam_start_time:
-            flash('结束时间必须晚于开始时间。', 'danger')
             return redirect(url_for('admin_user_management'))
     
         conn = get_db_connection()
@@ -357,11 +354,10 @@ def create_student_blueprint(deps):
             cursor.execute(
                 """
                 UPDATE users
-                SET username = %s, name = %s, major = %s, class_name = %s, teacher_name = %s,
-                    exam_start_time = %s, exam_end_time = %s
+                SET username = %s, name = %s, major = %s, class_name = %s, teacher_name = %s
                 WHERE id = %s AND username != 'admin'
                 """,
-                (username, name, major or None, class_name or None, teacher_name or None, exam_start_time, exam_end_time, user_id)
+                (username, name, major or None, class_name or None, teacher_name or None, user_id)
             )
             conn.commit()
             flash('用户信息更新成功', 'success')
@@ -428,37 +424,18 @@ def create_student_blueprint(deps):
         filter_class_name = (request.form.get('filter_class_name') or '').strip()
         filter_major = (request.form.get('filter_major') or '').strip()
         new_teacher_name = (request.form.get('teacher_name') or '').strip()
-        exam_start_time_raw = (request.form.get('exam_start_time') or '').strip()
-        exam_end_time_raw = (request.form.get('exam_end_time') or '').strip()
-        update_exam_time = request.form.get('update_exam_time') == '1'
-    
+        if request.form.get('update_exam_time') == '1':
+            flash('考试时间请在考试批次中调整，用户管理不再设置个人考试时间。', 'warning')
+            return redirect(url_for('admin.admin_exams'))
         if not filter_class_name and not filter_major:
             flash('请至少填写一个筛选条件：班级或专业。', 'danger')
             return redirect(url_for('admin_user_management'))
-        if not new_teacher_name and not update_exam_time:
-            flash('请填写要设置的课程号，或勾选批量设置考试时间。', 'danger')
+        if not new_teacher_name:
+            flash('请填写要设置的课程号。', 'danger')
             return redirect(url_for('admin_user_management'))
-    
-        try:
-            exam_start_time = parse_exam_time(exam_start_time_raw)
-            exam_end_time = parse_exam_time(exam_end_time_raw)
-        except ValueError as err:
-            flash(str(err), 'danger')
-            return redirect(url_for('admin_user_management'))
-        if update_exam_time and exam_start_time and exam_end_time and exam_end_time <= exam_start_time:
-            flash('结束时间必须晚于开始时间。', 'danger')
-            return redirect(url_for('admin_user_management'))
-    
-        set_clauses = []
-        params = []
-        if new_teacher_name:
-            set_clauses.append("teacher_name = %s")
-            params.append(new_teacher_name)
-        if update_exam_time:
-            set_clauses.append("exam_start_time = %s")
-            set_clauses.append("exam_end_time = %s")
-            params.extend([exam_start_time, exam_end_time])
-    
+        set_clauses = ['teacher_name = %s']
+        params = [new_teacher_name]
+
         where_clauses = ["username != 'admin'"]
         if filter_class_name:
             where_clauses.append("TRIM(COALESCE(class_name, '')) = %s")

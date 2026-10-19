@@ -10,7 +10,7 @@ import types
 import unittest
 from unittest.mock import Mock
 
-from flask import Flask, flash, redirect, request, session, url_for
+from flask import Flask, flash, redirect, request, session, url_for, jsonify
 from openpyxl import Workbook
 from jinja2 import ChoiceLoader, DictLoader, Environment, FileSystemLoader, StrictUndefined
 
@@ -33,6 +33,10 @@ class Cursor:
     @property
     def lastrowid(self):
         return self.cursor.lastrowid
+
+    @property
+    def rowcount(self):
+        return self.cursor.rowcount
 
     def executemany(self, sql, params):
         self.cursor.executemany(self.sql(sql), params)
@@ -125,6 +129,7 @@ class ArrangementRouteTests(unittest.TestCase):
         self.deps = {
             'login_required': login_required, 'request': request, 'session': session,
             'flash': flash, 'redirect': redirect, 'url_for': url_for,
+            'jsonify': jsonify,
             'get_db_connection': lambda: Connection(self.db), 'get_exam_by_id': get_exam,
             'get_problem_templates_by_paper': Mock(return_value=[{'id': 101}, {'id': 102}, {'id': 103}]),
             'parse_exam_time': lambda value: datetime.fromisoformat(value) if value else None,
@@ -149,11 +154,19 @@ class ArrangementRouteTests(unittest.TestCase):
     def exam(self):
         return self.deps['get_exam_by_id'](9)
 
-    def post_exam(self, **changes):
+    def post_exam(self, auto_preview=True, **changes):
         values = dict(name='renamed', paper_id='10', question_count='2', exam_type='normal',
                       assign_type='class', assign_value='A', start_time='2026-10-19T08:00',
                       end_time='2026-10-19T13:00', seb_required='on', seb_config_key='a'*64)
         values.update(changes)
+        if values.get('student_file') and auto_preview:
+            stream, filename = values['student_file']
+            content = stream.getvalue()
+            preview = self.client.post('/admin/exams/roster-preview', data=dict(
+                preview_target='update_exam', exam_id='9', student_import_mode=values.get('student_import_mode','append'),
+                student_file=(io.BytesIO(content),filename)))
+            values['student_file'] = (io.BytesIO(content),filename)
+            values['roster_preview_token'] = preview.get_json()['token']
         return self.client.post('/admin/exams/9/update', data=values)
 
     def active(self):
@@ -285,6 +298,92 @@ class ArrangementRouteTests(unittest.TestCase):
         self.post_exam(assign_type='student', student_file=self.spreadsheet(), student_import_mode='replace')
         self.assertEqual(self.active(),[3])
         self.assert_history()
+
+    def test_preview_is_read_only_and_shows_actual_removals(self):
+        response = self.client.post('/admin/exams/roster-preview',data=dict(
+            preview_target='update_exam',exam_id='9',student_import_mode='replace',student_file=self.spreadsheet()))
+        self.assertEqual(response.status_code,200)
+        data=response.get_json()
+        self.assertEqual([row['id'] for row in data['added']],[3])
+        self.assertEqual([row['id'] for row in data['removed']],[1])
+        self.assertEqual(self.active(),[1])
+        self.assertEqual(self.exam()['name'],'exam')
+        self.assert_history()
+
+    def test_excel_without_preview_cannot_change_any_exam_settings(self):
+        self.post_exam(auto_preview=False,assign_type='student',student_file=self.spreadsheet())
+        self.assertEqual(self.active(),[1])
+        self.assertEqual(self.exam()['name'],'exam')
+
+    def test_changing_roster_after_preview_requires_another_review(self):
+        response=self.client.post('/admin/exams/roster-preview',data=dict(
+            preview_target='update_exam',exam_id='9',student_import_mode='replace',student_file=self.spreadsheet()))
+        self.db.execute('INSERT INTO exam_batch_students VALUES(9,7,2,1)')
+        self.db.commit()
+        self.post_exam(auto_preview=False,assign_type='student',student_file=self.spreadsheet(),student_import_mode='replace',
+                       roster_preview_token=response.get_json()['token'])
+        self.assertEqual(self.active(),[1,2])
+        self.assertEqual(self.exam()['name'],'exam')
+
+    def test_changing_preview_mode_or_file_rejects_confirmation(self):
+        preview=self.client.post('/admin/exams/roster-preview',data=dict(
+            preview_target='update_exam',exam_id='9',student_import_mode='append',student_file=self.spreadsheet()))
+        self.post_exam(auto_preview=False,assign_type='student',student_file=self.spreadsheet(),student_import_mode='replace',
+                       roster_preview_token=preview.get_json()['token'])
+        self.assertEqual(self.active(),[1])
+
+    def test_preview_reports_conflicts_and_does_not_issue_confirmation(self):
+        self.db.execute('INSERT INTO exam_batch_students VALUES(9,8,3,1)')
+        self.db.commit()
+        data=self.client.post('/admin/exams/roster-preview',data=dict(
+            preview_target='update_exam',exam_id='9',student_file=self.spreadsheet())).get_json()
+        self.assertEqual([row['id'] for row in data['conflicts']],[3])
+        self.assertFalse(data['can_confirm'])
+        self.assertEqual(data['token'],'')
+
+    def test_new_exam_and_batch_excel_imports_require_their_own_preview(self):
+        for target, url, fields in [
+            ('create_exam','/admin/exams/create',dict(name='from excel',paper_id='10',question_count='2')),
+            ('create_batch','/admin/exams/9/batches/create',dict(batch_name='third')),
+            ('update_batch','/admin/exams/9/batches/8/update',dict(start_time='2026-10-19T08:00',end_time='2026-10-19T14:00')),
+        ]:
+            stream,filename=self.spreadsheet()
+            content=stream.getvalue()
+            preview=self.client.post('/admin/exams/roster-preview',data=dict(
+                preview_target=target,exam_id='9',batch_id='8',student_file=(io.BytesIO(content),filename))).get_json()
+            self.assertTrue(preview['can_confirm'])
+            response=self.client.post(url,data=dict(fields,assign_type='student',student_file=(io.BytesIO(content),filename),roster_preview_token=preview['token']))
+            self.assertEqual(response.status_code,302)
+            if target=='create_exam':
+                self.assertIsNotNone(self.db.execute("SELECT id FROM exams WHERE name='from excel'").fetchone())
+            elif target=='create_batch':
+                # Free the student's unused new-batch membership for the next independent check.
+                self.assertIsNotNone(self.db.execute("SELECT id FROM exam_batches WHERE name='third'").fetchone())
+                self.db.execute('DELETE FROM exam_batch_students WHERE exam_id=9 AND user_id=3')
+                self.db.commit()
+            else:
+                self.assertEqual(self.db.execute('SELECT batch_id FROM exam_batch_students WHERE exam_id=9 AND user_id=3').fetchone()[0],8)
+            self.assert_history()
+
+    def test_missing_and_repeated_rows_are_visible_before_import(self):
+        wb=Workbook()
+        wb.active.append(['学号','姓名'])
+        for row in [('1003','three'),('1003','three'),('9999','missing')]:
+            wb.active.append(row)
+        stream=io.BytesIO();wb.save(stream);stream.seek(0)
+        data=self.client.post('/admin/exams/roster-preview',data=dict(
+            preview_target='update_exam',exam_id='9',student_file=(stream,'students.xlsx'))).get_json()
+        self.assertEqual(len(data['added']),1)
+        self.assertEqual(len(data['missing']),1)
+        self.assertEqual(data['duplicate_count'],1)
+        self.assertEqual(self.active(),[1])
+
+    def test_invalid_workbook_is_reported_without_changing_data(self):
+        response=self.client.post('/admin/exams/roster-preview',data=dict(
+            preview_target='update_exam',exam_id='9',student_file=(io.BytesIO(b'not an xlsx'),'bad.xlsx')))
+        self.assertEqual(response.status_code,400)
+        self.assertIn('无法读取 Excel',response.get_json()['message'])
+        self.assertEqual(self.active(),[1])
 
     def test_each_batch_can_edit_times_and_append_students(self):
         response = self.client.post('/admin/exams/9/batches/8/update', data={
