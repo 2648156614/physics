@@ -72,6 +72,24 @@ class SebEntryRouteTests(unittest.TestCase):
             state['user_id'] = 25
             state['username'] = 'student'
 
+    def test_configuration_test_does_not_enter_exam_or_change_student_session(self):
+        self.login_student()
+        response = self.client.get('/seb/test/9')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        self.deps['render_template'].assert_called_once_with('seb_test.html', exam=self.deps['get_exam_by_id'].return_value)
+        self.deps['get_user_exam_problem_display_info'].assert_not_called()
+        self.deps['record_secure_exam_entry'].assert_not_called()
+        self.deps['fetch_problem_from_pool'].assert_not_called()
+        with self.client.session_transaction() as state:
+            self.assertEqual(state['user_id'], 25)
+            self.assertNotIn('pending_seb_exam_id', state)
+
+    def test_configuration_test_still_requires_valid_seb_hash(self):
+        self.deps['validate_seb_exam_request'].return_value = (False, 'invalid key')
+        self.assertEqual(self.client.get('/seb/test/9').status_code, 403)
+        self.deps['get_user_exam_problem_display_info'].assert_not_called()
+
     def test_start_always_requires_login_and_clears_previous_student(self):
         with self.client.session_transaction() as state:
             state.update(user_id=99, username='old-student', current_problem={'token': 'old'}, selected_exam_id=2, seb_entry_recorded_exam_id=9)

@@ -47,6 +47,7 @@ from services.seb_exam_service import (
     build_finish_summary,
     normalize_config_key,
     verify_config_key_request,
+    validate_exam_config_request,
 )
 from routes.auth import auth_bp, get_avatar_choices, login_required
 from routes.admin import create_admin_blueprint
@@ -347,11 +348,6 @@ def get_exam_by_id(exam_id):
     except (TypeError, ValueError):
         return None
 
-    cache_key = ('exam', exam_id)
-    cached = get_exam_metadata_cache(cache_key)
-    if cached is not None:
-        return cached
-
     conn = get_db_connection()
     if not conn:
         return None
@@ -368,7 +364,6 @@ def get_exam_by_id(exam_id):
         )
         exam = cursor.fetchone()
         result = dict(exam) if exam else None
-        set_exam_metadata_cache(cache_key, result)
         return result
     except mysql.connector.Error as err:
         if getattr(err, 'errno', None) == 1146:
@@ -386,12 +381,7 @@ def is_seb_exam_required(exam):
 def validate_seb_exam_request(exam, absolute_url, received_hash):
     if not is_seb_exam_required(exam):
         return True, None
-    config_key = normalize_config_key(exam.get('seb_config_key'))
-    if not config_key:
-        return False, '该考试尚未完成安全浏览器配置，请联系监考教师。'
-    if not verify_config_key_request(absolute_url, config_key, received_hash):
-        return False, '该考试必须使用教师指定的 Safe Exam Browser 配置进入。'
-    return True, None
+    return validate_exam_config_request(exam, absolute_url, received_hash)
 
 
 def record_secure_exam_entry(user_id, exam_id, batch_id=None):
@@ -522,6 +512,7 @@ def get_user_available_exams(user_id, include_unavailable=True):
               AND b.status = 'active'
               AND ep.is_enabled = TRUE
               AND s.user_id = %s
+              AND s.is_active = TRUE
             ORDER BY b.start_time DESC, e.id DESC
             """,
             (user_id,)
@@ -1218,6 +1209,12 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        # Serialize the first formal entry with administrative question-pool changes.
+        cursor.execute('SELECT * FROM exams WHERE id = %s FOR UPDATE', (exam_id,))
+        exam = cursor.fetchone()
+        if not exam:
+            return {}
+        paper_id = int(exam['paper_id'])
         cursor.execute(
             "SELECT EXISTS(SELECT 1 FROM exam_question_pool WHERE exam_id = %s LIMIT 1) AS frozen",
             (exam_id,),
@@ -1232,7 +1229,6 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
                 """,
                 (exam_id, paper_id),
             )
-            conn.commit()
         cursor.execute(
             """
             SELECT pt.id, pt.template_name, pt.paper_id
@@ -1261,7 +1257,7 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
             )
 
         cursor.execute(
-            "SELECT batch_id FROM exam_batch_students WHERE exam_id = %s AND user_id = %s",
+            "SELECT batch_id FROM exam_batch_students WHERE exam_id = %s AND user_id = %s AND is_active = TRUE",
             (exam_id, user_id),
         )
         membership = cursor.fetchone() or {}
@@ -1964,6 +1960,7 @@ def ensure_exam_batch_schema(cursor):
             exam_id INT NOT NULL,
             batch_id INT NOT NULL,
             user_id INT NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (batch_id) REFERENCES exam_batches(id) ON DELETE CASCADE,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -1972,6 +1969,10 @@ def ensure_exam_batch_schema(cursor):
             INDEX idx_exam_batch_students_batch (batch_id, user_id)
         )
     """)
+
+    cursor.execute("SHOW COLUMNS FROM exam_batch_students LIKE 'is_active'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE exam_batch_students ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE")
 
     cursor.execute("SHOW COLUMNS FROM exam_user_questions LIKE 'batch_id'")
     if not cursor.fetchone():
@@ -2024,6 +2025,10 @@ def ensure_exam_batch_schema(cursor):
 
 def ensure_seb_exam_schema(cursor):
     """Add opt-in Safe Exam Browser settings without changing existing exams."""
+    cursor.execute("SHOW COLUMNS FROM exams LIKE 'seb_previous_config_keys'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE exams ADD COLUMN seb_previous_config_keys TEXT NULL")
+
     cursor.execute("SHOW COLUMNS FROM exams LIKE 'seb_required'")
     if not cursor.fetchone():
         cursor.execute(

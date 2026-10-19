@@ -14,9 +14,10 @@ from openpyxl.utils import get_column_letter
 from services.exam_batch_service import (
     EXAM_STUDENT_STATUS_LABELS,
     classify_exam_student_status,
+    schedule_restricts_access,
 )
 from services.exam_paper_service import ensure_exam_paper_enabled
-from services.seb_exam_service import normalize_config_key, parse_checkbox
+from services.seb_exam_service import normalize_config_key, parse_checkbox, rotate_config_keys, previous_config_keys
 
 
 def create_admin_blueprint(deps):
@@ -501,14 +502,16 @@ def create_admin_blueprint(deps):
         if conflicts:
             names = '、'.join((row.get('name') or row.get('username') or '') for row in conflicts)
             raise ValueError(f'以下学生已属于本考试的其他批次：{names}')
-        cursor.execute('DELETE FROM exam_batch_students WHERE batch_id = %s', (batch_id,))
+        # Keep membership rows for historical statistics and the student's original batch.
+        cursor.execute('UPDATE exam_batch_students SET is_active = FALSE WHERE batch_id = %s', (batch_id,))
         cursor.execute('DELETE FROM exam_batch_assignments WHERE batch_id = %s', (batch_id,))
         cursor.executemany(
             "INSERT INTO exam_batch_assignments (batch_id, assign_type, assign_value) VALUES (%s, %s, %s)",
             [(batch_id, assign_type, assign_value) for assign_type, assign_value in assignments],
         )
         cursor.executemany(
-            "INSERT INTO exam_batch_students (exam_id, batch_id, user_id) VALUES (%s, %s, %s)",
+            """INSERT INTO exam_batch_students (exam_id, batch_id, user_id) VALUES (%s, %s, %s)
+               ON DUPLICATE KEY UPDATE is_active = TRUE""",
             [(exam_id, batch_id, user_id) for user_id in user_ids],
         )
         return len(user_ids)
@@ -527,6 +530,12 @@ def create_admin_blueprint(deps):
         if editing_exam and editing_exam.get('status') == 'archived':
             flash('归档考试只允许查看历史数据，不能再编辑。', 'warning')
             return redirect(url_for('admin.admin_exam_detail', exam_id=edit_exam_id))
+        if editing_exam:
+            editing_exam['editable_question_count'] = (
+                editing_exam.get('question_count')
+                if editing_exam.get('question_count') is not None
+                else get_exam_question_pool_count(edit_exam_id, editing_exam['paper_id'])
+            )
         editing_assignments = []
         editing_assign_type = ''
         editing_assign_value = ''
@@ -577,7 +586,8 @@ def create_admin_blueprint(deps):
             editing_assign_value=editing_assign_value,
             editing_assign_values=editing_assign_values,
             selected_source_exam_id=request.args.get('source_exam_id', type=int),
-            format_datetime_local=format_datetime_local
+            format_datetime_local=format_datetime_local,
+            previous_seb_key_count=len(previous_config_keys(editing_exam.get('seb_previous_config_keys'))) if editing_exam else 0,
         )
 
 
@@ -620,7 +630,7 @@ def create_admin_blueprint(deps):
             if selected_batch_id:
                 cursor.execute(
                     """
-                    SELECT u.id, u.username, u.name, u.class_name, u.major, u.teacher_name,
+                    SELECT u.id, u.username, u.name, u.class_name, u.major, u.teacher_name, s.is_active,
                            COALESCE(q.entered_count, 0) AS entered_count,
                            COALESCE(c.completed_count, 0) AS completed_count,
                            COALESCE(r.answer_rows, 0) AS answer_rows,
@@ -691,6 +701,8 @@ def create_admin_blueprint(deps):
                 end_time=selected_batch.get('end_time') if selected_batch else None,
                 now=now,
             )
+            if not student.get('is_active', True):
+                status = 'removed'
             student['exam_status'] = status
             student['exam_status_label'] = status_labels[status]
             student['accuracy'] = round(
@@ -814,6 +826,71 @@ def create_admin_blueprint(deps):
         finally:
             cursor.close()
             conn.close()
+
+
+    @bp.route('/admin/exams/<int:exam_id>/batches/<int:batch_id>/update', methods=['POST'])
+    @login_required(db_check=True)
+    def admin_update_exam_batch(exam_id, batch_id):
+        if session.get('username') != 'admin':
+            flash('权限不足', 'danger')
+            return redirect(url_for('dashboard'))
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT * FROM exams WHERE id = %s FOR UPDATE', (exam_id,))
+            exam = cursor.fetchone()
+            if not exam or exam.get('status') == 'archived':
+                raise ValueError('考试不存在或已归档。')
+            cursor.execute('SELECT * FROM exam_batches WHERE id = %s AND exam_id = %s FOR UPDATE', (batch_id, exam_id))
+            batch = cursor.fetchone()
+            if not batch or batch.get('status') != 'active':
+                raise ValueError('批次不存在或已归档。')
+            start_time = parse_exam_time((request.form.get('start_time') or '').strip())
+            end_time = parse_exam_time((request.form.get('end_time') or '').strip())
+            if start_time and end_time and end_time <= start_time:
+                raise ValueError('结束时间必须晚于开始时间。')
+            if schedule_restricts_access(batch, start_time, end_time) and not parse_checkbox(request.form.get('confirm_time_change')):
+                raise ValueError('推迟开始或提前结束可能中断正在作答的学生，请勾选时间调整确认后保存。')
+            assign_type = (request.form.get('assign_type') or '').strip()
+            if assign_type:
+                if assign_type == 'student':
+                    upload_file = request.files.get('student_file')
+                    if not upload_file or not upload_file.filename or not allowed_excel_file(upload_file.filename):
+                        raise ValueError('请上传包含学号或姓名的 .xlsx 文件。')
+                    assignments, missing_count = _resolve_uploaded_student_assignments(cursor, upload_file)
+                    if missing_count:
+                        flash(f'名单中有 {missing_count} 行未匹配到账户。', 'warning')
+                else:
+                    if assign_type not in {'class', 'major', 'course'}:
+                        raise ValueError('无效的分配方式。')
+                    assignments = [(assign_type, value.strip()) for value in request.form.getlist('assign_value') if value.strip()]
+                if not assignments:
+                    raise ValueError('请选择可用的学生范围。')
+                if request.form.get('roster_mode', 'append') == 'append':
+                    user_ids = set(_resolve_assignment_user_ids(cursor, assignments))
+                    cursor.execute('SELECT user_id FROM exam_batch_students WHERE batch_id = %s AND is_active = TRUE', (batch_id,))
+                    user_ids.update(int(row['user_id']) for row in cursor.fetchall())
+                    assignments = [('student', str(user_id)) for user_id in sorted(user_ids)]
+                _replace_exam_batch_assignments(cursor, exam_id, batch_id, assignments)
+                if batch.get('is_default'):
+                    cursor.execute('DELETE FROM exam_assignments WHERE exam_id = %s', (exam_id,))
+                    cursor.executemany('INSERT INTO exam_assignments (exam_id, assign_type, assign_value) VALUES (%s, %s, %s)',
+                                       [(exam_id, kind, value) for kind, value in assignments])
+            paper_auto_enabled = ensure_exam_paper_enabled(cursor, exam['paper_id'])
+            cursor.execute('UPDATE exam_batches SET start_time = %s, end_time = %s WHERE id = %s', (start_time, end_time, batch_id))
+            if batch.get('is_default'):
+                cursor.execute('UPDATE exams SET start_time = %s, end_time = %s WHERE id = %s', (start_time, end_time, exam_id))
+            conn.commit()
+            clear_exam_metadata_cache()
+            _finish_auto_enabled_paper(exam['paper_id'], paper_auto_enabled)
+            flash('批次安排已更新，原有题单与答题记录已保留。', 'success')
+        except (ValueError, mysql.connector.Error) as err:
+            conn.rollback()
+            flash(f'更新批次失败：{err}', 'danger')
+        finally:
+            cursor.close()
+            conn.close()
+        return redirect(url_for('admin.admin_exam_detail', exam_id=exam_id, batch_id=batch_id))
 
 
     @bp.route('/admin/exams/<int:exam_id>/batches/<int:batch_id>/delete', methods=['POST'])
@@ -1147,6 +1224,7 @@ def create_admin_blueprint(deps):
                 return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
         else:
             seb_config_key = existing_exam.get('seb_config_key')
+        retire_previous_keys = parse_checkbox(request.form.get('retire_previous_seb_keys'))
         replace_student_assignments = False
 
         available_question_count = len(
@@ -1155,7 +1233,11 @@ def create_admin_blueprint(deps):
         if not name or not paper_id or not question_count:
             flash('请填写考试名称、选择题库并设置抽题数量。', 'danger')
             return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
-        if question_count < 1 or question_count > available_question_count:
+        existing_count = existing_exam.get('question_count')
+        if existing_count is None:
+            existing_count = get_exam_question_pool_count(exam_id, existing_exam['paper_id'])
+        question_fields_unchanged = paper_id == int(existing_exam['paper_id']) and question_count == existing_count
+        if question_count < 1 or (question_count > available_question_count and not question_fields_unchanged):
             flash(f'抽题数量必须在 1 到 {available_question_count} 之间。', 'danger')
             return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
         if assign_type != 'student' and not assign_values:
@@ -1202,6 +1284,13 @@ def create_admin_blueprint(deps):
         cursor = conn.cursor(dictionary=True)
         paper_auto_enabled = False
         try:
+            cursor.execute('SELECT * FROM exams WHERE id = %s FOR UPDATE', (exam_id,))
+            existing_exam = cursor.fetchone()
+            if not existing_exam or existing_exam.get('status') == 'archived':
+                raise ValueError('考试不存在或已归档。')
+            if not seb_config_key_raw:
+                seb_config_key = existing_exam.get('seb_config_key')
+            retained_keys = rotate_config_keys(existing_exam, seb_config_key, retire_previous_keys)
             paper_auto_enabled = ensure_exam_paper_enabled(cursor, paper_id)
             cursor.execute(
                 "SELECT * FROM exam_batches WHERE exam_id = %s AND is_default = TRUE LIMIT 1 FOR UPDATE",
@@ -1210,42 +1299,17 @@ def create_admin_blueprint(deps):
             default_batch = cursor.fetchone()
             if not default_batch:
                 raise ValueError('默认批次不存在，请先重新部署以完成数据迁移。')
-            cursor.execute(
-                "SELECT assign_type, assign_value FROM exam_batch_assignments WHERE batch_id = %s",
-                (default_batch['id'],),
-            )
-            current_batch_assignments = cursor.fetchall()
-            current_assignment_type = current_batch_assignments[0]['assign_type'] if current_batch_assignments else ''
-            current_assignment_values = {
-                row['assign_value'] for row in current_batch_assignments
-                if row['assign_type'] == current_assignment_type
-            }
+            if schedule_restricts_access(default_batch, start_time, end_time) and not parse_checkbox(request.form.get('confirm_time_change')):
+                raise ValueError('推迟开始或提前结束可能中断正在作答的学生，请勾选时间调整确认后保存。')
             if assign_type == 'student' and not replace_student_assignments:
                 assignment_changed = False
             else:
-                assignment_changed = (
-                    assign_type != current_assignment_type or set(assign_values) != current_assignment_values
-                )
-            cursor.execute(
-                "SELECT EXISTS(SELECT 1 FROM exam_user_questions WHERE batch_id = %s LIMIT 1) AS started",
-                (default_batch['id'],),
-            )
-            default_batch_started = bool((cursor.fetchone() or {}).get('started'))
-            if default_batch_started:
-                start_changed = start_time != default_batch.get('start_time')
-                old_end_time = default_batch.get('end_time')
-                end_shortened = bool(old_end_time and end_time and end_time < old_end_time)
-                end_removed_or_added = (old_end_time is None) != (end_time is None)
-                if start_changed or assignment_changed or end_shortened or end_removed_or_added:
-                    conn.rollback()
-                    flash('默认批次已有学生进入，只能保持名单和开始时间不变，并向后延长结束时间。', 'danger')
-                    return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
+                # Re-resolve group rules as well: a class can have newly added accounts.
+                assignment_changed = True
 
             old_question_count = existing_exam.get('question_count')
             if old_question_count is None and int(existing_exam['paper_id']) == paper_id:
-                old_paper_count = len(
-                    get_problem_templates_by_paper(paper_id, enabled_only=False)
-                )
+                old_paper_count = get_exam_question_pool_count(exam_id, paper_id)
                 stored_question_count = None if question_count == old_paper_count else question_count
             else:
                 stored_question_count = question_count
@@ -1253,11 +1317,7 @@ def create_admin_blueprint(deps):
                 int(existing_exam['paper_id']) != paper_id or
                 old_question_count != stored_question_count
             )
-            security_config_changed = (
-                bool(existing_exam.get('seb_required')) != seb_required or
-                (existing_exam.get('seb_config_key') or None) != (seb_config_key or None)
-            )
-            if question_config_changed or security_config_changed:
+            if question_config_changed:
                 cursor.execute(
                     """
                     SELECT (
@@ -1269,7 +1329,7 @@ def create_admin_blueprint(deps):
                 )
                 if (cursor.fetchone() or {}).get('started'):
                     conn.rollback()
-                    flash('已有学生进入过答题页面，不能再修改题库、抽题数量或安全考试配置。', 'danger')
+                    flash('已有学生进入过答题页面，不能再修改题库或抽题数量；名单、时间和 SEB 配置仍可调整。', 'danger')
                     return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
 
             if question_config_changed:
@@ -1290,6 +1350,7 @@ def create_admin_blueprint(deps):
                     status = 'published',
                     seb_required = %s,
                     seb_config_key = %s,
+                    seb_previous_config_keys = %s,
                     seb_quit_token = COALESCE(seb_quit_token, %s)
                 WHERE id = %s
                 """,
@@ -1302,6 +1363,7 @@ def create_admin_blueprint(deps):
                     end_time,
                     seb_required,
                     seb_config_key,
+                    retained_keys,
                     uuid.uuid4().hex,
                     exam_id,
                 )
@@ -1368,6 +1430,9 @@ def create_admin_blueprint(deps):
                                 'name': student_name,
                                 'reason': match_reason,
                             })
+                    if request.form.get('student_import_mode', 'append') == 'append':
+                        cursor.execute('SELECT user_id FROM exam_batch_students WHERE batch_id = %s AND is_active = TRUE', (default_batch['id'],))
+                        matched_ids.update(int(row['user_id']) for row in cursor.fetchall())
                     cursor.execute('DELETE FROM exam_assignments WHERE exam_id = %s', (exam_id,))
                 else:
                     cursor.execute(

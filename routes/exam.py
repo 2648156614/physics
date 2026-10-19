@@ -70,6 +70,19 @@ def create_exam_blueprint(deps):
             build_finish_summary(completed_count, len(display_mapping)),
         )
 
+    @bp.route('/seb/test/<int:exam_id>')
+    def seb_test(exam_id):
+        exam = get_exam_by_id(exam_id)
+        if not exam or not is_seb_exam_required(exam):
+            return render_template('seb_required.html', exam=exam, message='该考试未启用安全考试模式。'), 404
+        blocked = seb_guard(exam)
+        if blocked:
+            return blocked
+        response = make_response(render_template('seb_test.html', exam=exam))
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+
+
     @bp.route('/seb/start/<int:exam_id>')
     def seb_start(exam_id):
         exam = get_exam_by_id(exam_id)

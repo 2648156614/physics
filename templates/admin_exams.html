@@ -157,7 +157,7 @@
                             <label class="form-label">题库</label>
                             <select class="form-select exam-paper-select" name="paper_id" required>
                                 {% for paper in exam_papers %}
-                                <option value="{{ paper.id }}" data-template-count="{{ paper.template_count }}" {% if editing_exam.paper_id == paper.id %}selected{% endif %}>{{ paper.name }}（{{ paper.template_count }}题{% if not paper.is_enabled %}，当前关闭，保存后自动开启{% endif %}）</option>
+                                <option value="{{ paper.id }}" data-template-count="{{ [paper.template_count, editing_exam.editable_question_count] | max if editing_exam.paper_id == paper.id else paper.template_count }}" {% if editing_exam.paper_id == paper.id %}selected{% endif %}>{{ paper.name }}（{{ paper.template_count }}题{% if not paper.is_enabled %}，当前关闭，保存后自动开启{% endif %}）</option>
                                 {% endfor %}
                             </select>
                         </div>
@@ -171,7 +171,7 @@
                     </div>
                     <div>
                         <label class="form-label">每名学生抽取题数</label>
-                        <input class="form-control exam-question-count" type="number" name="question_count" min="1" required value="{{ editing_exam.question_count or '' }}">
+                        <input class="form-control exam-question-count" type="number" name="question_count" min="1" required value="{{ editing_exam.editable_question_count }}">
                         <div class="form-text exam-question-count-hint"></div>
                     </div>
                     <div class="border rounded p-3 bg-light">
@@ -181,12 +181,20 @@
                         </div>
                         <label class="form-label" for="edit-seb-config-key">SEB Config Key</label>
                         <input class="form-control font-monospace" id="edit-seb-config-key" name="seb_config_key" maxlength="64" value="{{ editing_exam.seb_config_key or '' }}" placeholder="64 位 Config Key">
+                        <div class="form-text">更换后默认继续接受旧配置，避免中断已进入的学生。当前保留 {{ previous_seb_key_count }} 个旧配置。</div>
+                        <label class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" name="retire_previous_seb_keys">
+                            <span class="form-check-label">停用所有旧配置，仅接受本次保存的 Config Key</span>
+                        </label>
                         {% if editing_exam.seb_quit_token %}
                         <div class="small mt-3">
                             <div class="text-muted">SEB Start URL</div>
                             <code class="user-select-all">{{ url_for('exam.seb_start', exam_id=editing_exam.id, _external=True) }}</code>
                             <div class="text-muted mt-2">SEB Quit URL</div>
                             <code class="user-select-all">{{ url_for('exam.seb_quit', token=editing_exam.seb_quit_token, _external=True) }}</code>
+                            <div class="text-muted mt-2">教师 SEB 测试地址（不生成正式题单）</div>
+                            <code class="user-select-all">{{ url_for('exam.seb_test', exam_id=editing_exam.id, _external=True) }}</code>
+                            <div class="text-muted mt-1">可临时作为 Start URL 检查 SEB 配置。测试后改回正式地址，保存并重新同步 Config Key。</div>
                         </div>
                         {% endif %}
                     </div>
@@ -200,6 +208,10 @@
                             <input class="form-control" type="datetime-local" name="end_time" value="{{ editing_exam.end_time.strftime('%Y-%m-%dT%H:%M') if editing_exam.end_time else '' }}">
                         </div>
                     </div>
+                    <label class="form-check">
+                        <input class="form-check-input" type="checkbox" name="confirm_time_change">
+                        <span class="form-check-label">确认调整可能中断正在作答的学生（推迟开始或提前结束时需勾选）</span>
+                    </label>
                     <div>
                         <label class="form-label">当前分配</label>
                         <div class="form-control bg-light" style="min-height: 2.5rem;">
@@ -254,7 +266,11 @@
                     <div id="edit-student-file-wrap" class="d-none">
                         <label class="form-label">Excel 文件</label>
                         <input class="form-control" type="file" name="student_file" id="edit-student-file" accept=".xlsx">
-                        <div class="form-text">如果切换成补考名单，请重新上传新的 Excel。</div>
+                        <select class="form-select mt-2" name="student_import_mode" aria-label="名单导入方式">
+                            <option value="append">补充学生，保留原名单</option>
+                            <option value="replace">替换当前名单，保留历史答题记录</option>
+                        </select>
+                        <div class="form-text">不上传文件则保留名单。移出名单的学生无法继续进入，历史记录仍可查看。</div>
                     </div>
                     <button class="btn btn-warning" type="submit">
                         <i class="bi bi-save"></i> 保存修改

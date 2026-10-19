@@ -79,7 +79,7 @@
 
 <section class="border-top border-bottom py-3 mb-4">
     <div class="exam-summary-grid">
-        <div class="summary-item"><div class="text-muted small">当前批次人数</div><strong>{{ total_students }}</strong></div>
+        <div class="summary-item"><div class="text-muted small">批次名单人数（含历史）</div><strong>{{ total_students }}</strong></div>
         <div class="summary-item"><div class="text-muted small">已完成</div><strong class="text-success">{{ status_counts.completed }}</strong></div>
         <div class="summary-item"><div class="text-muted small">答题中</div><strong class="text-primary">{{ status_counts.in_progress }}</strong></div>
         <div class="summary-item"><div class="text-muted small">未完成/缺考</div><strong class="text-danger">{{ status_counts.ended_incomplete + status_counts.absent }}</strong></div>
@@ -166,6 +166,7 @@
         </div>
         <div class="d-flex flex-wrap gap-2">
             {% if exam.status != 'archived' and selected_batch.status == 'active' %}
+            <button class="btn btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#edit-batch-form">调整时间与名单</button>
             <form method="post" action="{{ url_for('admin.admin_extend_exam_batch', exam_id=exam.id, batch_id=selected_batch.id) }}" class="d-flex gap-2">
                 <input class="form-control" type="datetime-local" name="end_time" required aria-label="新的结束时间">
                 <button class="btn btn-outline-primary text-nowrap" type="submit">延长时间</button>
@@ -178,6 +179,53 @@
             </form>{% endif %}
         </div>
     </div>
+
+    {% if exam.status != 'archived' and selected_batch.status == 'active' %}
+    <div class="collapse border rounded p-3 mb-3" id="edit-batch-form">
+        <form method="post" action="{{ url_for('admin.admin_update_exam_batch', exam_id=exam.id, batch_id=selected_batch.id) }}" enctype="multipart/form-data" class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">开始时间</label>
+                <input class="form-control" type="datetime-local" name="start_time" value="{{ selected_batch.start_time.strftime('%Y-%m-%dT%H:%M') if selected_batch.start_time else '' }}">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">结束时间</label>
+                <input class="form-control" type="datetime-local" name="end_time" value="{{ selected_batch.end_time.strftime('%Y-%m-%dT%H:%M') if selected_batch.end_time else '' }}">
+            </div>
+            <div class="col-12"><label class="form-check">
+                <input class="form-check-input" type="checkbox" name="confirm_time_change">
+                <span class="form-check-label">确认调整可能中断正在作答的学生（推迟开始或提前结束时需勾选）</span>
+            </label></div>
+            <div class="col-md-6">
+                <label class="form-label">学生名单</label>
+                <select class="form-select" name="assign_type" id="edit-batch-assign-type">
+                    <option value="">保持原名单</option>
+                    <option value="student">导入 Excel 名单</option>
+                    <option value="class">按班级</option>
+                    <option value="major">按专业</option>
+                    <option value="course">按课程号</option>
+                </select>
+            </div>
+            <div class="col-md-6" id="edit-batch-roster-mode" hidden>
+                <label class="form-label">调整方式</label>
+                <select class="form-select" name="roster_mode">
+                    <option value="append">补充学生，保留原名单</option>
+                    <option value="replace">替换当前名单，保留历史记录</option>
+                </select>
+            </div>
+            <div class="col-12" id="edit-batch-student-file-wrap" hidden>
+                <input class="form-control" type="file" name="student_file" accept=".xlsx" aria-label="学生名单文件">
+            </div>
+            <div class="col-12" id="edit-batch-values">
+                {% for kind, options in [('class', class_options), ('major', major_options), ('course', course_options)] %}
+                <div data-assign-group="{{ kind }}" hidden>
+                    {% for item in options %}<label class="form-check"><input class="form-check-input" type="checkbox" name="assign_value" value="{{ item }}" disabled> {{ item }}</label>{% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+            <div class="col-12"><button class="btn btn-primary" type="submit">保存批次安排</button></div>
+        </form>
+    </div>
+    {% endif %}
 
     <div class="status-filters mb-3">
         <a class="btn btn-sm {{ 'btn-dark' if not selected_status else 'btn-outline-dark' }}" href="{{ url_for('admin.admin_exam_detail', exam_id=exam.id, batch_id=selected_batch.id, class_name=selected_class_name, major=selected_major, course=selected_course) }}">全部 {{ total_students }}</a>
@@ -249,6 +297,22 @@
 {% endif %}
 
 <script>
+document.addEventListener('DOMContentLoaded', function () {
+    const select = document.getElementById('edit-batch-assign-type');
+    if (!select) return;
+    const fileWrap = document.getElementById('edit-batch-student-file-wrap');
+    function sync() {
+        fileWrap.hidden = select.value !== 'student';
+        fileWrap.querySelector('input').required = select.value === 'student';
+        document.getElementById('edit-batch-roster-mode').hidden = !select.value;
+        document.querySelectorAll('#edit-batch-values [data-assign-group]').forEach(function (group) {
+            group.hidden = group.dataset.assignGroup !== select.value;
+            group.querySelectorAll('input').forEach(function (input) { input.disabled = group.hidden; });
+        });
+    }
+    select.addEventListener('change', sync);
+    sync();
+});
 document.addEventListener('DOMContentLoaded', function () {
     const typeSelect = document.getElementById('batch-assign-type');
     const valuesWrap = document.getElementById('batch-assign-values');

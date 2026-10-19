@@ -2,6 +2,7 @@ from datetime import datetime
 
 
 EXAM_STUDENT_STATUS_LABELS = {
+    'removed': '已移出名单',
     'not_open': '未到考试时间',
     'not_started': '未开始',
     'in_progress': '答题中',
@@ -9,6 +10,14 @@ EXAM_STUDENT_STATUS_LABELS = {
     'absent': '缺考',
     'ended_incomplete': '考试结束未完成',
 }
+
+
+def schedule_restricts_access(batch, start_time, end_time):
+    old_start, old_end = batch.get('start_time'), batch.get('end_time')
+    return bool(
+        (start_time and (not old_start or start_time > old_start))
+        or (end_time and (not old_end or end_time < old_end))
+    )
 
 
 def classify_exam_student_status(

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}SEB 配置测试{% endblock %}
+{% block content %}
+<div class="container py-5" style="max-width: 640px;">
+    <h1 class="h4">SEB 配置验证通过</h1>
+    <p>当前配置可以访问此考试。此测试不会生成学生题单，也不会记录正式进场。</p>
+    <p class="text-muted">完成测试后，将配置中的 Start URL 改回正式考试启动地址，保存文件并将最终 Config Key 更新到考试后台，再发给学生。</p>
+</div>
+{% endblock %}
