@@ -871,7 +871,6 @@ function navigateToProblem(targetProblem) {
     if (usesMobileProblemNavigation()) {
         saveMobileQuestionSwitch();
     }
-    markExpectedPageTransition();
     window.location.assign(`/problem_ajax/${targetProblem}`);
 }
 
@@ -1845,85 +1844,6 @@ const displayMapping = {{ display_mapping | tojson }};
 const displayToActual = {{ display_to_actual | tojson }};
 const isProblemCompleted = {{ 'true' if is_completed else 'false' }};
 let completionLocked = false;
-let switchCount = 0;
-let tabAwayActive = document.hidden;
-let switchIgnoreUntil = 0;
-let pendingSwitchTimer = null;
-let expectedPageTransition = false;
-const SWITCH_CONFIRM_DELAY_MS = 800;
-const SWITCH_ACTION_GRACE_MS = 1500;
-const SWITCH_NAVIGATION_GRACE_MS = 6000;
-
-function markExpectedUiAction(durationMs = SWITCH_ACTION_GRACE_MS) {
-    switchIgnoreUntil = Math.max(switchIgnoreUntil, Date.now() + durationMs);
-    cancelPendingSwitch();
-}
-
-function markExpectedPageTransition(durationMs = SWITCH_NAVIGATION_GRACE_MS) {
-    expectedPageTransition = true;
-    markExpectedUiAction(durationMs);
-}
-
-function shouldIgnoreSwitchEvent() {
-    return (
-        Date.now() < switchIgnoreUntil ||
-        expectedPageTransition ||
-        isSubmitting ||
-        completionLocked ||
-        isProblemCompleted
-    );
-}
-
-function cancelPendingSwitch() {
-    if (pendingSwitchTimer) {
-        clearTimeout(pendingSwitchTimer);
-        pendingSwitchTimer = null;
-    }
-}
-
-function recordTabSwitch() {
-    if (shouldIgnoreSwitchEvent() || tabAwayActive || pendingSwitchTimer) {
-        return;
-    }
-    tabAwayActive = true;
-    pendingSwitchTimer = setTimeout(() => {
-        pendingSwitchTimer = null;
-        const stillAway = document.hidden || !document.hasFocus();
-        if (stillAway && !shouldIgnoreSwitchEvent()) {
-            switchCount += 1;
-            console.log('Tab switch count:', switchCount);
-            showSwitchWarning();
-        }
-    }, SWITCH_CONFIRM_DELAY_MS);
-}
-
-document.addEventListener('visibilitychange', function() {
-    if (document.hidden) {
-        recordTabSwitch();
-    } else {
-        cancelPendingSwitch();
-        tabAwayActive = false;
-    }
-});
-
-window.addEventListener('blur', recordTabSwitch);
-window.addEventListener('focus', function() {
-    cancelPendingSwitch();
-    tabAwayActive = false;
-});
-
-function resetSwitchTracking() {
-    switchCount = 0;
-    tabAwayActive = document.hidden;
-    expectedPageTransition = false;
-    switchIgnoreUntil = 0;
-    cancelPendingSwitch();
-}
-
-function showSwitchWarning() {
-    showTempMessage(`你已切屏 ${switchCount} 次，请遵守考试秩序。`, 'warning', 4500, false);
-}
-
 // 初始化全局正确答案变量
 let currentCorrectAnswers = {{ problem.correct_answers | tojson }};
 console.log('Ajax问题页面初始化 - 问题ID:', problemId, '答案数量:', answerCount, '累计尝试:', totalAttempts, '总题目数:', totalProblems);
@@ -2105,7 +2025,6 @@ function resetSubmitButton() {
 function getAnswerData() {
     const answerData = {
         time_taken: (Date.now() - startTime) / 1000,  // 从页面加载到提交的总时间
-        switch_count: switchCount,
         correct_answers: currentCorrectAnswers  // 关键：传递当前正确答案
     };
 
@@ -2304,7 +2223,6 @@ function reloadProblemPageAfterUpdateFailure(error) {
         forceResumeShield(0);
     }
 
-    markExpectedPageTransition();
     window.location.reload();
 }
 
@@ -2312,7 +2230,6 @@ function reloadProblemPageAfterUpdateFailure(error) {
 async function refreshProblemParams() {
     console.log('开始异步刷新题目参数...');
 
-    markExpectedUiAction(3000);
 
     try {
         const submitBtn = document.getElementById('submit-btn');
@@ -2338,7 +2255,6 @@ async function refreshProblemParams() {
         if (data.success) {
             // 刷新成功后重置计时器（重新从当前时间开始计时）
             startTime = Date.now();
-            resetSwitchTracking();
             timerInitialized = false;
             initTimer();
 
@@ -2346,7 +2262,6 @@ async function refreshProblemParams() {
                 await updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text, data.new_display_var_values);
                 resetFormState();
             } else {
-                markExpectedPageTransition();
                 window.location.reload();
             }
         } else {
@@ -2666,7 +2581,6 @@ document.getElementById('answer-form').addEventListener('submit', async function
     const answerData = getAnswerData();
 
     // 更新按钮状态
-    markExpectedUiAction(5000);
     isSubmitting = true;
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> 提交中...';
@@ -2728,7 +2642,6 @@ document.getElementById('answer-form').addEventListener('submit', async function
                     }, 500);
 
                     setTimeout(() => {
-                        markExpectedPageTransition();
                         window.location.href = '{{ url_for("dashboard") }}';
                     }, 3000);
                 }
@@ -2759,7 +2672,6 @@ document.getElementById('next-btn').addEventListener('click', function() {
     if (nextProblem <= totalProblems) {
         navigateToProblem(nextProblem);
     } else {
-        markExpectedPageTransition();
         window.location.href = '{{ url_for("dashboard") }}';
     }
 });
@@ -2801,7 +2713,6 @@ if (secureFinishButton) {
             if (!response.ok || !data.success) {
                 throw new Error(data.message || '完成状态保存失败');
             }
-            markExpectedPageTransition();
             window.location.assign(data.quit_url);
         } catch (error) {
             showMessage(error.message, 'error');
@@ -2813,7 +2724,6 @@ if (secureFinishButton) {
 
 // 刷新题目按钮
 document.getElementById('refresh-btn').addEventListener('click', function() {
-    markExpectedUiAction(3000);
     if (confirm('确定要刷新题目吗？这将生成新的题目参数，但不会增加尝试次数。')) {
         refreshProblemParams();
     }
@@ -2877,7 +2787,6 @@ document.addEventListener('DOMContentLoaded', function() {
             const targetProblem = parseInt(e.key);
             if (targetProblem >= 1 && targetProblem <= totalProblems) {
                 e.preventDefault();
-                markExpectedUiAction(3000);
                 const currentAnswer = getCurrentAnswer();
                 if (!currentAnswer || confirm('切换题目将丢失当前输入的答案，确定要跳转吗？')) {
                     navigateToProblem(targetProblem);
@@ -3204,7 +3113,6 @@ window.toggleInputMode = function() {
             updateProblemParameters(data.new_var_values, data.new_correct_answers, data.new_problem_text, data.new_display_var_values || {})
                 .then(() => {
                     startTime = Date.now();
-                    resetSwitchTracking();
                     timerInitialized = false;
                     initTimer();
                     showTempMessage('题目已刷新，请继续作答。', 'success', 1800, false);

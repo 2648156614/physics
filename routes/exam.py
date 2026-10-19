@@ -767,11 +767,8 @@ def create_exam_blueprint(deps):
             correct_answers = problem_data.get('correct_answers', [])
             answer_count = problem_data.get('answer_count', 1)
             time_taken = float(data.get('time_taken', 0))
-            try:
-                switch_count = int(data.get('switch_count', 0) or 0)
-            except (TypeError, ValueError):
-                switch_count = 0
-            switch_count = max(0, min(switch_count, 10000))
+            # 保留历史字段兼容性，后续答题不再采集切屏次数。
+            switch_count = 0
             user_id = session['user_id']
             template_id = problem_data['template_id']
             problem_text = problem_data['problem_text']
