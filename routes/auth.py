@@ -384,10 +384,13 @@ def login():
 
                 flash('登录成功！', 'success')
                 pending_seb_exam_id = session.get('pending_seb_exam_id')
-                if pending_seb_exam_id and user['username'] != 'admin':
+                if session.get('pending_shared_seb') and user['username'] != 'admin':
+                    response = redirect(url_for('exam.seb_exams'))
+                elif pending_seb_exam_id and user['username'] != 'admin':
                     response = redirect(url_for('exam.seb_continue', exam_id=pending_seb_exam_id))
                 else:
                     session.pop('pending_seb_exam_id', None)
+                    session.pop('pending_shared_seb', None)
                     response = redirect(url_for('dashboard'))
                 response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
                 return response

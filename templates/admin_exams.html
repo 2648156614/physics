@@ -32,6 +32,21 @@
     </a>
 </div>
 
+<details class="card mb-4">
+    <summary class="card-header">统一 SEB 配置{% if not shared_seb.seb_config_key %} · 尚未配置{% endif %}</summary>
+    <div class="card-body">
+        <p>只需制作一次配置文件。以后新建考试、调整名单和时间或更新网站，都可以继续使用。</p>
+        <p class="mb-2">Start URL：<code class="user-select-all">{{ url_for('exam.seb_shared_start', _external=True) }}</code></p>
+        <p>Quit URL：<code class="user-select-all">{{ url_for('exam.seb_shared_quit', token=shared_seb.seb_quit_token, _external=True) }}</code></p>
+        <form method="post" action="{{ url_for('admin.update_shared_seb') }}" class="vstack gap-3">
+            <div><label class="form-label" for="shared-key">统一 Config Key</label>
+                <input id="shared-key" class="form-control font-monospace" name="config_key" value="{{ shared_seb.seb_config_key or '' }}" pattern="[a-fA-F0-9]{64}" maxlength="64" required></div>
+            <div class="form-text">在 SEB 配置工具填写以上地址，启用 Config Key 请求校验，保存 .seb 文件后，将最终 Config Key 粘贴到这里。打开文件即可验证并登录，无须改成测试地址。</div>
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="retire_previous">停用旧的统一配置（会影响仍使用旧文件的学生）</label>
+            <div><button class="btn btn-primary" type="submit">保存统一配置</button></div>
+        </form>
+    </div>
+</details>
 <div class="row g-4">
     <div class="col-lg-5">
         <div class="card border-0 shadow-sm mb-4">
@@ -71,9 +86,13 @@
                             <input class="form-check-input" type="checkbox" role="switch" name="seb_required" id="seb-required">
                             <label class="form-check-label fw-semibold" for="seb-required">使用 Safe Exam Browser 安全考试</label>
                         </div>
-                        <label class="form-label" for="seb-config-key">SEB Config Key</label>
+                        <label class="form-label">SEB 配置方式</label>
+                        <select class="form-select" name="seb_config_mode" aria-label="SEB 配置方式"><option value="shared">使用统一配置（推荐）</option><option value="exam">本场独立配置</option></select>
+                        <div data-seb-independent>
+                        <label class="form-label mt-2" for="seb-config-key">本场 Config Key</label>
                         <input class="form-control font-monospace" id="seb-config-key" name="seb_config_key" maxlength="64" placeholder="保存 .seb 配置后粘贴 64 位 Config Key">
-                        <div class="form-text">可以先留空创建考试，获得启动与退出地址后制作 .seb 文件，再回来补充 Config Key。</div>
+                        <div class="form-text">独立配置可先留空创建，再制作本场文件。</div>
+                        </div>
                     </div>
                     <div>
                         <label class="form-label">首个批次名称</label>
@@ -179,7 +198,11 @@
                             <input class="form-check-input" type="checkbox" role="switch" name="seb_required" id="edit-seb-required" {% if editing_exam.seb_required %}checked{% endif %}>
                             <label class="form-check-label fw-semibold" for="edit-seb-required">使用 Safe Exam Browser 安全考试</label>
                         </div>
-                        <label class="form-label" for="edit-seb-config-key">SEB Config Key</label>
+                        <label class="form-label">SEB 配置方式</label>
+                        <select class="form-select" name="seb_config_mode" aria-label="SEB 配置方式"><option value="shared" {% if editing_exam.seb_config_mode == 'shared' %}selected{% endif %}>使用统一配置（推荐）</option><option value="exam" {% if editing_exam.seb_config_mode != 'shared' %}selected{% endif %}>本场独立配置</option></select>
+                        <div class="form-text">统一配置使用页面上方的固定地址和 Key；下方地址与 Key 仅供独立配置使用。切换方式后需让学生使用对应文件重新进入。</div>
+                        <div data-seb-independent>
+                        <label class="form-label mt-2" for="edit-seb-config-key">本场 Config Key</label>
                         <input class="form-control font-monospace" id="edit-seb-config-key" name="seb_config_key" maxlength="64" value="{{ editing_exam.seb_config_key or '' }}" placeholder="64 位 Config Key">
                         <div class="form-text">更换后默认继续接受旧配置，避免中断已进入的学生。当前保留 {{ previous_seb_key_count }} 个旧配置。</div>
                         <label class="form-check mt-2">
@@ -197,6 +220,7 @@
                             <div class="text-muted mt-1">可临时作为 Start URL 检查 SEB 配置。测试后改回正式地址，保存并重新同步 Config Key。</div>
                         </div>
                         {% endif %}
+                        </div>
                     </div>
                     <div class="row g-3">
                         <div class="col-md-6">
@@ -306,7 +330,7 @@
                             <div class="fw-semibold">{{ exam.name }}</div>
                             <small class="text-muted">{{ '补考' if exam.exam_type == 'retake' else '正式考试' }}</small>
                             {% if exam.seb_required %}
-                            <span class="badge bg-dark ms-1">SEB{% if not exam.seb_config_key %}待配置{% endif %}</span>
+                            <span class="badge bg-dark ms-1">SEB{% if exam.seb_config_mode == 'shared' %}统一{% if not shared_seb.seb_config_key %}待配置{% endif %}{% elif not exam.seb_config_key %}待配置{% endif %}</span>
                             {% endif %}
                         </td>
                         <td>{{ exam.paper_name }}</td>
@@ -404,4 +428,7 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>
 {% endblock %}
 
-{% block scripts %}<script src="{{ url_for('static', filename='js/exam-roster-preview.js') }}"></script>{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/exam-roster-preview.js') }}"></script>
+<script src="{{ url_for('static', filename='js/seb-settings.js') }}"></script>
+{% endblock %}

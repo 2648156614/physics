@@ -4,7 +4,7 @@ import json
 
 from flask import Blueprint, make_response
 
-from services.seb_exam_service import SEB_CONFIG_KEY_HEADER, build_finish_summary
+from services.seb_exam_service import SEB_CONFIG_KEY_HEADER, build_finish_summary, validate_exam_config_request
 from services.submission_receipt_service import receipt_key, answer_fingerprint, restore_receipt_state
 
 
@@ -126,6 +126,50 @@ def create_exam_blueprint(deps):
             build_finish_summary(completed_count, len(display_mapping)),
         )
 
+    def shared_guard():
+        valid, message = validate_exam_config_request(
+            get_shared_seb_settings(), request.url, request.headers.get(SEB_CONFIG_KEY_HEADER))
+        if not valid:
+            return render_template('seb_required.html', exam=None, message=message), 403
+        return None
+
+    @bp.route('/seb/start')
+    def seb_shared_start():
+        blocked = shared_guard()
+        if blocked:
+            return blocked
+        session.clear()
+        session['pending_shared_seb'] = True
+        response = redirect(url_for('auth.login'))
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+
+    @bp.route('/seb/exams')
+    @login_required
+    def seb_exams():
+        blocked = shared_guard()
+        if blocked:
+            return blocked
+        exams = [item for item in get_user_available_exams(session['user_id'])
+                 if is_seb_exam_required(item) and item.get('seb_config_mode') == 'shared']
+        open_exams = [item for item in exams if item.get('access_allowed')]
+        if len(open_exams) == 1:
+            response = redirect(url_for('exam.seb_continue', exam_id=open_exams[0]['id']))
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        response = make_response(render_template('seb_exams.html', exams=exams))
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+
+    @bp.route('/seb/exit/<token>')
+    def seb_shared_quit(token):
+        import hmac
+        settings = get_shared_seb_settings()
+        if not hmac.compare_digest(token, settings.get('seb_quit_token') or ''):
+            return render_template('seb_finished.html', exam_name=None, invalid=True), 404
+        session.clear()
+        return render_template('seb_finished.html', exam_name='本场考试', invalid=False)
+
     @bp.route('/seb/test/<int:exam_id>')
     def seb_test(exam_id):
         exam = get_exam_by_id(exam_id)
@@ -176,6 +220,7 @@ def create_exam_blueprint(deps):
         session['selected_exam_paper_id'] = exam['paper_id']
         session['selected_exam_batch_id'] = exam_access.get('batch_id')
         session.pop('pending_seb_exam_id', None)
+        session.pop('pending_shared_seb', None)
         # Select the first unfinished question in the answer-page request.
         # This avoids loading/persisting the assignment twice across workers.
         session['seb_resume_exam_id'] = exam_id
@@ -1107,7 +1152,9 @@ def create_exam_blueprint(deps):
         return jsonify({
             'success': True,
             **summary,
-            'quit_url': url_for('exam.seb_quit', token=exam['seb_quit_token'], _external=True),
+            'quit_url': (url_for('exam.seb_shared_quit', token=get_shared_seb_settings()['seb_quit_token'], _external=True)
+                         if exam.get('seb_config_mode') == 'shared' else
+                         url_for('exam.seb_quit', token=exam['seb_quit_token'], _external=True)),
         })
 
     # ===== 极简点选兜底：学生手动纠正刚提交的错因粗类 =====

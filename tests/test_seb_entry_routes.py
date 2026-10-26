@@ -42,6 +42,7 @@ class SebEntryRouteTests(unittest.TestCase):
             'get_exam_by_id': Mock(return_value=exam),
             'is_seb_exam_required': Mock(side_effect=lambda item: bool(item and item.get('seb_required'))),
             'validate_seb_exam_request': Mock(return_value=(True, None)),
+            'get_shared_seb_settings': Mock(return_value=dict(seb_config_key='b'*64, seb_quit_token='shared-token')),
             'get_user_available_exams': Mock(return_value=[exam]),
             'get_user_exam_access': Mock(return_value=access),
             'user_can_access_exam': Mock(return_value=True),

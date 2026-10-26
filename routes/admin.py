@@ -28,6 +28,20 @@ def create_admin_blueprint(deps):
     globals().update(deps)
     bp = Blueprint('admin', __name__)
 
+    @bp.route('/admin/seb/settings', methods=['POST'])
+    @login_required
+    def update_shared_seb():
+        if session.get('username') != 'admin':
+            return '权限不足', 403
+        from services.seb_settings_service import save_settings
+        try:
+            save_settings(get_db_connection, request.form.get('config_key'),
+                          parse_checkbox(request.form.get('retire_previous')))
+            flash('统一 SEB 配置已保存。使用统一配置的考试自动生效。', 'success')
+        except (ValueError, RuntimeError) as err:
+            flash(str(err), 'danger')
+        return redirect(url_for('admin.admin_exams'))
+
     @bp.route('/admin')
     @login_required
     def admin_dashboard():
@@ -714,6 +728,7 @@ def create_admin_blueprint(deps):
             selected_source_exam_id=request.args.get('source_exam_id', type=int),
             format_datetime_local=format_datetime_local,
             previous_seb_key_count=len(previous_config_keys(editing_exam.get('seb_previous_config_keys'))) if editing_exam else 0,
+            shared_seb=get_shared_seb_settings(),
         )
 
 
@@ -1192,9 +1207,9 @@ def create_admin_blueprint(deps):
                 """
                 INSERT INTO exams (
                     name, paper_id, question_count, exam_type, start_time, end_time, status,
-                    seb_required, seb_config_key, seb_quit_token
+                    seb_required, seb_config_key, seb_quit_token, seb_config_mode
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, 'published', %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, 'published', %s, %s, %s, %s)
                 """,
                 (
                     name,
@@ -1206,6 +1221,7 @@ def create_admin_blueprint(deps):
                     seb_required,
                     seb_config_key,
                     uuid.uuid4().hex,
+                    'shared' if request.form.get('seb_config_mode') == 'shared' else 'exam',
                 )
             )
             exam_id = cursor.lastrowid
@@ -1483,7 +1499,8 @@ def create_admin_blueprint(deps):
                     seb_required = %s,
                     seb_config_key = %s,
                     seb_previous_config_keys = %s,
-                    seb_quit_token = COALESCE(seb_quit_token, %s)
+                    seb_quit_token = COALESCE(seb_quit_token, %s),
+                    seb_config_mode = %s
                 WHERE id = %s
                 """,
                 (
@@ -1497,6 +1514,8 @@ def create_admin_blueprint(deps):
                     seb_config_key,
                     retained_keys,
                     uuid.uuid4().hex,
+                    (request.form.get('seb_config_mode') if request.form.get('seb_config_mode') in {'shared', 'exam'}
+                     else existing_exam.get('seb_config_mode', 'exam')),
                     exam_id,
                 )
             )

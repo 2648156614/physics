@@ -381,7 +381,14 @@ def is_seb_exam_required(exam):
 def validate_seb_exam_request(exam, absolute_url, received_hash):
     if not is_seb_exam_required(exam):
         return True, None
+    if exam.get('seb_config_mode') == 'shared':
+        exam = get_shared_seb_settings()
     return validate_exam_config_request(exam, absolute_url, received_hash)
+
+
+def get_shared_seb_settings():
+    from services.seb_settings_service import load_settings
+    return load_settings(get_db_connection)
 
 
 def record_secure_exam_entry(user_id, exam_id, batch_id=None):
@@ -2025,6 +2032,8 @@ def ensure_exam_batch_schema(cursor):
 
 def ensure_seb_exam_schema(cursor):
     """Add opt-in Safe Exam Browser settings without changing existing exams."""
+    from services.seb_settings_service import ensure_schema
+    ensure_schema(cursor)
     cursor.execute("SHOW COLUMNS FROM exams LIKE 'seb_previous_config_keys'")
     if not cursor.fetchone():
         cursor.execute("ALTER TABLE exams ADD COLUMN seb_previous_config_keys TEXT NULL")

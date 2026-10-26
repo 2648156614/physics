@@ -109,6 +109,9 @@ class ArrangementRouteTests(unittest.TestCase):
         ''')
         self.db.execute('INSERT INTO exams VALUES(9,?,?,?,?,?,?,?,?,?,?,?)',
                         ('exam', 10, 2, 'normal', '2026-10-19 09:00', '2026-10-19 12:00', 'published', 1, 'a'*64, None, 'token'))
+        self.db.execute("ALTER TABLE exams ADD COLUMN seb_config_mode TEXT NOT NULL DEFAULT 'exam'")
+        self.db.execute('CREATE TABLE seb_settings(id INT PRIMARY KEY, seb_config_key TEXT, seb_previous_config_keys TEXT, seb_quit_token TEXT)')
+        self.db.execute("INSERT INTO seb_settings VALUES(1,NULL,NULL,'shared-token')")
         self.db.commit()
         self.app = Flask(__name__)
         self.app.secret_key = 'test-only'
@@ -130,6 +133,7 @@ class ArrangementRouteTests(unittest.TestCase):
             'login_required': login_required, 'request': request, 'session': session,
             'flash': flash, 'redirect': redirect, 'url_for': url_for,
             'jsonify': jsonify,
+            'get_shared_seb_settings': Mock(return_value=dict(seb_config_key=None, seb_quit_token='shared-token')),
             'get_db_connection': lambda: Connection(self.db), 'get_exam_by_id': get_exam,
             'get_problem_templates_by_paper': Mock(return_value=[{'id': 101}, {'id': 102}, {'id': 103}]),
             'parse_exam_time': lambda value: datetime.fromisoformat(value) if value else None,
@@ -260,7 +264,8 @@ class ArrangementRouteTests(unittest.TestCase):
         context = dict(editing_exam=exam,exams=[exam],exam_papers=[dict(id=10,template_count=3,is_enabled=True,name='paper')],
                        class_options=['A'],major_options=['P'],course_options=['C'],retake_candidates=[],
                        editing_assignments=[],editing_assign_type='class',editing_assign_values=['A'],
-                       selected_source_exam_id=None,previous_seb_key_count=1)
+                       selected_source_exam_id=None,previous_seb_key_count=1,
+                       shared_seb=dict(seb_config_key=None, seb_quit_token='shared-token'))
         html = env.get_template('admin_exams.html').render(**context)
         for control in ['student_import_mode','retire_previous_seb_keys','confirm_time_change','exam.seb_test']:
             self.assertIn(control,html)

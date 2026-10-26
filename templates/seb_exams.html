@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}选择考试{% endblock %}
+{% block content %}
+<div class="container py-4" style="max-width: 760px;">
+    <h1 class="h4 mb-4">我的考试</h1>
+    {% for exam in exams %}
+    <div class="card mb-3"><div class="card-body">
+        <h2 class="h5">{{ exam.name }}</h2>
+        <p class="text-muted mb-2">{{ exam.batch_name }} · {{ exam.start_time or '不限开始时间' }} 至 {{ exam.end_time or '不限结束时间' }}</p>
+        {% if exam.access_allowed %}
+        <a class="btn btn-primary" href="{{ url_for('exam.seb_continue', exam_id=exam.id) }}">进入考试</a>
+        {% elif exam.access_status == 'not_started' %}<span>考试尚未开始，请在开始后刷新此页。</span>
+        {% else %}<span>考试已结束。</span>{% endif %}
+    </div></div>
+    {% else %}<p>当前没有使用统一 SEB 配置的考试安排，请联系监考教师核对名单。</p>{% endfor %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('exam.seb_exams') }}">刷新考试安排</a>
+</div>
+{% endblock %}
