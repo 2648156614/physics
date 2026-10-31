@@ -215,7 +215,7 @@ def create_question_blueprint(deps):
             cursor.execute(
                 """
                 SELECT template_name, problem_text, variables, solution_formula,
-                       answer_count, answer_units, difficulty, image_filename
+                       answer_count, answer_units, difficulty, image_filename, generation_strategy
                 FROM problem_templates
                 WHERE paper_id = %s AND COALESCE(status, 'active') = 'active'
                 ORDER BY id
@@ -249,6 +249,7 @@ def create_question_blueprint(deps):
                 'answer_count': template.get('answer_count'),
                 'answer_units': template.get('answer_units'),
                 'difficulty': template.get('difficulty'),
+                'generation_strategy': template.get('generation_strategy'),
                 'image_filename': image_filename,
                 'image': image_payload
             })
@@ -354,30 +355,46 @@ def create_question_blueprint(deps):
                 solution_formula = item.get('solution_formula') or ''
                 if not template_name or not problem_text or not solution_formula:
                     continue
+
+                strategy = question_generation_service.parse_generation_strategy(item)
+                is_compiled = bool(strategy and any(key in strategy for key in ('strict', 'compiled_version', 'valid_cases', 'compiled_signature')))
+                if is_compiled:
+                    from services.ai_compiled_runtime import generate_compiled
+                    # A backup is trusted only if signed by this installation, before any edits.
+                    generate_compiled(dict(item, id=0), strategy)
     
                 old_image_filename = item.get('image_filename')
                 image_filename = save_imported_image(item.get('image'))
                 final_image_filename = image_filename or old_image_filename
                 if final_image_filename:
                     problem_text = build_problem_image_html(final_image_filename, template_name) + strip_problem_image_html(problem_text)
+
+                normalized_variables = question_generation_service.normalize_variable_specs(item.get('variables') or '')
+                if is_compiled:
+                    from services.ai_compiled_runtime import canonical, signature
+                    updated = dict(item, template_name=template_name, problem_text=problem_text,
+                                   variables=normalized_variables, image_filename=final_image_filename)
+                    strategy['compiled_signature'] = signature(canonical(updated, strategy))
+                strategy_json = json.dumps(strategy, ensure_ascii=False) if strategy else None
     
                 cursor.execute(
                     """
                     INSERT INTO problem_templates
                     (template_name, problem_text, variables, solution_formula,
-                     answer_count, answer_units, difficulty, image_filename, paper_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     answer_count, answer_units, difficulty, image_filename, paper_id, generation_strategy)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         template_name,
                         problem_text,
-                        question_generation_service.normalize_variable_specs(item.get('variables') or ''),
+                        normalized_variables,
                         item.get('solution_formula'),
                         int(item.get('answer_count') or 1),
                         item.get('answer_units') or '',
                         item.get('difficulty') or 'medium',
                         final_image_filename,
-                        paper_id
+                        paper_id,
+                        strategy_json
                     )
                 )
                 imported_count += 1
@@ -552,6 +569,15 @@ def create_question_blueprint(deps):
     
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("SELECT * FROM problem_templates WHERE id = %s", (template_id,))
+        compiled_template = cursor.fetchone()
+        compiled_strategy = question_generation_service.parse_generation_strategy(compiled_template)
+        if compiled_strategy and any(key in compiled_strategy for key in ('compiled_version', 'valid_cases', 'strict')):
+            cursor.close()
+            conn.close()
+            flash('该题由智能生题编译，请从生成记录另存草稿并重新验证，避免旧参数与新题干不一致。', 'info')
+            return redirect(url_for('ai_questions.page', paper_id=compiled_template['paper_id'], template_id=template_id))
     
         if request.method == 'POST':
             try:

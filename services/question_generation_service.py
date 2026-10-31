@@ -1124,6 +1124,12 @@ def generate_problem_from_template(template_id, max_attempts=10):
     if not template:
         return None
 
+    # Agent-authored templates never reach legacy eval(), SymPy or random fallback.
+    strategy = parse_generation_strategy(template)
+    if strategy and any(key in strategy for key in ('compiled_version', 'valid_cases', 'compiled_signature', 'strict')):
+        from services.ai_compiled_runtime import generate_compiled
+        return generate_compiled(template, strategy)
+
     variables, configured_ranges = parse_variable_specs(template.get('variables', ''))
     local_vars = build_formula_context()
 

@@ -24,6 +24,14 @@ logs/
 # 本地虚拟环境
 venv/
 .venv/
+.venv-history/
+outputs/
+research/
+instance/
+static/images/ai_sources/
+voicestudio-test-*
+PROJECT_MEMORY.md
+AGENTS.md
 env/
 
 # Docker 自身文件无需进镜像

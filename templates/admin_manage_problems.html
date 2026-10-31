@@ -154,6 +154,9 @@
             <h2 class="mb-1 mt-2">{{ selected_paper.name }}</h2>
             <p class="text-muted mb-0">{{ selected_paper.description or '管理当前题库中的题目与历史版本。' }}</p>
         </div>
+        {% if ai_authoring_enabled is defined and ai_authoring_enabled() %}
+        <a href="{{ url_for('ai_questions.page', paper_id=selected_paper.id) }}" class="btn btn-outline-primary">智能生题</a>
+        {% endif %}
         <a href="{{ url_for('admin_add_problem', paper_id=selected_paper.id) }}" class="btn btn-primary">
             <i class="bi bi-plus-circle"></i> 添加题目
         </a>

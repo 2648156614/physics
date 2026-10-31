@@ -52,7 +52,8 @@ from services.seb_exam_service import (
 from routes.auth import auth_bp, get_avatar_choices, login_required
 from routes.admin import create_admin_blueprint
 from routes.exam import create_exam_blueprint
-from routes.question import create_question_blueprint
+from routes.question import create_question_blueprint, build_problem_image_html
+from routes.ai_questions import create_ai_question_blueprint, enabled as ai_authoring_enabled
 from routes.student import create_student_blueprint
 from utils import (
     allowed_excel_file,
@@ -3548,6 +3549,9 @@ for rule in list(app.url_map.iter_rules()):
 
 question_bp = create_question_blueprint(globals())
 app.register_blueprint(question_bp)
+ai_question_bp = create_ai_question_blueprint(globals())
+app.register_blueprint(ai_question_bp)
+app.jinja_env.globals['ai_authoring_enabled'] = ai_authoring_enabled
 for rule in list(app.url_map.iter_rules()):
     if rule.endpoint.startswith('question.'):
         legacy_endpoint = rule.endpoint.split('.', 1)[1]

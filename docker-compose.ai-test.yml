@@ -1,0 +1,66 @@
+# Standalone test stack. Always use -p physics-ai-test and --env-file .env.ai-test.
+services:
+  web:
+    build: .
+    ports:
+      - "127.0.0.1:5080:5000"
+    env_file:
+      - .env.ai-test
+    environment:
+      MYSQL_HOST: db
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set a new test database password}
+      MYSQL_DATABASE: physics_ai_test
+      REDIS_URL: redis://redis:6379/0
+      REQUIRE_REDIS: "true"
+      AI_AUTHORING_ENABLED: "true"
+      AI_SOURCE_FOLDER: /app/instance/ai_question_sources
+      TZ: Asia/Shanghai
+      APP_VERSION: ${APP_VERSION:-ai-test}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ai_test_images:/app/static/images
+      - ai_test_sources:/app/instance/ai_question_sources
+      - ai_test_avatars:/app/static/avatars
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health',timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 90s
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set a new test database password}
+      MYSQL_DATABASE: physics_ai_test
+      MYSQL_ROOT_HOST: "%"
+      TZ: Asia/Shanghai
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - ai_test_db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ai_test_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+volumes:
+  ai_test_db:
+  ai_test_redis:
+  ai_test_images:
+  ai_test_sources:
+  ai_test_avatars:

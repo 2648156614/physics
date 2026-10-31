@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}智能生题 - {{ paper.name }}{% endblock %}
+{% block content %}
+<div class="container" id="ai-authoring" data-paper="{{ paper.id }}" data-csrf="{{ csrf }}" data-draft="{{ selected_draft }}">
+  <div class="d-flex justify-content-between align-items-center gap-2 mb-4">
+    <div><h2 class="mb-1">智能生题</h2><span class="text-muted">{{ paper.name }}</span></div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('admin_manage_problems', paper_id=paper.id) }}">返回题库</a>
+  </div>
+  {% if not configured %}<div class="alert alert-secondary">尚未配置 AI 服务。可以先用下方的“模板验证”检查已有模板。</div>{% endif %}
+  <div id="ai-message" role="status" class="alert d-none"></div>
+  <div class="row g-4">
+    <div class="col-lg-5">
+      <section class="border rounded p-3 bg-white">
+        <form id="ai-form">
+          <label class="form-label" for="ai-image">题目图片</label>
+          <input class="form-control mb-3" id="ai-image" name="image" type="file" accept="image/png,image/jpeg,image/webp">
+          <label class="form-label" for="ai-text">题目文字（也可直接输入）</label>
+          <textarea class="form-control mb-3" id="ai-text" name="text" rows="4" maxlength="8000"></textarea>
+          <label class="form-label" for="ai-requirements">本次补充要求（可选）</label>
+          <textarea class="form-control mb-3" id="ai-requirements" name="requirements" rows="2" maxlength="3000"></textarea>
+          <details class="mb-3"><summary>题目设置与示意图</summary>
+            <div class="row g-2 mt-1">
+              <div class="col-6"><label class="form-label" for="ai-stage">学段</label><input class="form-control" id="ai-stage" name="stage" maxlength="60"></div>
+              <div class="col-6"><label class="form-label" for="ai-difficulty">难度</label><select class="form-select" id="ai-difficulty" name="difficulty"><option value="medium">中等</option><option value="easy">简单</option><option value="hard">困难</option></select></div>
+              <div class="col-12"><label class="form-label" for="ai-knowledge">知识点</label><input class="form-control" id="ai-knowledge" name="knowledge_point" maxlength="100"></div>
+              <div class="col-6"><label class="form-label" for="ai-keep">多问处理</label><select class="form-select" id="ai-keep" name="keep_questions"><option value="preserve">保留原题多问</option><option value="adapt">允许按要求调整</option></select></div>
+              <div class="col-6"><label class="form-label" for="ai-limit">最多答案数</label><select class="form-select" id="ai-limit" name="answer_limit"><option value="3">3 个</option><option value="2">2 个</option><option value="1">1 个</option></select></div>
+              <div class="col-12"><label class="form-label" for="ai-diagram">学生示意图（可选）</label><input class="form-control" id="ai-diagram" name="diagram" type="file" accept="image/png,image/jpeg,image/webp"><div class="form-text">请上传不含固定题目数据、可随参数变化复用的示意图。</div></div>
+            </div>
+          </details>
+          <div class="small text-muted mb-3">点击生成后，题目资料将发送到已配置的 AI 服务；原题截图不会直接展示给学生。</div>
+          <div class="d-flex gap-2 flex-wrap"><button class="btn btn-primary" type="submit" id="ai-generate">生成模板</button><button class="btn btn-outline-secondary" type="button" id="ai-new">新题目</button></div>
+        </form>
+        <details class="mt-4"><summary>默认生成规范</summary><textarea class="form-control mt-2" id="ai-rules" rows="10" maxlength="12000">{{ default_rules }}</textarea><button class="btn btn-sm btn-outline-primary mt-2" id="ai-save-rules" type="button">保存规范</button></details>
+        <details class="mt-3"><summary>模板验证与修改</summary><div class="form-text mb-2">标准 JSON，包含 template 和 analysis。修改后会另存草稿并重新验算。</div><textarea class="form-control font-monospace" id="ai-manual" rows="8" aria-label="模板 JSON"></textarea><button class="btn btn-sm btn-outline-primary mt-2" id="ai-validate" type="button">验证模板</button></details>
+      </section>
+    </div>
+    <div class="col-lg-7">
+      <section class="border rounded p-3 bg-white mb-3"><h5>生成记录</h5><div id="ai-drafts" class="d-flex flex-wrap gap-2" aria-live="polite">正在读取…</div></section>
+      <section class="border rounded p-3 bg-white" id="ai-result" aria-live="polite"><p class="text-muted mb-0">上传题目后，生成结果会显示在这里。</p></section>
+    </div>
+  </div>
+</div>
+<style>
+  #ai-authoring textarea { resize: vertical; }
+  #ai-authoring .ai-preview { overflow-wrap: anywhere; overflow-x: auto; padding: 1rem 0; }
+  #ai-authoring .ai-diagram { max-width: 100%; max-height: 260px; object-fit: contain; }
+  #ai-drafts { max-height: 200px; overflow-y: auto; }
+  @media(max-width:575px) { #ai-authoring h2 { font-size:1.4rem; } #ai-authoring .btn { white-space:normal; } }
+</style>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/ai-questions.js') }}"></script>{% endblock %}

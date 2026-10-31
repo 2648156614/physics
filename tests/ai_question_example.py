@@ -1,0 +1,30 @@
+"""The teacher-provided circle-motion acceptance example (SI units)."""
+def example():
+    return {
+        'template': {
+            'name': '圆周运动的总加速度',
+            'text': r'<p>圆周半径 \(R={{R}}\,\mathrm{m}\)，沿运动方向的弧长坐标满足 \(s={{k}}t^2+1\)（SI）。求 \(t={{T}}\,\mathrm{s}\) 时总加速度大小。</p>',
+            'variables': 'k[1.5,15],R[2.25,360],T[1,4]',
+            'formula': 'sqrt((2*k)**2 + (((2*k*T)**2)/R)**2)',
+            'answer_count': 1, 'answer_units': 'm/s²', 'image_filename': '',
+            'generation_strategy': {
+                'enabled': True, 'mode': 'derived_inverse_v1', 'solve_for': 'q',
+                'hidden_vars': {'q': {'range': [0.5, 5]}},
+                'derived_vars': {'k': '3*q', 'R': '(9/2)*q*T**2'},
+                'target_answer': {'type': 'choice', 'values': list(range(5, 51, 5))},
+                'key_vars': {'T': {'type': 'choice', 'values': [1, 2, 3, 4]}}, 'free_vars': {},
+                'beauty_constraints': {'display_style': 'decimal_first', 'max_decimal_places': 3,
+                                       'max_fraction_denominator': 4, 'max_fraction_numerator': 20},
+                'max_attempts': 20, 'max_denominator': 4
+            }
+        },
+        'analysis': {
+            'recognized_text': '质点做圆周运动，求指定时刻的总加速度',
+            'derivation': 'a_t=6q，a_n=8q，总加速度=10q。',
+            'knowledge_point': '圆周运动', 'answer_dependencies': '单一独立答案',
+            'range_basis': 'q=A/10，A取5至50的5倍数，T取1至4。',
+            'candidate_count_estimate': 40,
+            'variable_units': {'q': 'm/s²', 'k': 'm/s²', 'R': 'm', 'T': 's'},
+            'constraints': []
+        }
+    }

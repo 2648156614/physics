@@ -57,7 +57,7 @@ DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', 32))
 DB_POOL_RESET_SESSION = os.getenv('DB_POOL_RESET_SESSION', 'true').lower() in ('1', 'true', 'yes', 'on')
 
 UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'static/images')
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'svg'}
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'}
 MAX_FILE_SIZE = 16 * 1024 * 1024
 
 AVATAR_FOLDER = os.getenv('AVATAR_FOLDER', 'static/avatars')
