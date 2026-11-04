@@ -139,6 +139,16 @@ class AIRouteTests(unittest.TestCase):
         self.assertNotEqual(original['id'],new['id']); self.assertEqual(new['parent_id'],original['id'])
         self.assertEqual(self.client.get('/admin/ai-questions/drafts/'+original['id']).json['template']['name'],'圆周运动的总加速度')
 
+    def test_new_image_does_not_inherit_unrelated_selected_template(self):
+        original = self.create()
+        result = {'status':'ready','message':'已完成', 'plan':original['plan'],
+                  'artifact':{'template':original['template'],'analysis':original['analysis'],'report':original['report']}}
+        with patch('routes.ai_questions.agent.configured',return_value=True), patch('routes.ai_questions.agent.generate',return_value=result) as generate:
+            row = self.create(manual='',parent_id=original['id'],image=(io.BytesIO(b'\x89PNG\r\n\x1a\n'+b'x'*30),'new.png'))
+        self.assertIsNone(row['parent_id'])
+        self.assertIsNone(generate.call_args.args[4])
+        self.assertTrue(row['source_image'])
+
     def test_invalid_template_never_becomes_importable(self):
         invalid = example(); invalid['template']['formula']='__import__("os")'
         row = self.create(manual=json.dumps(invalid)); self.assertEqual(row['status'],'failed')

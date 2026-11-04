@@ -177,6 +177,11 @@ def create_ai_question_blueprint(deps):
             require(source['answer_limit'] in ('', '1', '2', '3'), '答案数量设置错误')
             data = {'source': source, 'rules': store.rules(agent.DEFAULT_RULES)}
             parent_id = request.form.get('parent_id', '')
+            incoming_image = request.files.get('image')
+            # A newly uploaded question is a new source, not a revision of the
+            # previously selected (possibly unrelated) example template.
+            if incoming_image and incoming_image.filename and not request.form.get('manual', '').strip():
+                parent_id = ''
             if parent_id:
                 parent = get_draft(parent_id)
                 require(parent['paper_id'] == paper_id, '只能在同一题库继续修改草稿')

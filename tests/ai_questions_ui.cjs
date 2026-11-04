@@ -48,6 +48,13 @@ finally:
                 if (pathname.endsWith('/drafts') && route.request().method()==='GET') {
                     return route.fulfill({json:{drafts:[row]}});
                 }
+                if (pathname.endsWith('/drafts') && route.request().method()==='POST') {
+                    const body=route.request().postDataBuffer().toString();
+                    assert.doesNotMatch(body,/name="parent_id"/);
+                    assert.match(body,/filename="new-question.png"/);
+                    row.id='new-image-draft';
+                    return route.fulfill({status:202,json:{id:row.id}});
+                }
                 if (pathname.endsWith('/settings')) return route.fulfill({json:{ok:true}});
                 if (pathname==='/admin/ai-questions') {
                     const html=fixture.html.replace('<meta name="viewport"', '<script src="/static/js/math-renderer.js"></script><script defer src="/static/vendor/mathjax-3.2.2/es5/tex-mml-chtml.js"></script><meta name="viewport"');
@@ -64,11 +71,15 @@ finally:
             assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth));
             assert.match(await page.locator('#ai-manual').inputValue(), /"formula"/);
             assert.doesNotMatch(await page.locator('#ai-manual').inputValue(), /valid_cases/);
+            await page.locator('#ai-image').setInputFiles({name:'new-question.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64')});
+            await page.getByRole('button',{name:'生成模板',exact:true}).click();
+            await page.getByRole('button',{name:'换一组预览'}).waitFor();
+            assert.equal(await page.locator('#ai-image').inputValue(),'');
             const save=page.getByRole('button',{name:'加入当前题库'});
             assert.equal(await save.isDisabled(),true);
             await page.getByRole('checkbox').check();
             await save.click();
-            await page.waitForFunction(()=>document.querySelector('#ai-message').textContent.includes('已加入当前题库'));
+            await page.waitForFunction(()=>document.querySelector('#ai-message').textContent.includes('已加入题库'));
             assert.equal(imports,1);
             await page.getByRole('button',{name:'新题目',exact:true}).click();
             assert.equal(await page.locator('#ai-text').inputValue(),'');

@@ -2,8 +2,10 @@
 import base64
 import json
 import os
+import socket
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 from services.ai_template_compiler import CompileError, compile_isolated, require
 
@@ -134,15 +136,70 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # Never forward credentials to another host.
 
 
-def call_model(content):
+class OutputLimitError(CompileError):
+    """A truncated response is never parsed or sent to the compiler."""
+
+
+def response_error(response, output_limit):
+    """Report only fixed diagnostics and numeric usage, never raw provider text."""
+    require(isinstance(response, dict), 'AI 接口未返回 Responses 格式的 JSON 对象')
+    status = response.get('status')
+    if status == 'completed':
+        return
+    details = response.get('incomplete_details')
+    reason = details.get('reason') if isinstance(details, dict) else None
+    if status == 'incomplete' and reason == 'max_output_tokens':
+        usage = response.get('usage') or {}
+        usage = usage if isinstance(usage, dict) else {}
+        tokens = usage.get('output_tokens')
+        thinking = usage.get('output_tokens_details') or {}
+        thinking = thinking.get('reasoning_tokens') if isinstance(thinking, dict) else None
+        description = f'AI 输出达到本次 {output_limit} token 上限，模板被截断，尚未进行验算'
+        if type(tokens) is int and tokens >= 0:
+            description += f'（输出 {tokens}'
+            if type(thinking) is int and thinking >= 0:
+                description += f'，其中思考 {thinking}'
+            description += ' token）'
+        raise OutputLimitError(description)
+    if status == 'incomplete' and reason == 'content_filter':
+        raise CompileError('AI 服务因内容过滤中止输出，未生成可验证的完整模板')
+    if status == 'incomplete':
+        raise CompileError('AI 接口返回 incomplete，结果不完整；没有明确的输出截断原因，本次未进入验算')
+    if status == 'failed':
+        raise CompileError('AI 接口返回 failed，服务端未完成生成；请稍后重试')
+    if status in ('queued', 'in_progress'):
+        raise CompileError('AI 接口仍返回处理中状态；当前接入要求同步完成，请检查接口配置')
+    raise CompileError('AI 接口缺少有效的 Responses 完成状态，请核对 AI_API_BASE_URL 和模型接口兼容性')
+
+
+def output_budget(deepseek):
+    default = 16000 if deepseek else 9000
+    raw = os.getenv('AI_MAX_OUTPUT_TOKENS', str(default))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise CompileError('AI_MAX_OUTPUT_TOKENS 必须是 4000 到 32000 的整数') from exc
+    require(4000 <= value <= 32000, 'AI_MAX_OUTPUT_TOKENS 必须是 4000 到 32000 的整数')
+    return value
+
+
+def call_model(content, max_tokens=None):
     require(configured(), '尚未配置 AI_API_KEY 和 AI_MODEL，可先导入模板进行程序验证')
     base = os.getenv('AI_API_BASE_URL', 'https://api.openai.com/v1').rstrip('/')
     require(base.startswith('https://'), 'AI 接口必须使用 HTTPS')
+    deepseek = urlparse(base).hostname == 'api.deepseek.com'
+    budget = output_budget(deepseek) if max_tokens is None else max_tokens
+    require(type(budget) is int and 4000 <= budget <= 32000, '输出预算超出允许范围')
     payload = {'model': os.environ['AI_MODEL'], 'store': False,
                'instructions': SYSTEM, 'input': [{'role': 'user', 'content': content}],
-               'max_output_tokens': 9000,
+               'max_output_tokens': budget,
                'text': {'format': {'type': 'json_schema', 'name': 'physics_template_plan',
                                    'strict': True, 'schema': OUTPUT_SCHEMA}}}
+    # DeepSeek defaults to high thinking effort; reserve budget for the JSON plan.
+    effort = os.getenv('AI_REASONING_EFFORT', 'low' if deepseek else '').strip()
+    if effort:
+        require(effort in ('none', 'low', 'medium', 'high', 'max'), 'AI_REASONING_EFFORT 设置不合法')
+        payload['reasoning'] = {'effort': effort}
     request = urllib.request.Request(base + '/responses', json.dumps(payload).encode(),
                                      {'Authorization': 'Bearer ' + os.environ['AI_API_KEY'], 'Content-Type': 'application/json'})
     try:
@@ -150,11 +207,32 @@ def call_model(content):
             raw = response.read(500001)
         require(len(raw) <= 500000, 'AI 返回内容过大')
         response = json.loads(raw)
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+    except urllib.error.HTTPError as exc:
+        messages = {400: 'AI 接口未接受请求参数，请检查模型是否支持图片和严格 JSON Schema',
+                    401: 'AI 密钥认证失败，请检查 AI_API_KEY',
+                    402: 'AI 服务余额不足，请检查账户余额',
+                    403: 'AI 接口拒绝访问，请检查模型权限',
+                    429: 'AI 服务请求过于频繁或配额不足，请稍后重试'}
+        raise CompileError(messages.get(exc.code, 'AI 服务返回 HTTP 错误，请稍后重试') + f'（HTTP {exc.code}）') from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise CompileError('等待 AI 服务超过 90 秒，本次未获得完整模板，请稍后重试') from exc
+    except (urllib.error.URLError, ValueError) as exc:
         raise CompileError('AI 服务请求失败，请检查服务配置或稍后重试') from exc
-    require(response.get('status') == 'completed', 'AI 未完整返回结果，可能被拒绝或超过输出限制')
-    parts = [piece['text'] for item in response.get('output', []) if item.get('type') == 'message'
-             for piece in item.get('content', []) if piece.get('type') == 'output_text']
+    response_error(response, budget)
+    output = response.get('output')
+    require(isinstance(output, list), 'AI 接口缺少 Responses 输出列表')
+    parts = []
+    for item in output:
+        if not isinstance(item, dict) or item.get('type') != 'message':
+            continue
+        pieces = item.get('content')
+        require(isinstance(pieces, list), 'AI 返回的消息内容格式不合法')
+        for piece in pieces:
+            require(isinstance(piece, dict), 'AI 返回的消息片段格式不合法')
+            require(piece.get('type') != 'refusal', 'AI 服务拒绝生成该题，请检查题目资料或换一道题')
+            if piece.get('type') == 'output_text':
+                require(isinstance(piece.get('text'), str), 'AI 返回的模板文本格式不合法')
+                parts.append(piece['text'])
     require(len(parts) == 1, 'AI 未返回唯一的结构化方案')
     try:
         return normalize_plan(json.loads(parts[0]))
@@ -168,9 +246,20 @@ def generate(source, rules, images, progress, previous=None):
     for label, mime, image_bytes in images:
         content.append({'type': 'input_text', 'text': label})
         content.append({'type': 'input_image', 'image_url': 'data:' + mime + ';base64,' + base64.b64encode(image_bytes).decode(), 'detail': 'high'})
+    token_retry = None
     for attempt in range(3):
         progress('generating', f'正在设计生成方案（第 {attempt + 1} 次）')
-        plan = call_model(content)
+        try:
+            plan = call_model(content) if token_retry is None else call_model(content, max_tokens=token_retry)
+        except OutputLimitError:
+            base = os.getenv('AI_API_BASE_URL', 'https://api.openai.com/v1')
+            budget = output_budget(urlparse(base).hostname == 'api.deepseek.com')
+            # Only one budget retry, counted inside the existing three-call limit.
+            if token_retry is not None or budget >= 32000 or attempt == 2:
+                raise
+            token_retry = min(32000, budget * 2)
+            progress('generating', f'输出被截断，使用 {token_retry} token 预算重试一次')
+            continue
         if plan['status'] != 'ready_for_validation':
             return {'status': plan['status'], 'message': plan['reason'], 'plan': plan, 'artifact': None}
         progress('validating', '正在穷举候选组合并验算')

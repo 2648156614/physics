@@ -28,6 +28,7 @@
         newTopic = false;
         selected = row.id;
         result.replaceChildren(node('h5', row.template?.name || labels[row.status]), node('p', row.message));
+        message(row.message, row.status === 'failed');
         if (row.parent_id) result.append(node('p', '由上一版草稿修改，旧版仍保留。', 'small text-muted'));
         if (row.source_image) {
             const details = node('details'); details.append(node('summary', '查看原题截图'));
@@ -127,12 +128,23 @@
             if (selected) data.set('parent_id',selected);
             if (manual) data.set('manual',document.getElementById('ai-manual').value);
             const reply = await api('/drafts',{method:'POST',body:data});
+            // The server has saved these files; later revisions reuse that copy.
+            form.elements.namedItem('image').value = '';
+            form.elements.namedItem('diagram').value = '';
             selected = reply.id;
             message('任务已保存，正在后台处理'); await refresh(true);
         } catch (error) { message(error.message,true); }
         finally { busy = false; }
     }
     form.onsubmit = event => { event.preventDefault(); submit(false); };
+    form.elements.namedItem('image').onchange = () => {
+        if (!form.elements.namedItem('image').files.length) return;
+        selected = null;
+        newTopic = true;
+        document.getElementById('ai-manual').value = '';
+        document.getElementById('ai-generate').textContent = '生成模板';
+        result.replaceChildren(node('p', '已选择新题图片，点击生成模板。', 'text-muted'));
+    };
     document.getElementById('ai-validate').onclick = () => submit(true);
     document.getElementById('ai-new').onclick = () => {
         selected = null; newTopic = true; form.reset(); document.getElementById('ai-manual').value = '';
