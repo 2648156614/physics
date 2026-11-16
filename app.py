@@ -54,6 +54,7 @@ from routes.admin import create_admin_blueprint
 from routes.exam import create_exam_blueprint
 from routes.question import create_question_blueprint
 from routes.student import create_student_blueprint
+from services.error_recovery_service import install_error_recovery
 from utils import (
     allowed_excel_file,
     allowed_file,
@@ -3468,6 +3469,9 @@ def inject_device_status():
         'available_avatars': get_avatar_choices(),
         'show_password_modal': session.pop('show_password_modal', False)
     }
+
+
+install_error_recovery(app, globals())
 
 
 @app.route('/health')

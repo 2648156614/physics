@@ -911,39 +911,8 @@ def create_student_blueprint(deps):
     @bp.route('/student/profile')
     @login_required
     def student_profile():
-        """展示主页当前所选题库的学生学情画像。"""
-        user_id = session.get('user_id')
-        paper_id = resolve_selected_exam_paper_id()
-        if not paper_id:
-            return render_template(
-                'student_profile.html',
-                empty=True,
-                username=session.get('username'),
-                paper_id=None,
-            )
-        profile = get_student_profile(user_id, paper_id)
-
-        if not profile or profile['total'] == 0:
-            return render_template('student_profile.html',
-                                   empty=True,
-                                   username=session.get('username'),
-                                   paper_id=paper_id)
-
-        # 雷达图数据：按固定 5 类顺序取计数
-        counts = [profile['category_dist'].get(cat, 0) for cat in ERROR_CATEGORY_ORDER]
-        radar_svg = build_radar_svg(ERROR_CATEGORY_ORDER, counts)
-
-        return render_template('student_profile.html',
-                               empty=False,
-                               profile=profile,
-                               radar_svg=radar_svg,
-                               category_order=ERROR_CATEGORY_ORDER,
-                               total=profile['total'],
-                               correct=profile['correct'],
-                               wrong=profile['wrong'],
-                               accuracy=profile['accuracy'],
-                               username=session.get('username'),
-                               paper_id=paper_id)
+        """兼容旧学情入口，统一使用本人答题数据页面。"""
+        return redirect(url_for('student_answer_details'))
 
 
     # 教师端：班级学情看板（纯本地规则闭环）

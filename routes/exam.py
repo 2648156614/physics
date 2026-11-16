@@ -5,6 +5,7 @@ import json
 from flask import Blueprint, make_response
 
 from services.seb_exam_service import SEB_CONFIG_KEY_HEADER, build_finish_summary, validate_exam_config_request
+from services.error_recovery_service import build_seb_quit_url
 from services.submission_receipt_service import receipt_key, answer_fingerprint, restore_receipt_state
 
 
@@ -783,6 +784,15 @@ def create_exam_blueprint(deps):
             ):
                 session['seb_entry_recorded_exam_id'] = selected_exam_id
                 session.modified = True
+        if seb_required:
+            recovery = session.get('seb_error_recovery') or {}
+            if recovery.get('exam_id') != selected_exam_id:
+                session['seb_error_recovery'] = {
+                    'exam_id': selected_exam_id,
+                    'quit_url': build_seb_quit_url(exam, get_shared_seb_settings),
+                }
+        else:
+            session.pop('seb_error_recovery', None)
         mark_stage('progress')
     
         response = make_response(render_template('problem_ajax.html',
