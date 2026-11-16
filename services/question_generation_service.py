@@ -1,5 +1,6 @@
 import ast
 import json
+import logging
 import random
 import re
 import time
@@ -13,10 +14,137 @@ import numpy as np
 import sympy as sp
 
 from db import get_db_connection
+from services.generation_errors import TemplateGenerationError
 
 
 TEMPLATE_CACHE = {}
 TEMPLATE_CACHE_TS = 0
+CALCULATION_VERSION = 2
+logger = logging.getLogger(__name__)
+
+
+def _formula_tree(expression, allowed_names, depth=0):
+    if depth > 3:
+        raise TemplateGenerationError('公式字符串嵌套过深')
+    try:
+        tree = ast.parse(str(expression).strip(), mode='eval')
+    except SyntaxError as error:
+        raise TemplateGenerationError('公式语法不正确') from error
+    missing = sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} - set(allowed_names))
+    if missing:
+        raise TemplateGenerationError('公式使用了未定义的名称：' + '、'.join(missing))
+    # Legacy templates can return a quoted expression. Validate that expression too.
+    def count(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return _formula_tree(node.value, allowed_names, depth + 1)[1]
+        if isinstance(node, (ast.Tuple, ast.List)):
+            counts = [count(item) for item in node.elts]
+            return sum(counts) if all(item is not None for item in counts) else None
+        return None if isinstance(node, (ast.Call, ast.IfExp)) else 1
+    return tree, count(tree.body)
+
+
+def validate_template_definition(variables_text, formula, answer_count=1, generation_strategy=None):
+    """Static validation only: no AI call, random sampling, or symbolic solving."""
+    if not isinstance(formula, str) or not formula.strip():
+        raise TemplateGenerationError('公式必须是非空文本')
+    variables, ranges = parse_variable_specs(variables_text or '')
+    if len(set(variables)) != len(variables) or any(not name.isidentifier() for name in variables):
+        raise TemplateGenerationError('变量名称无效或重复，请检查变量配置')
+    if any(not all(np.isfinite(value) for value in bounds) for bounds in ranges.values()):
+        raise TemplateGenerationError('变量范围必须为有限数值')
+    try:
+        parsed_count = int(answer_count)
+        if isinstance(answer_count, bool) or float(answer_count) != parsed_count:
+            raise ValueError('non-integer answer count')
+        answer_count = parsed_count
+    except (ValueError, TypeError, OverflowError) as error:
+        raise TemplateGenerationError('答案数量必须为正整数') from error
+    if answer_count < 1:
+        raise TemplateGenerationError('答案数量必须为正整数')
+    strategy = parse_generation_strategy({'generation_strategy': generation_strategy})
+    if generation_strategy not in (None, '') and strategy is None:
+        raise TemplateGenerationError('生成策略必须是有效的 JSON 对象')
+    strategy = strategy or {}
+    names = set(variables) | set(build_formula_context())
+    for field in ('hidden_vars', 'derived_vars'):
+        if strategy.get(field) is not None and not isinstance(strategy[field], dict):
+            raise TemplateGenerationError(f'{field} 必须是对象')
+    if strategy.get('enabled', True):
+        names.update((strategy.get('hidden_vars') or {}).keys())
+        names.update((strategy.get('derived_vars') or {}).keys())
+    _, count = _formula_tree(formula, names)
+    if count is not None and count != answer_count:
+        raise TemplateGenerationError(f'公式返回 {count} 个答案，与设置的 {answer_count} 个空不一致')
+    constraints = strategy.get('answer_constraints') or {}
+    if not isinstance(constraints, dict):
+        raise TemplateGenerationError('answer_constraints 必须是对象')
+    per_answer = constraints.get('per_answer', [])
+    if not isinstance(per_answer, list) or len(per_answer) > answer_count:
+        raise TemplateGenerationError('per_answer 必须按答案顺序配置，数量不能超过答案空数')
+    for rule in [constraints] + per_answer:
+        if not isinstance(rule, dict):
+            raise TemplateGenerationError('每个答案的约束必须是对象')
+        if 'non_negative' in rule and not isinstance(rule['non_negative'], bool):
+            raise TemplateGenerationError('non_negative 必须为 true 或 false')
+        for key in ('min_answer', 'max_answer'):
+            if rule.get(key) is not None and (not isinstance(rule[key], (int, float)) or not np.isfinite(rule[key])):
+                raise TemplateGenerationError(f'{key} 必须是有限数值')
+        if rule.get('min_answer') is not None and rule.get('max_answer') is not None and rule['min_answer'] > rule['max_answer']:
+            raise TemplateGenerationError('答案约束的下限不能大于上限')
+    conditions = strategy.get('variable_constraints') or []
+    if not isinstance(conditions, list):
+        raise TemplateGenerationError('variable_constraints 必须是条件列表')
+    for condition in conditions:
+        tree, _ = _formula_tree(condition, names)
+        allowed = (ast.Expression, ast.Compare, ast.BoolOp, ast.And, ast.Or, ast.UnaryOp,
+                   ast.Not, ast.UAdd, ast.USub, ast.BinOp, ast.Add, ast.Sub, ast.Mult,
+                   ast.Div, ast.Pow, ast.Mod, ast.Name, ast.Load, ast.Constant,
+                   ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
+        if not all(isinstance(node, allowed) for node in ast.walk(tree)):
+            raise TemplateGenerationError('变量条件只支持数值、变量、算术和比较表达式')
+    return constraints
+
+
+def _conditions_match(template, var_values):
+    strategy = parse_generation_strategy(template) or {}
+    context = build_formula_context()
+    context.update(var_values)
+    return all(bool(eval(condition, {'__builtins__': {}}, context))
+               for condition in (strategy.get('variable_constraints') or []))
+
+
+def _check_answers(template, answers, var_values, constraints):
+    if len(answers) != int(template.get('answer_count') or 1):
+        raise TemplateGenerationError('公式返回的答案数量与答案空数不一致')
+    _, ranges = parse_variable_specs(template.get('variables') or '')
+    for name, (minimum, maximum) in ranges.items():
+        value = var_values.get(name)
+        if not isinstance(value, (int, float)) or not np.isfinite(value) or not minimum <= value <= maximum:
+            return False
+    return is_answer_reasonable_dynamic(answers, var_values, 0, constraints) and _conditions_match(template, var_values)
+
+
+def verify_cached_problem(problem):
+    """Recalculate legacy cached answers with their original variables, never reroll."""
+    if problem.get('calculation_version') == CALCULATION_VERSION:
+        return problem
+    template = get_template(problem.get('template_id'))
+    if not template:
+        raise TemplateGenerationError('缓存对应的题目模板不可用')
+    constraints = validate_template_definition(template.get('variables'), template['solution_formula'],
+                                               template.get('answer_count', 1), template.get('generation_strategy'))
+    context = build_formula_context()
+    values = problem.get('var_values') or {}
+    context.update(values)
+    try:
+        answers = evaluate_solution_formula(template['solution_formula'], context)
+        if not _check_answers(template, answers, values, constraints):
+            raise TemplateGenerationError('缓存题目不满足模板明确规定的条件')
+    except Exception as error:
+        raise TemplateGenerationError(f'旧缓存题目无法通过验算：{error}') from error
+    return dict(problem, correct_answers=answers, answer_count=int(template.get('answer_count') or 1),
+                calculation_version=CALCULATION_VERSION)
 
 
 def load_template_from_db(template_id):
@@ -127,6 +255,9 @@ def format_display_number(
 ):
     if not isinstance(value, (int, float)) or not np.isfinite(value):
         return value
+    if 0 < abs(value) < 10 ** (-max_decimal_places):
+        return value
+
     if abs(value - round(value)) < 1e-9:
         return int(round(value))
 
@@ -676,7 +807,7 @@ def generate_inverse_problem(template, variables, configured_ranges, local_vars,
         ):
             continue
 
-        var_values.update({name: round(value, 8) for name, value in solved_values.items()})
+        var_values.update({name: float(value) for name, value in solved_values.items()})
         current_vars = local_vars.copy()
         current_vars.update(var_values)
         try:
@@ -1019,7 +1150,7 @@ def generate_derived_inverse_problem(
             return {
                 'problem_text': problem_content,
                 'var_values': {
-                    name: round(visible_values[name], 10) for name in variables
+                    name: float(visible_values[name]) for name in variables
                 },
                 'display_var_values': {
                     name: display_values[name] for name in variables
@@ -1118,211 +1249,83 @@ def infer_generation_strategy(template_name, problem_text, variables_text, solut
     return json.dumps(strategy, ensure_ascii=False, indent=2)
 
 
+def _sample_legacy_variables(variables, ranges, midpoint=False):
+    values = {}
+    for name in variables:
+        minimum, maximum = ranges.get(name, get_adaptive_default_range(name))
+        raw = (minimum + maximum) / 2 if midpoint else random.uniform(minimum, maximum)
+        rounded = round(raw, 2)
+        # Preserve ordinary two-decimal questions, but never erase small ranges/values.
+        values[name] = (rounded if minimum <= rounded <= maximum and
+                        (raw == 0 or abs(raw) >= 0.01) else raw)
+    return values
+
+
+def _generate_numeric_problem(template, variables, context, ranges, units, constraints, attempts, midpoint_last=False):
+    last_error = '没有找到满足模板条件的参数'
+    for attempt in range(attempts):
+        values = _sample_legacy_variables(variables, ranges, midpoint_last and attempt == attempts - 1)
+        try:
+            current = dict(context, **values)
+            answers = evaluate_solution_formula(template['solution_formula'], current)
+            if not _check_answers(template, answers, values, constraints):
+                last_error = '参数或答案不满足模板明确规定的条件'
+                continue
+            normalized_units = list(units[:int(template.get('answer_count') or 1)])
+            normalized_units.extend([''] * (int(template.get('answer_count') or 1) - len(normalized_units)))
+            return {
+                'problem_text': format_problem_text(template['problem_text'], values),
+                'var_values': values,
+                'var_units': infer_variable_units(template.get('problem_text', ''), variables),
+                'correct_answers': answers,
+                'answer_units': normalized_units,
+                'template_id': template['id'],
+                'answer_count': int(template.get('answer_count') or 1),
+                'template_name': template['template_name'],
+                'image_filename': template.get('image_filename'),
+                'calculation_version': CALCULATION_VERSION,
+            }
+        except TemplateGenerationError:
+            raise
+        except (NameError, SyntaxError) as error:
+            raise TemplateGenerationError(f'公式无法计算：{error}') from error
+        except Exception as error:
+            last_error = str(error)
+    logger.error('题目生成失败: template_id=%s reason=%s', template.get('id'), last_error)
+    raise TemplateGenerationError(f'模板 {template.get("id")} 无法生成有效题目：{last_error}')
+
+
 def generate_problem_from_template(template_id, max_attempts=10):
     template = get_template(template_id)
-
     if not template:
         return None
-
+    constraints = validate_template_definition(template.get('variables'), template['solution_formula'],
+                                               template.get('answer_count', 1), template.get('generation_strategy'))
     variables, configured_ranges = parse_variable_specs(template.get('variables', ''))
-    local_vars = build_formula_context()
-
-    reasonable_ranges = {}
-    for var in variables:
-        reasonable_ranges[var] = configured_ranges.get(var, get_adaptive_default_range(var))
-
-    answer_units = parse_answer_units(template)
-    answer_constraints = infer_answer_constraints(answer_units)
-    var_units = infer_variable_units(template.get('problem_text', ''), variables)
-
-    strategy = parse_generation_strategy(template)
-    strategy_mode = strategy.get('mode') if strategy and strategy.get('enabled', True) else None
-    if strategy_mode == 'derived_inverse_v1':
-        inverse_problem = generate_derived_inverse_problem(
-            template,
-            variables,
-            configured_ranges,
-            local_vars,
-            answer_units[:],
-            answer_constraints,
-        )
-    elif strategy_mode == 'inverse_v1':
-        inverse_problem = generate_inverse_problem(
-            template,
-            variables,
-            configured_ranges,
-            local_vars,
-            answer_units[:],
-            answer_constraints,
-        )
-    else:
-        inverse_problem = None
-    if inverse_problem:
-        print(f"Inverse problem generated - template: {template['template_name']}")
-        print(f"   Variable values: {inverse_problem['var_values']}")
-        print(f"   Correct answers: {inverse_problem['correct_answers']}")
-        return inverse_problem
-
-    for attempt in range(max_attempts):
-        var_values = {}
-
-        for var in variables:
-            min_val, max_val = reasonable_ranges[var]
-            range_expansion = 1.0 + (attempt * 0.1)
-            expanded_min = max(0.01, min_val / range_expansion)
-            expanded_max = max_val * range_expansion
-
-            var_values[var] = round(random.uniform(expanded_min, expanded_max), 2)
-
-        problem_content = format_problem_text(template['problem_text'], var_values)
-
-        try:
-            current_vars = local_vars.copy()
-            current_vars.update(var_values)
-
-            correct_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
-
-            answer_count = template.get('answer_count', 1)
-            if len(correct_answers) != answer_count:
-                correct_answers = [correct_answers[0]] * answer_count
-
-            if is_answer_reasonable_dynamic(correct_answers, var_values, attempt, answer_constraints):
-                for var, value in var_values.items():
-                    current_min, current_max = reasonable_ranges[var]
-                    reasonable_ranges[var] = (
-                        min(current_min, value * 0.8),
-                        max(current_max, value * 1.2)
-                    )
-
-                answer_count = template.get('answer_count', 1)
-                if len(answer_units) < answer_count:
-                    answer_units.extend([''] * (answer_count - len(answer_units)))
-                elif len(answer_units) > answer_count:
-                    answer_units = answer_units[:answer_count]
-
-                formatted_correct_answers = []
-                for answer in correct_answers:
-                    abs_answer = abs(answer)
-                    if abs_answer == 0:
-                        formatted_correct_answers.append(0.0)
-                    elif abs_answer >= 1000:
-                        formatted_correct_answers.append(round(answer, 0))
-                    elif abs_answer >= 1:
-                        formatted_correct_answers.append(round(answer, 2))
-                    elif abs_answer >= 0.01:
-                        formatted_correct_answers.append(round(answer, 4))
-                    else:
-                        formatted_correct_answers.append(round(answer, 6))
-
-                result_data = {
-                    'problem_text': problem_content,
-                    'var_values': var_values,
-                    'var_units': var_units,
-                    'correct_answers': formatted_correct_answers,
-                    'answer_units': answer_units,
-                    'template_id': template_id,
-                    'answer_count': template.get('answer_count', 1),
-                    'template_name': template['template_name'],
-                    'image_filename': template.get('image_filename')
-                }
-
-                print(f"Problem generated successfully - template: {template['template_name']}")
-                print(f"   Variable values: {var_values}")
-                print(f"   Correct answers: {formatted_correct_answers}")
-                print(f"   Answer units: {answer_units}")
-                print(f"   Answer count: {answer_count}")
-
-                return result_data
-
-        except Exception as e:
-            print(f"Problem generation attempt {attempt + 1} failed: {str(e)}")
-            continue
-
-    return generate_fallback_problem(template, variables, local_vars, reasonable_ranges, answer_units, answer_constraints)
+    context = build_formula_context()
+    ranges = {name: configured_ranges.get(name, get_adaptive_default_range(name)) for name in variables}
+    units = parse_answer_units(template)
+    strategy = parse_generation_strategy(template) or {}
+    mode = strategy.get('mode') if strategy.get('enabled', True) else None
+    generator = {'derived_inverse_v1': generate_derived_inverse_problem,
+                 'inverse_v1': generate_inverse_problem}.get(mode)
+    if generator:
+        result = generator(template, variables, configured_ranges, context, units[:], constraints)
+        if result and _check_answers(template, result['correct_answers'], result['var_values'], constraints):
+            result['calculation_version'] = CALCULATION_VERSION
+            return result
+    return _generate_numeric_problem(template, variables, context, ranges, units, constraints,
+                                     max(1, int(max_attempts)))
 
 
 def generate_fallback_problem(template, variables, local_vars, reasonable_ranges=None, answer_units=None, answer_constraints=None):
-    answer_units = answer_units or parse_answer_units(template)
-    answer_constraints = answer_constraints or infer_answer_constraints(answer_units)
-    var_units = infer_variable_units(template.get('problem_text', ''), variables)
-
-    correct_answers = [0.0] * template.get('answer_count', 1)
-    problem_content = template['problem_text']
-
-    for attempt in range(5):
-        var_values = {}
-        for var in variables:
-            min_val, max_val = (reasonable_ranges or {}).get(var, (1.0, 3.0))
-            var_values[var] = round(random.uniform(min_val, max_val), 2)
-
-        problem_content = format_problem_text(template['problem_text'], var_values)
-
-        try:
-            current_vars = local_vars.copy()
-            current_vars.update(var_values)
-            current_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
-
-            answer_count = template.get('answer_count', 1)
-            if len(current_answers) != answer_count:
-                current_answers = [current_answers[0]] * answer_count
-
-            if is_answer_reasonable_dynamic(current_answers, var_values, attempt, answer_constraints):
-                correct_answers = current_answers
-                break
-        except Exception:
-            continue
-    else:
-        var_values = {}
-        for var in variables:
-            min_val, max_val = (reasonable_ranges or {}).get(var, (1.0, 3.0))
-            var_values[var] = round((min_val + max_val) / 2, 2)
-        problem_content = format_problem_text(template['problem_text'], var_values)
-
-        try:
-            current_vars = local_vars.copy()
-            current_vars.update(var_values)
-            fallback_answers = evaluate_solution_formula(template['solution_formula'], current_vars)
-            answer_count = template.get('answer_count', 1)
-            if len(fallback_answers) != answer_count:
-                fallback_answers = [fallback_answers[0]] * answer_count
-            correct_answers = fallback_answers
-        except Exception as e:
-            print(f"Fallback problem formula calculation still failed, using default answers: {str(e)}")
-
-    answer_count = template.get('answer_count', 1)
-    if len(answer_units) < answer_count:
-        answer_units.extend([''] * (answer_count - len(answer_units)))
-    elif len(answer_units) > answer_count:
-        answer_units = answer_units[:answer_count]
-
-    formatted_correct_answers = []
-    for answer in correct_answers:
-        abs_answer = abs(answer)
-        if abs_answer >= 1000:
-            formatted_correct_answers.append(round(answer, 0))
-        elif abs_answer >= 1:
-            formatted_correct_answers.append(round(answer, 2))
-        else:
-            formatted_correct_answers.append(round(answer, 4))
-
-    result_data = {
-        'problem_text': problem_content,
-        'var_values': var_values,
-        'var_units': var_units,
-        'correct_answers': formatted_correct_answers,
-        'answer_units': answer_units,
-        'template_id': template['id'],
-        'answer_count': template.get('answer_count', 1),
-        'template_name': template['template_name'],
-        'image_filename': template.get('image_filename')
-    }
-
-    print(f"Fallback problem generated - template: {template['template_name']}")
-    print(f"   Variable values: {var_values}")
-    print(f"   Correct answers: {formatted_correct_answers}")
-    print(f"   Answer units: {answer_units}")
-
-    return result_data
+    # Compatibility entry point: all retries and the midpoint must pass the same checks.
+    constraints = validate_template_definition(template.get('variables'), template['solution_formula'],
+                                               template.get('answer_count', 1), template.get('generation_strategy'))
+    if answer_constraints is not None:
+        constraints = answer_constraints
+    return _generate_numeric_problem(template, variables, local_vars, reasonable_ranges or {},
+                                     answer_units or parse_answer_units(template), constraints, 6, midpoint_last=True)
 
 
 def get_adaptive_default_range(var_name):
@@ -1350,67 +1353,24 @@ def get_adaptive_default_range(var_name):
         return (0.5, 20.0)
 
 
-def is_answer_reasonable_dynamic(correct_answers, var_values, attempt_num, constraints=None):
+def is_answer_reasonable_dynamic(correct_answers, var_values=None, attempt_num=0, constraints=None):
+    """Accept finite signed answers of any magnitude; enforce explicit bounds only."""
     if not correct_answers:
         return False
-
     constraints = constraints or {}
-    min_answer = constraints.get('min_answer')
-    max_answer = constraints.get('max_answer')
-    non_negative = constraints.get('non_negative', False)
-
-    for answer in correct_answers:
+    per_answer = constraints.get('per_answer') or []
+    for index, answer in enumerate(correct_answers):
         if not isinstance(answer, (int, float)) or not np.isfinite(answer):
             return False
-
-        if non_negative and answer < 0:
+        rule = dict(constraints)
+        if index < len(per_answer):
+            rule.update(per_answer[index])
+        if rule.get('non_negative') and answer < 0:
             return False
-
-        abs_answer = abs(answer)
-
-        max_threshold = 1e6 * (1 + attempt_num * 0.2)
-        min_threshold = 1e-8 / (1 + attempt_num * 0.2)
-
-        if max_answer is not None:
-            max_threshold = min(max_threshold, max_answer)
-        if min_answer is not None:
-            min_threshold = max(min_threshold, min_answer)
-
-        if abs_answer > max_threshold or (0 < abs_answer < min_threshold):
+        if rule.get('min_answer') is not None and answer < rule['min_answer']:
             return False
-
-        if not check_dynamic_consistency(answer, var_values, attempt_num):
+        if rule.get('max_answer') is not None and answer > rule['max_answer']:
             return False
-
-    return True
-
-
-def check_dynamic_consistency(answer, var_values, attempt_num):
-    if not var_values:
-        return True
-
-    abs_answer = abs(answer)
-    if abs_answer == 0:
-        return True
-    var_values_list = [abs(v) for v in var_values.values() if isinstance(v, (int, float))]
-
-    if not var_values_list:
-        return True
-
-    avg_var = sum(var_values_list) / len(var_values_list)
-
-    base_max_ratio = 1000
-    base_min_ratio = 0.001
-    relaxation_factor = 1 + (attempt_num * 0.3)
-
-    max_ratio = base_max_ratio * relaxation_factor
-    min_ratio = base_min_ratio / relaxation_factor
-
-    ratio_to_avg = abs_answer / avg_var if avg_var > 0 else abs_answer
-
-    if ratio_to_avg > max_ratio or ratio_to_avg < min_ratio:
-        return False
-
     return True
 
 
@@ -1520,7 +1480,7 @@ def parse_variable_specs(variables_text):
     variables = []
     ranges = {}
     for token in tokens:
-        match = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]$', token)
+        match = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\[\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*,\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*\]$', token)
         if match:
             name = match.group(1)
             min_val = float(match.group(2))
@@ -1542,12 +1502,5 @@ def parse_answer_units(template):
 
 
 def infer_answer_constraints(answer_units):
-    merged_units = ' '.join(answer_units).lower()
-    non_negative_units = ['kg', 'j', 'n', 'pa', 'w', 'hz', '\u03c9', 'ohm', '\u03a9']
-    non_negative = any(unit.lower() in merged_units for unit in non_negative_units)
-
-    return {
-        'non_negative': non_negative,
-        'min_answer': 0 if non_negative else None,
-        'max_answer': 1e7
-    }
+    # Units alone do not determine sign or magnitude (work in J may be negative).
+    return {}

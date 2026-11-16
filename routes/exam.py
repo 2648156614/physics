@@ -6,6 +6,7 @@ from flask import Blueprint, make_response
 
 from services.seb_exam_service import SEB_CONFIG_KEY_HEADER, build_finish_summary, validate_exam_config_request
 from services.error_recovery_service import build_seb_quit_url
+from services.generation_errors import TemplateGenerationError
 from services.submission_receipt_service import receipt_key, answer_fingerprint, restore_receipt_state
 
 
@@ -985,11 +986,11 @@ def create_exam_blueprint(deps):
             # 生成正确答案消息
             correct_answer_message = "正确答案: "
             if answer_count == 1:
-                correct_answer_message += f"{correct_answers[0]:.2f}"
+                correct_answer_message += f"{correct_answers[0]:.12g}"
             else:
                 correct_parts = []
                 for i, correct_answer in enumerate(correct_answers):
-                    correct_parts.append(f"答案{i + 1} = {correct_answer:.2f}")
+                    correct_parts.append(f"答案{i + 1} = {correct_answer:.12g}")
                 correct_answer_message += ", ".join(correct_parts)
     
             # 更新会话状态
@@ -1093,6 +1094,12 @@ def create_exam_blueprint(deps):
             logger.debug("返回数据详情: %s", response_data)
             return jsonify(response_data)
     
+        except TemplateGenerationError as error:
+            logger.error('题目验算失败: %s', error)
+            saved = bool(locals().get('save_success'))
+            return jsonify(success=False, saved=saved, message=(
+                '答案已保存，但新题目未通过验算，请联系监考教师。' if saved else
+                '当前题目未通过验算，答案尚未提交，请联系监考教师。')), 503
         except ValueError as e:
             logger.error("数值转换错误: %s", e)
             saved = bool(locals().get('save_success'))

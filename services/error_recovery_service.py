@@ -1,5 +1,6 @@
 """Minimal error recovery that works even when normal page context fails."""
 from flask import jsonify, make_response, request, session, url_for
+from services.generation_errors import TemplateGenerationError
 
 
 def build_seb_quit_url(exam, get_shared_settings):
@@ -14,10 +15,16 @@ def build_seb_quit_url(exam, get_shared_settings):
 
 def install_error_recovery(app, deps):
     @app.errorhandler(500)
+    @app.errorhandler(TemplateGenerationError)
     def server_error(error):
+        status = 503 if isinstance(error, TemplateGenerationError) else 500
+        message = ('当前题目无法生成或验算，请联系监考教师。' if status == 503 else
+                   '服务暂时异常，请稍后重试或联系监考教师。')
+        if status == 503:
+            app.logger.error('题目验算失败: %s', error)
         # Keep API callers on their existing JSON failure path. Never retry POSTs.
         if request.path.startswith('/api/'):
-            response = make_response(jsonify(success=False, message='服务暂时异常，请稍后重试或联系监考教师。'), 500)
+            response = make_response(jsonify(success=False, message=message), status)
         else:
             state = session.get('current_problem') or {}
             exam_id = state.get('exam_id') or session.get('selected_exam_id')
@@ -38,7 +45,8 @@ def install_error_recovery(app, deps):
                 back_url = url_for('problem_ajax', problem_id=number)
             # Bypass context processors: one of them may have caused the failure.
             html = app.jinja_env.get_template('server_error.html').render(
-                back_url=back_url, can_resume=can_resume, quit_url=quit_url)
-            response = make_response(html, 500)
+                back_url=back_url, can_resume=can_resume, quit_url=quit_url,
+                generation_error=(status == 503))
+            response = make_response(html, status)
         response.headers['Cache-Control'] = 'no-store'
         return response

@@ -18,7 +18,8 @@
 </head>
 <body>
 <main>
-    <h1>页面暂时无法打开</h1>
+    <h1>{% if generation_error %}当前题目暂时不可用{% else %}页面暂时无法打开{% endif %}</h1>
+    {% if generation_error %}<p>题目未通过计算检查，请联系监考教师。已保存的答题记录会保留。</p>{% endif %}
     <p>请尝试返回{% if can_resume %}答题页{% else %}首页{% endif %}。若仍然报错，请联系监考教师。</p>
     <div class="actions">
         <a class="primary" href="{{ back_url }}">{% if can_resume %}返回答题{% else %}返回首页{% endif %}</a>

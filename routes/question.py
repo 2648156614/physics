@@ -215,7 +215,7 @@ def create_question_blueprint(deps):
             cursor.execute(
                 """
                 SELECT template_name, problem_text, variables, solution_formula,
-                       answer_count, answer_units, difficulty, image_filename
+                       answer_count, answer_units, difficulty, image_filename, generation_strategy
                 FROM problem_templates
                 WHERE paper_id = %s AND COALESCE(status, 'active') = 'active'
                 ORDER BY id
@@ -248,6 +248,7 @@ def create_question_blueprint(deps):
                 'solution_formula': template.get('solution_formula'),
                 'answer_count': template.get('answer_count'),
                 'answer_units': template.get('answer_units'),
+                'generation_strategy': template.get('generation_strategy'),
                 'difficulty': template.get('difficulty'),
                 'image_filename': image_filename,
                 'image': image_payload
@@ -307,6 +308,20 @@ def create_question_blueprint(deps):
             flash('导入失败：题目列表格式不正确。', 'danger')
             return redirect(url_for('admin_manage_problems'))
     
+        try:
+            for number, item in enumerate(templates_payload, 1):
+                if not isinstance(item, dict) or not item.get('template_name') or not item.get('problem_text') or not str(item.get('solution_formula', '')).strip():
+                    raise ValueError(f'第 {number} 道题缺少名称、题干或公式')
+                try:
+                    question_generation_service.validate_template_definition(
+                        item.get('variables') or '', item['solution_formula'],
+                        item.get('answer_count', 1), item.get('generation_strategy'))
+                except ValueError as error:
+                    raise ValueError(f'第 {number} 道题“{item["template_name"]}”：{error}') from error
+        except ValueError as error:
+            flash(f'题库导入失败：{error}', 'danger')
+            return redirect(url_for('admin_manage_problems'))
+
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         try:
@@ -365,19 +380,21 @@ def create_question_blueprint(deps):
                     """
                     INSERT INTO problem_templates
                     (template_name, problem_text, variables, solution_formula,
-                     answer_count, answer_units, difficulty, image_filename, paper_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     answer_count, answer_units, difficulty, image_filename, paper_id, generation_strategy)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         template_name,
                         problem_text,
                         question_generation_service.normalize_variable_specs(item.get('variables') or ''),
                         item.get('solution_formula'),
-                        int(item.get('answer_count') or 1),
+                        int(item.get('answer_count', 1)),
                         item.get('answer_units') or '',
                         item.get('difficulty') or 'medium',
                         final_image_filename,
-                        paper_id
+                        paper_id,
+                        (json.dumps(item['generation_strategy'], ensure_ascii=False)
+                         if isinstance(item.get('generation_strategy'), dict) else item.get('generation_strategy'))
                     )
                 )
                 imported_count += 1
@@ -423,6 +440,8 @@ def create_question_blueprint(deps):
                 if not knowledge_point:
                     knowledge_point = infer_knowledge_label(template_name)
                 generation_strategy = request.form.get('generation_strategy', '').strip()
+                question_generation_service.validate_template_definition(
+                    variables, solution_formula, answer_count, generation_strategy)
                 if not generation_strategy:
                     generation_strategy = question_generation_service.infer_generation_strategy(
                         template_name,
@@ -569,6 +588,8 @@ def create_question_blueprint(deps):
                 if not knowledge_point:
                     knowledge_point = infer_knowledge_label(template_name)
                 generation_strategy = request.form.get('generation_strategy', '').strip()
+                question_generation_service.validate_template_definition(
+                    variables, solution_formula, answer_count, generation_strategy)
                 if not generation_strategy:
                     generation_strategy = question_generation_service.infer_generation_strategy(
                         template_name,

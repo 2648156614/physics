@@ -96,6 +96,19 @@ class ErrorRecoveryTests(unittest.TestCase):
         self.assertIs(response.get_json()['success'], False)
         self.deps['get_exam_by_id'].assert_not_called()
 
+    def test_generation_failure_has_recovery_buttons_and_a_specific_message(self):
+        from services.generation_errors import TemplateGenerationError
+        def invalid_template():
+            raise TemplateGenerationError('private formula detail')
+        self.app.add_url_rule('/invalid-template', view_func=invalid_template)
+        self.login()
+        response = self.client.get('/invalid-template')
+        self.assertEqual(response.status_code,503)
+        self.assertIn('当前题目暂时不可用',response.text)
+        self.assertIn('/problem_ajax/2',response.text)
+        self.assertIn('/seb/exit/shared',response.text)
+        self.assertNotIn('private formula detail',response.text)
+
 
 class RecoveryEntryTests(unittest.TestCase):
     def test_real_question_route_caches_exit_for_database_failure(self):

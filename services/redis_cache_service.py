@@ -56,8 +56,15 @@ def get_problem_by_token(token):
     if not raw:
         return None
     try:
-        redis_client.expire(get_problem_key(token), PROBLEM_TTL_SECONDS)
-        return json.loads(raw)
+        from services.question_generation_service import verify_cached_problem
+        original = json.loads(raw)
+        problem = verify_cached_problem(original)
+        # Updating this token preserves its parameters and the student's question order.
+        if problem is original:
+            redis_client.expire(get_problem_key(token), PROBLEM_TTL_SECONDS)
+        else:
+            cache_problem_with_token(token, problem)
+        return problem
     except json.JSONDecodeError:
         return None
 
@@ -71,7 +78,8 @@ def pop_problem_from_pool(template_id):
     if not raw_problem:
         return None
     try:
-        return json.loads(raw_problem)
+        from services.question_generation_service import verify_cached_problem
+        return verify_cached_problem(json.loads(raw_problem))
     except json.JSONDecodeError:
         return None
 
