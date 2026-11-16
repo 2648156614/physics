@@ -1,0 +1,72 @@
+/* Scoped to the answer form; question and navigation layouts stay independent. */
+#answer-form .answer-toolbar { margin-bottom: 12px; }
+#answer-form .answer-heading { margin: 0; font-size: 1.15rem; font-weight: 700; color: #172033; }
+#answer-form .answer-heading i { color: #0d6efd; }
+#answer-inputs { display: grid; gap: 10px; }
+#answer-inputs .scientific-answer-row {
+    display: grid;
+    grid-template-columns: minmax(80px, .65fr) 100px minmax(110px, 1.6fr) auto minmax(120px, 1fr) minmax(50px, auto);
+    align-items: end;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid #dbe2ec;
+    border-radius: 8px;
+    background: #f5f7fa;
+    min-width: 0;
+}
+#answer-inputs .answer-row-title { align-self: center; color: #0d6efd; font-weight: 700; margin: 0; }
+#answer-inputs .answer-field { min-width: 0; }
+#answer-inputs .answer-field-label { display: block; color: #475569; font-size: .85rem; margin-bottom: 5px; }
+#answer-inputs .answer-control {
+    display: block; width: 100%; height: 44px; min-width: 0;
+    border: 1px solid #aabbd0; border-radius: 5px; padding: 8px 10px;
+    background: #fff; color: #172033; font-size: 16px; font-variant-numeric: tabular-nums;
+}
+#answer-inputs .answer-control:focus { outline: 2px solid #0d6efd; outline-offset: 1px; }
+#answer-inputs .answer-control[aria-invalid="true"] { border-color: #b42318; }
+#answer-inputs .answer-sign-buttons { display: flex; }
+#answer-inputs .answer-sign-buttons label {
+    display: grid; place-items: center; height: 44px; width: 50%; margin: 0;
+    border: 1px solid #0d6efd; background: #fff; color: #0d6efd; font-size: 22px; cursor: pointer;
+}
+#answer-inputs .answer-sign-buttons label:first-of-type { border-radius: 5px 0 0 5px; }
+#answer-inputs .answer-sign-buttons label:last-of-type { border-left: 0; border-radius: 0 5px 5px 0; }
+#answer-inputs .btn-check:checked + label { color: #fff; background: #0d6efd; }
+#answer-inputs .btn-check:focus-visible + label { outline: 2px solid #172033; outline-offset: 2px; }
+#answer-inputs .btn-check:disabled + label, #answer-inputs button:disabled, #answer-inputs .answer-control:disabled { opacity: .6; cursor: default; }
+#answer-inputs .answer-power { display: flex; align-items: center; height: 44px; white-space: nowrap; font-size: 1.15rem; }
+#answer-inputs .answer-exponent-control { display: flex; min-width: 0; }
+#answer-inputs .answer-exponent-control .answer-control { border-radius: 0 5px 5px 0; }
+#answer-inputs .exponent-sign-button {
+    flex: 0 0 44px; height: 44px; margin: 0; padding: 0; border: 1px solid #aabbd0;
+    border-right: 0; border-radius: 5px 0 0 5px; background: #eaf0f8; color: #334155; font-size: 20px;
+}
+#answer-inputs .answer-unit { align-self: end; display: grid; place-items: center; min-height: 44px; padding: 8px; background: #e7ebf1; border-radius: 5px; overflow-wrap: anywhere; font-size: .95rem; }
+#answer-inputs .answer-unit:empty { visibility: hidden; }
+#answer-inputs .answer-input-error { grid-column: 2 / -1; margin: 0; color: #b42318; font-size: .85rem; }
+#answer-form .answer-preview { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 22px; padding: 12px 14px; margin-top: 14px; background: #eaf2ff; border-radius: 7px; color: #172033; }
+#answer-form .answer-preview-title { font-weight: 700; color: #0d6efd; }
+#answer-form .answer-preview-item { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+#answer-form .answer-preview-index { color: #526174; margin-right: 6px; }
+#answer-form .answer-preview .is-empty { color: #68778d; }
+
+@media (max-width: 1199px) {
+    #answer-inputs .scientific-answer-row { grid-template-columns: 88px 96px minmax(100px, 1.3fr) auto minmax(112px, 1fr); gap: 10px; }
+    #answer-inputs .answer-unit { grid-column: 1; grid-row: 2; min-height: 28px; padding: 2px 5px; }
+    #answer-inputs .answer-unit:empty { display: none; }
+}
+@media (max-width: 768px) {
+    #answer-form .answer-heading { font-size: 1rem; }
+    #answer-inputs .scientific-answer-row { grid-template-columns: 84px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; padding: 12px; }
+    #answer-inputs .answer-row-title { grid-column: 1 / 3; grid-row: 1; }
+    #answer-inputs .answer-unit { grid-column: 3; grid-row: 1; justify-self: end; max-width: 100%; min-height: 28px; }
+    #answer-inputs .answer-sign-field { grid-column: 1; grid-row: 2; }
+    #answer-inputs .answer-mantissa-field { grid-column: 2 / 4; grid-row: 2; }
+    #answer-inputs .answer-power { grid-column: 1; grid-row: 3; justify-content: center; }
+    #answer-inputs .answer-exponent-field { grid-column: 2 / 4; grid-row: 3; }
+    #answer-inputs .answer-input-error { grid-column: 1 / -1; }
+    #answer-form .answer-preview { display: grid; gap: 7px; margin-top: 12px; padding: 12px; }
+    #answer-inputs .answer-control { font-size: 16px; }
+    #answer-inputs .answer-field-label { font-size: .8rem; }
+    #answer-form .answer-actions .btn { min-height: 46px; }
+}

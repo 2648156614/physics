@@ -263,172 +263,47 @@
                     </section>
 
                     <section class="answer-pane" aria-label="答题区">
-                <!-- 动态答题表单 - 双模式切换方案 -->
-                <form id="answer-form">
-                    <!-- 输入模式切换按钮 -->
+                <form id="answer-form" data-managed-submit="true" novalidate>
                     <div class="answer-toolbar">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <label class="form-label">
-                                <strong><i class="bi bi-input-cursor-text me-1"></i>请输入答案：</strong>
-                            </label>
-                            <div class="btn-group btn-group-sm" role="group" aria-label="输入模式切换">
-                                <button type="button" class="btn btn-outline-primary active" id="normal-mode-btn">
-                                    <i class="bi bi-123 me-1"></i> 普通模式
-                                </button>
-                                <button type="button" class="btn btn-outline-secondary" id="scientific-mode-btn">
-                                    <i class="bi bi-calculator me-1"></i> 科学计数法
-                                </button>
-                            </div>
-                        </div>
+                        <h3 class="answer-heading"><i class="bi bi-pencil-fill me-2" aria-hidden="true"></i>请输入答案</h3>
                     </div>
-
                     <div id="answer-inputs">
-                        {% if answer_count == 1 %}
-                        <!-- 单答案题目 -->
-                        <div class="normal-input-container">
-                            <!-- 普通模式输入框 -->
-                            <div class="normal-mode">
-                                <div class="input-group input-group-lg">
-                                    <input type="number" step="any" class="form-control"
-                                           id="answer-normal" name="answer-normal"
-                                           placeholder="输入数值（如：1.5, -0.003, 2500）"
-                                           autocomplete="off">
-                                    {% if problem.answer_units and problem.answer_units[0] %}
-                                    <span class="input-group-text unit-display">{{ problem.answer_units[0] }}</span>
-                                    {% endif %}
+                        {% for i in range(answer_count) %}
+                        {% set unit = problem.answer_units[i] if problem.answer_units and i < problem.answer_units|length else '' %}
+                        <div class="scientific-answer-row" data-answer-row="{{ i+1 }}" data-unit="{{ unit }}" role="group" aria-labelledby="answer-title{{ i+1 }}">
+                            <div class="answer-row-title" id="answer-title{{ i+1 }}">答案 {{ i+1 }}</div>
+                            <div class="answer-field answer-sign-field">
+                                <span class="answer-field-label" id="sign-label{{ i+1 }}">符号</span>
+                                <div class="answer-sign-buttons" role="group" aria-labelledby="answer-title{{ i+1 }} sign-label{{ i+1 }}">
+                                    <input type="radio" class="btn-check" name="sign{{ i+1 }}" id="sign-positive{{ i+1 }}" value="+" checked>
+                                    <label for="sign-positive{{ i+1 }}" aria-label="答案 {{ i+1 }} 正数">+</label>
+                                    <input type="radio" class="btn-check" name="sign{{ i+1 }}" id="sign-negative{{ i+1 }}" value="-">
+                                    <label for="sign-negative{{ i+1 }}" aria-label="答案 {{ i+1 }} 负数">−</label>
                                 </div>
                             </div>
-
-                            <!-- 科学计数法模式输入框（默认隐藏） -->
-                            <div class="scientific-mode" style="display: none;">
-                                <div class="scientific-notation-input">
-                                    <!-- 符号选择 -->
-                                    <div class="btn-group btn-group-sm me-2 scientific-signs" role="group" aria-label="符号选择">
-                                        <input type="radio" class="btn-check" name="sign1"
-                                               id="sign-positive1" value="+" autocomplete="off" checked>
-                                        <label class="btn btn-outline-primary" for="sign-positive1" title="正数">
-                                            <i class="bi bi-plus-lg"></i><span class="sign-label"> 正</span>
-                                        </label>
-
-                                        <input type="radio" class="btn-check" name="sign1"
-                                               id="sign-negative1" value="-" autocomplete="off">
-                                        <label class="btn btn-outline-primary" for="sign-negative1" title="负数">
-                                            <i class="bi bi-dash-lg"></i><span class="sign-label"> 负</span>
-                                        </label>
-                                    </div>
-
-                                    <!-- 有效数字输入 -->
-                                    <div class="input-group input-group-sm me-2 scientific-mantissa" style="width: 150px;">
-                                        <input type="number" step="any" class="form-control mantissa-input"
-                                               id="mantissa1"
-                                               placeholder="有效数字"
-                                               value="1.00"
-                                               min="1" max="9.999" step="0.001">
-                                        <span class="input-group-text">×10</span>
-                                    </div>
-
-                                    <!-- 指数 -->
-                                    <div class="input-group input-group-sm me-2 scientific-exponent" style="width: 120px;">
-                                        <input type="number" class="form-control exponent-input"
-                                               id="exponent1"
-                                               placeholder="指数"
-                                               value="0"
-                                               min="-50" max="50" step="1">
-                                        <span class="input-group-text">次方</span>
-                                    </div>
-
-                                    <!-- 单位显示 -->
-                                    {% if problem.answer_units and problem.answer_units[0] %}
-                                    <span class="input-group-text unit-display scientific-unit">{{ problem.answer_units[0] }}</span>
-                                    {% endif %}
-                                </div>
-
+                            <div class="answer-field answer-mantissa-field">
+                                <label class="answer-field-label" for="mantissa{{ i+1 }}">尾数</label>
+                                <input class="answer-control" type="text" inputmode="decimal" id="mantissa{{ i+1 }}" data-mantissa aria-required="true" enterkeyhint="next" autocomplete="off" spellcheck="false" aria-label="答案 {{ i+1 }} 尾数" aria-describedby="answer-error{{ i+1 }}">
                             </div>
-
-                            <!-- 隐藏的真实输入框 -->
-                            <input type="hidden" class="form-control form-control-lg"
-                                   id="answer1" name="answer1"
-                                   placeholder="最终数值"
-                                   autocomplete="off">
+                            <span class="answer-power" aria-hidden="true">× 10</span>
+                            <div class="answer-field answer-exponent-field">
+                                <label class="answer-field-label" for="exponent{{ i+1 }}">指数</label>
+                                <div class="answer-exponent-control">
+                                    <button type="button" class="exponent-sign-button" data-exponent-sign aria-label="切换答案 {{ i+1 }} 的指数正负">±</button>
+                                    <input class="answer-control" type="text" inputmode="numeric" id="exponent{{ i+1 }}" data-exponent aria-required="true" enterkeyhint="{{ 'done' if i+1 == answer_count else 'next' }}" value="0" autocomplete="off" spellcheck="false" aria-label="答案 {{ i+1 }} 指数" aria-describedby="answer-error{{ i+1 }}">
+                                </div>
+                            </div>
+                            <span class="answer-unit">{{ unit }}</span>
+                            <input type="hidden" id="answer{{ i+1 }}" name="answer{{ i+1 }}">
+                            <p class="answer-input-error" id="answer-error{{ i+1 }}" data-answer-error hidden></p>
                         </div>
-                        {% else %}
-                        <!-- 多答案题目 -->
-                        <div class="row">
-                            {% for i in range(answer_count) %}
-                            <div class="col-md-6 mb-2">
-                                <label class="form-label">
-                                    <strong><i class="bi bi-input-cursor-text me-1"></i>答案 {{ i+1 }}：</strong>
-                                </label>
-
-                                <div class="normal-input-container">
-                                    <!-- 普通模式输入框 -->
-                                    <div class="normal-mode">
-                                        <div class="input-group input-group-sm">
-                                            <input type="number" step="any" class="form-control"
-                                                   id="answer-normal{{ i+1 }}" name="answer-normal{{ i+1 }}"
-                                                   placeholder="答案 {{ i+1 }}"
-                                                   autocomplete="off">
-                                            {% if problem.answer_units and problem.answer_units[i] %}
-                                            <span class="input-group-text unit-display">{{ problem.answer_units[i] }}</span>
-                                            {% endif %}
-                                        </div>
-                                    </div>
-
-                                    <!-- 科学计数法模式输入框（默认隐藏） -->
-                                    <div class="scientific-mode" style="display: none;">
-                                        <div class="scientific-notation-input">
-                                            <!-- 符号选择 -->
-                                            <div class="btn-group btn-group-sm me-2 scientific-signs" role="group" aria-label="符号选择">
-                                                <input type="radio" class="btn-check" name="sign{{ i+1 }}"
-                                                       id="sign-positive{{ i+1 }}" value="+" autocomplete="off" checked>
-                                                <label class="btn btn-outline-primary" for="sign-positive{{ i+1 }}" title="正数">
-                                                    <i class="bi bi-plus-lg"></i>
-                                                </label>
-
-                                                <input type="radio" class="btn-check" name="sign{{ i+1 }}"
-                                                       id="sign-negative{{ i+1 }}" value="-" autocomplete="off">
-                                                <label class="btn btn-outline-primary" for="sign-negative{{ i+1 }}" title="负数">
-                                                    <i class="bi bi-dash-lg"></i>
-                                                </label>
-                                            </div>
-
-                                            <!-- 有效数字输入 -->
-                                            <div class="input-group input-group-sm me-2 scientific-mantissa" style="width: 120px;">
-                                                <input type="number" step="any" class="form-control mantissa-input"
-                                                       id="mantissa{{ i+1 }}"
-                                                       placeholder="有效数字"
-                                                       value="1.00"
-                                                       min="1" max="9.999" step="0.001">
-                                                <span class="input-group-text">×10</span>
-                                            </div>
-
-                                            <!-- 指数 -->
-                                            <div class="input-group input-group-sm scientific-exponent" style="width: 100px;">
-                                                <input type="number" class="form-control exponent-input"
-                                                       id="exponent{{ i+1 }}"
-                                                       placeholder="指数"
-                                                       value="0"
-                                                       min="-50" max="50" step="1">
-                                                <span class="input-group-text">次方</span>
-                                            </div>
-
-                                            <!-- 单位显示 -->
-                                            {% if problem.answer_units and problem.answer_units[i] %}
-                                            <span class="input-group-text unit-display scientific-unit">{{ problem.answer_units[i] }}</span>
-                                            {% endif %}
-                                        </div>
-
-                                    </div>
-
-                                    <!-- 隐藏的真实输入框 -->
-                                    <input type="hidden" class="form-control"
-                                           id="answer{{ i+1 }}" name="answer{{ i+1 }}"
-                                           autocomplete="off">
-                                </div>
-                            </div>
-                            {% endfor %}
-                        </div>
-                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    <div class="answer-preview" aria-label="答案预览">
+                        <span class="answer-preview-title">答案预览</span>
+                        {% for i in range(answer_count) %}
+                        <span class="answer-preview-item"><span class="answer-preview-index">{{ i+1 }}.</span><span id="answer-preview{{ i+1 }}" class="is-empty">未填写</span></span>
+                        {% endfor %}
                     </div>
 
                     <div class="answer-actions">
@@ -670,94 +545,6 @@
         color: #721c24;
     }
 
-    /* 双模式切换按钮样式 */
-    #normal-mode-btn.active,
-    #scientific-mode-btn.active {
-        background-color: #0d6efd;
-        color: white;
-        border-color: #0d6efd;
-    }
-
-    /* 输入模式切换过渡效果 */
-    .normal-mode,
-    .scientific-mode {
-        transition: all 0.3s ease;
-    }
-
-    /* 科学计数法输入组件样式 */
-    .scientific-notation-input {
-        display: flex;
-        align-items: center;
-        flex-wrap: nowrap;
-        gap: 8px;
-        margin-bottom: 10px;
-    }
-
-    .scientific-notation-input .input-group {
-        flex-shrink: 0;
-    }
-
-    .scientific-notation-input .mantissa-input {
-        text-align: center;
-        font-family: 'Courier New', monospace;
-    }
-
-    .scientific-notation-input .exponent-input {
-        width: 70px;
-        text-align: center;
-        font-family: 'Courier New', monospace;
-    }
-
-    .scientific-notation-input .input-group-text {
-        font-size: 0.85em;
-        padding: 0.25rem 0.5rem;
-        background-color: #f8f9fa;
-    }
-
-    /* 符号按钮样式 */
-    .scientific-notation-input .btn-group .btn {
-        padding: 0.25rem 0.5rem;
-        font-size: 0.8rem;
-        min-width: 40px;
-    }
-
-    /* 实时结果显示 */
-    .calc-result {
-        font-family: 'Courier New', monospace;
-        font-weight: bold;
-        font-size: 0.85em;
-    }
-
-    /* 科学计数法示例样式 */
-    .scientific-example {
-        background-color: #f8f9fa;
-        border-left: 3px solid #6c757d;
-        padding: 8px;
-        border-radius: 4px;
-        margin-top: 8px;
-        font-size: 0.85em;
-    }
-
-    .scientific-example kbd {
-        background-color: #6c757d;
-        color: white;
-        font-family: 'Courier New', monospace;
-        padding: 1px 4px;
-        border-radius: 3px;
-        font-size: 0.8em;
-    }
-
-    /* 普通输入框提示 */
-    .normal-mode .form-text {
-        font-size: 0.85em;
-        margin-top: 5px;
-    }
-
-    /* 隐藏输入框容器 */
-    .normal-input-container {
-        position: relative;
-    }
-
     /* 防止复制题目内容 */
     #problem-content-container,
     .math-formula,
@@ -813,6 +600,7 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/answer-submission.js') }}"></script>
+<script src="{{ url_for('static', filename='js/scientific-answer-input.js', v='1') }}"></script>
 <script>
 // 蒙版系统配置 - 在这里修改参数
 const SPOTLIGHT_CONFIG = {
@@ -886,494 +674,8 @@ if (arrivedFromMobileQuestionSwitch && usesMobileProblemNavigation()) {
     window.scrollTo(0, 0);
 }
 
-// 双模式切换状态
-let currentInputMode = 'normal'; // 'normal' 或 'scientific'
-
-// ======================== 双模式切换功能 ========================
-
-// 初始化双模式切换
-function initDualModeInput() {
-    console.log('初始化双模式输入系统');
-
-    // 获取按钮元素
-    const normalModeBtn = document.getElementById('normal-mode-btn');
-    const scientificModeBtn = document.getElementById('scientific-mode-btn');
-
-    if (!normalModeBtn || !scientificModeBtn) {
-        console.error('找不到模式切换按钮');
-        return;
-    }
-
-    // 切换为普通模式
-    normalModeBtn.addEventListener('click', function() {
-        if (currentInputMode === 'normal') return;
-
-        currentInputMode = 'normal';
-        updateModeButtons();
-        showNormalInputs();
-
-        console.log('切换到普通模式');
-    });
-
-    // 切换为科学计数法模式
-    scientificModeBtn.addEventListener('click', function() {
-        if (currentInputMode === 'scientific') return;
-
-        currentInputMode = 'scientific';
-        updateModeButtons();
-        showScientificInputs();
-
-        console.log('切换到科学计数法模式');
-    });
-
-    // 初始化科学计数法组件
-    initScientificNotationComponents();
-
-    console.log('双模式输入系统初始化完成，当前模式:', currentInputMode);
-}
-
-// 更新模式按钮状态
-function updateModeButtons() {
-    const normalModeBtn = document.getElementById('normal-mode-btn');
-    const scientificModeBtn = document.getElementById('scientific-mode-btn');
-
-    if (currentInputMode === 'normal') {
-        normalModeBtn.classList.remove('btn-outline-primary');
-        normalModeBtn.classList.add('btn-primary', 'active');
-        scientificModeBtn.classList.remove('btn-primary', 'active');
-        scientificModeBtn.classList.add('btn-outline-secondary');
-    } else {
-        scientificModeBtn.classList.remove('btn-outline-secondary');
-        scientificModeBtn.classList.add('btn-primary', 'active');
-        normalModeBtn.classList.remove('btn-primary', 'active');
-        normalModeBtn.classList.add('btn-outline-primary');
-    }
-}
-
-// 显示普通输入框
-function showNormalInputs() {
-    const answerCount = {{ answer_count }};
-
-    // 在切换前同步当前数据
-    for (let i = 1; i <= answerCount; i++) {
-        // 如果当前是科学计数法模式，将其数据同步到普通模式
-        if (currentInputMode === 'scientific') {
-            ScientificNotationUtils.syncInputModes(i);
-        }
-    }
-
-    // 切换显示
-    for (let i = 1; i <= answerCount; i++) {
-        if (answerCount === 1) {
-            const normalModeDiv = document.querySelector('.normal-mode');
-            const scientificModeDiv = document.querySelector('.scientific-mode');
-
-            if (normalModeDiv) normalModeDiv.style.display = 'block';
-            if (scientificModeDiv) scientificModeDiv.style.display = 'none';
-        } else {
-            const normalModeDivs = document.querySelectorAll(`#answer-normal${i}`).closest('.normal-mode');
-            const scientificModeDivs = document.querySelectorAll(`.scientific-mode`)[i-1];
-
-            normalModeDivs.forEach(div => div.style.display = 'block');
-            if (scientificModeDivs) scientificModeDivs.style.display = 'none';
-        }
-    }
-
-    // 焦点设置
-    if (answerCount === 1) {
-        setTimeout(() => {
-            const normalInput = document.getElementById('answer-normal');
-            if (normalInput) normalInput.focus();
-        }, 100);
-    } else {
-        setTimeout(() => {
-            const firstNormalInput = document.getElementById('answer-normal1');
-            if (firstNormalInput) firstNormalInput.focus();
-        }, 100);
-    }
-}
-
-// 显示科学计数法输入框
-function showScientificInputs() {
-    const answerCount = {{ answer_count }};
-
-    // 在切换前同步当前数据
-    for (let i = 1; i <= answerCount; i++) {
-        // 如果当前是普通模式，将其数据同步到科学计数法模式
-        if (currentInputMode === 'normal') {
-            ScientificNotationUtils.syncInputModes(i);
-        }
-    }
-
-    // 切换显示
-    for (let i = 1; i <= answerCount; i++) {
-        if (answerCount === 1) {
-            const normalModeDiv = document.querySelector('.normal-mode');
-            const scientificModeDiv = document.querySelector('.scientific-mode');
-
-            if (normalModeDiv) normalModeDiv.style.display = 'none';
-            if (scientificModeDiv) scientificModeDiv.style.display = 'block';
-        } else {
-            const normalModeDivs = document.querySelectorAll(`#answer-normal${i}`).closest('.normal-mode');
-            const scientificModeDivs = document.querySelectorAll(`.scientific-mode`)[i-1];
-
-            normalModeDivs.forEach(div => div.style.display = 'none');
-            if (scientificModeDivs) scientificModeDivs.style.display = 'block';
-        }
-    }
-
-    // 焦点设置
-    if (answerCount === 1) {
-        setTimeout(() => {
-            const mantissaInput = document.getElementById('mantissa1');
-            if (mantissaInput) mantissaInput.focus();
-        }, 100);
-    } else {
-        setTimeout(() => {
-            const firstMantissaInput = document.getElementById('mantissa1');
-            if (firstMantissaInput) firstMantissaInput.focus();
-        }, 100);
-    }
-}
-
-// ======================== 双模式转换工具函数 ========================
-
-// 增强的科学计数法工具函数，支持双向转换
-const ScientificNotationUtils = {
-    // 获取上标数字字符
-    getSuperscriptNumber: function(num) {
-        const superscripts = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
-        const negativeSign = '⁻';
-
-        if (num === 0) return superscripts[0];
-
-        const isNegative = num < 0;
-        const absNum = Math.abs(num);
-        const digits = absNum.toString().split('');
-
-        let result = isNegative ? negativeSign : '';
-        for (const digit of digits) {
-            const digitInt = parseInt(digit);
-            if (!isNaN(digitInt) && digitInt >= 0 && digitInt <= 9) {
-                result += superscripts[digitInt];
-            }
-        }
-
-        return result;
-    },
-
-    // 将科学计数法组件值转换为浮点数
-    convertToFloat: function(sign, mantissa, exponent) {
-        // 验证输入
-        if (mantissa === '' || isNaN(parseFloat(mantissa))) {
-            console.warn('有效数字无效:', mantissa);
-            return 0;
-        }
-
-        if (exponent === '' || isNaN(parseInt(exponent))) {
-            console.warn('指数无效:', exponent);
-            exponent = 0;
-        }
-
-        const signMultiplier = (sign === '-') ? -1 : 1;
-        const base = parseFloat(mantissa);
-        const exp = parseInt(exponent);
-
-        // 计算：sign * mantissa * 10^exponent
-        const result = signMultiplier * base * Math.pow(10, exp);
-
-        console.log(`科学计数法转换: ${sign}${base} × 10^${exp} = ${result}`);
-        return result;
-    },
-
-    // 将浮点数转换为科学计数法组件格式
-    convertFromFloat: function(floatValue) {
-        if (floatValue === 0) {
-            return {
-                sign: '+',
-                mantissa: '1.00',
-                exponent: '0'
-            };
-        }
-
-        const isNegative = floatValue < 0;
-        const absValue = Math.abs(floatValue);
-
-        // 计算科学计数法
-        const exponent = Math.floor(Math.log10(absValue));
-        let mantissa = absValue / Math.pow(10, exponent);
-
-        // 标准化到 1 ≤ mantissa < 10
-        if (mantissa >= 10) {
-            mantissa /= 10;
-            exponent += 1;
-        } else if (mantissa < 1 && mantissa !== 0) {
-            mantissa *= 10;
-            exponent -= 1;
-        }
-
-        // 保留2位小数
-        const mantissaStr = mantissa.toFixed(2);
-
-        return {
-            sign: isNegative ? '-' : '+',
-            mantissa: mantissaStr,
-            exponent: exponent.toString()
-        };
-    },
-
-    // 从普通输入解析科学计数法格式（如 1.6e-19）或普通数字
-    parseInputToScientific: function(inputValue) {
-        if (!inputValue) {
-            return {
-                sign: '+',
-                mantissa: '1.00',
-                exponent: '0'
-            };
-        }
-
-        const str = inputValue.toString().trim().toLowerCase();
-
-        // 尝试解析科学计数法格式：数字 + e/E + 指数
-        const scientificRegex = /^([+-]?\d*\.?\d+)(?:[eE]([+-]?\d+))?$/;
-        const match = str.match(scientificRegex);
-
-        if (match) {
-            let base = parseFloat(match[1]);
-            const exponent = match[2] ? parseInt(match[2]) : 0;
-
-            // 计算标准科学计数法格式
-            const absBase = Math.abs(base);
-            let calcExponent = exponent;
-            let calcMantissa = absBase;
-
-            if (absBase !== 0) {
-                // 如果基数不在1-10范围内，调整它
-                if (absBase >= 10 || absBase < 1) {
-                    const baseExponent = Math.floor(Math.log10(absBase));
-                    calcMantissa = absBase / Math.pow(10, baseExponent);
-                    calcExponent += baseExponent;
-                }
-
-                // 确保尾数在1-10之间
-                if (calcMantissa >= 10) {
-                    calcMantissa /= 10;
-                    calcExponent += 1;
-                } else if (calcMantissa < 1) {
-                    calcMantissa *= 10;
-                    calcExponent -= 1;
-                }
-            }
-
-            return {
-                sign: base < 0 ? '-' : '+',
-                mantissa: calcMantissa.toFixed(2),
-                exponent: calcExponent.toString()
-            };
-        }
-
-        // 如果无法解析，返回默认值
-        return {
-            sign: '+',
-            mantissa: '1.00',
-            exponent: '0'
-        };
-    },
-
-    // 从科学计数法组件值生成普通数值字符串
-    convertToNormalString: function(sign, mantissa, exponent) {
-        const floatValue = this.convertToFloat(sign, mantissa, exponent);
-
-        // 根据数值大小选择合适的格式
-        const absValue = Math.abs(floatValue);
-
-        if (absValue === 0) return "0";
-
-        // 如果数值在0.001到10000之间，使用常规表示法
-        if (absValue >= 0.001 && absValue <= 10000) {
-            // 根据精度决定小数位数
-            if (absValue >= 100) {
-                return floatValue.toFixed(0);
-            } else if (absValue >= 1) {
-                return floatValue.toFixed(2);
-            } else if (absValue >= 0.01) {
-                return floatValue.toFixed(4);
-            } else {
-                return floatValue.toFixed(6);
-            }
-        } else {
-            // 大数或小数使用科学计数法格式
-            return floatValue.toExponential(2);
-        }
-    },
-
-    // 同步普通模式和科学计数法模式的数据
-    syncInputModes: function(answerIndex) {
-        console.log(`同步模式数据 - 答案 ${answerIndex}, 当前模式: ${currentInputMode}`);
-
-        if (currentInputMode === 'scientific') {
-            // 从科学计数法组件获取值
-            const sign = document.querySelector(`input[name="sign${answerIndex}"]:checked`)?.value || '+';
-            const mantissa = document.getElementById(`mantissa${answerIndex}`).value || '1.00';
-            const exponent = document.getElementById(`exponent${answerIndex}`).value || '0';
-
-            // 计算浮点值
-            const floatValue = this.convertToFloat(sign, mantissa, exponent);
-
-            // 更新普通模式输入框
-            const normalInputId = answerCount === 1 ? 'answer-normal' : `answer-normal${answerIndex}`;
-            const normalInput = document.getElementById(normalInputId);
-            if (normalInput) {
-                normalInput.value = this.convertToNormalString(sign, mantissa, exponent);
-                console.log(`科学计数法 -> 普通模式: ${normalInput.value}`);
-            }
-
-            // 更新隐藏输入框
-            const hiddenInput = document.getElementById(`answer${answerIndex}`);
-            if (hiddenInput) {
-                hiddenInput.value = floatValue;
-            }
-
-            // 更新显示
-            const displayElement = document.getElementById(`calc-result${answerIndex}`);
-            if (displayElement) {
-                const supExponent = this.getSuperscriptNumber(parseInt(exponent));
-                displayElement.textContent =
-                    `当前值: ${sign === '-' ? '-' : ''}${mantissa} × 10${supExponent} = ${floatValue.toExponential(2)}`;
-            }
-
-            return floatValue;
-
-        } else {
-            // 从普通模式输入框获取值
-            const normalInputId = answerCount === 1 ? 'answer-normal' : `answer-normal${answerIndex}`;
-            const normalInput = document.getElementById(normalInputId);
-
-            if (!normalInput) return 0;
-
-            const inputValue = normalInput.value;
-            let floatValue = 0;
-
-            if (inputValue && !isNaN(parseFloat(inputValue))) {
-                floatValue = parseFloat(inputValue);
-
-                // 转换为科学计数法组件值
-                const components = this.convertFromFloat(floatValue);
-
-                // 更新科学计数法组件
-                const signPositive = document.getElementById(`sign-positive${answerIndex}`);
-                const signNegative = document.getElementById(`sign-negative${answerIndex}`);
-                const mantissaInput = document.getElementById(`mantissa${answerIndex}`);
-                const exponentInput = document.getElementById(`exponent${answerIndex}`);
-
-                if (signPositive && signNegative) {
-                    if (components.sign === '+') {
-                        signPositive.checked = true;
-                    } else {
-                        signNegative.checked = true;
-                    }
-                }
-
-                if (mantissaInput) mantissaInput.value = components.mantissa;
-                if (exponentInput) exponentInput.value = components.exponent;
-
-                console.log(`普通模式 -> 科学计数法: ${components.mantissa} × 10^${components.exponent}`);
-
-                // 更新显示
-                const displayElement = document.getElementById(`calc-result${answerIndex}`);
-                if (displayElement) {
-                    const supExponent = this.getSuperscriptNumber(parseInt(components.exponent));
-                    displayElement.textContent =
-                        `当前值: ${components.sign === '-' ? '-' : ''}${components.mantissa} × 10${supExponent} = ${floatValue.toExponential(2)}`;
-                }
-            }
-
-            // 更新隐藏输入框
-            const hiddenInput = document.getElementById(`answer${answerIndex}`);
-            if (hiddenInput) {
-                hiddenInput.value = floatValue;
-            }
-
-            return floatValue;
-        }
-    },
-
-    // 更新科学计数法显示
-    updateScientificDisplay: function(answerIndex) {
-        if (currentInputMode !== 'scientific') return;
-        return this.syncInputModes(answerIndex);
-    },
-
-    // 更新普通模式显示
-    updateNormalDisplay: function(answerIndex) {
-        if (currentInputMode !== 'normal') return;
-        return this.syncInputModes(answerIndex);
-    }
-};
-
-// 初始化科学计数法组件
-function initScientificNotationComponents() {
-    const answerCount = {{ answer_count }};
-
-    for (let i = 1; i <= answerCount; i++) {
-        // 科学计数法组件的监听器
-        const mantissaInput = document.getElementById(`mantissa${i}`);
-        const exponentInput = document.getElementById(`exponent${i}`);
-        const signRadios = document.querySelectorAll(`input[name="sign${i}"]`);
-
-        if (mantissaInput) {
-            mantissaInput.addEventListener('input', () => {
-                if (currentInputMode === 'scientific') {
-                    ScientificNotationUtils.updateScientificDisplay(i);
-                }
-            });
-
-            mantissaInput.value = '1.00';
-        }
-
-        if (exponentInput) {
-            exponentInput.addEventListener('input', () => {
-                if (currentInputMode === 'scientific') {
-                    ScientificNotationUtils.updateScientificDisplay(i);
-                }
-            });
-
-            exponentInput.value = '0';
-        }
-
-        if (signRadios.length > 0) {
-            signRadios.forEach(radio => {
-                radio.addEventListener('change', () => {
-                    if (currentInputMode === 'scientific') {
-                        ScientificNotationUtils.updateScientificDisplay(i);
-                    }
-                });
-            });
-        }
-
-        // 普通输入框的监听器
-        const normalInputId = answerCount === 1 ? 'answer-normal' : `answer-normal${i}`;
-        const normalInput = document.getElementById(normalInputId);
-        if (normalInput) {
-            normalInput.addEventListener('input', () => {
-                if (currentInputMode === 'normal') {
-                    ScientificNotationUtils.updateNormalDisplay(i);
-                }
-            });
-        }
-    }
-
-    // 初始更新显示
-    setTimeout(() => {
-        for (let i = 1; i <= answerCount; i++) {
-            if (currentInputMode === 'scientific') {
-                ScientificNotationUtils.updateScientificDisplay(i);
-            } else {
-                ScientificNotationUtils.updateNormalDisplay(i);
-            }
-        }
-    }, 100);
-}
+// 科学计数法输入统一处理单空和多空；提交仍使用原有数值接口。
+const scientificAnswers = new ScientificAnswerInput(document.getElementById('answer-inputs'));
 
 // ======================== 蒙版系统函数 ========================
 
@@ -1773,19 +1075,6 @@ function initSpotlightSystem() {
         // 启动永久蒙版维持定时器
         maintainSpotlightPermanent();
 
-        // 添加键盘快捷键
-        document.addEventListener('keydown', function(e) {
-            // 按M键切换输入模式
-            if (e.altKey && e.key === 'm') {
-                e.preventDefault();
-                if (currentInputMode === 'normal') {
-                    document.getElementById('scientific-mode-btn').click();
-                } else {
-                    document.getElementById('normal-mode-btn').click();
-                }
-            }
-        });
-
         // 初始状态：使用中心位置
         if (spotlightElement && problemContentContainer) {
             const rect = problemContentContainer.getBoundingClientRect();
@@ -1850,7 +1139,6 @@ let currentCorrectAnswers = {{ problem.correct_answers | tojson }};
 console.log('Ajax问题页面初始化 - 问题ID:', problemId, '答案数量:', answerCount, '累计尝试:', totalAttempts, '总题目数:', totalProblems);
 console.log('初始正确答案:', currentCorrectAnswers);
 console.log('页面加载时间:', new Date().toLocaleTimeString());
-console.log('当前输入模式:', currentInputMode);
 
 // 初始化计时器 - 从页面加载开始计时
 function initTimer() {
@@ -2022,180 +1310,22 @@ function resetSubmitButton() {
     isSubmitting = false;
 }
 
-// 获取答案数据 - 双向转换兼容版本
+// 保持原有单空/多空提交字段，所有答案由同一输入组件读取。
 function getAnswerData() {
-    const answerData = {
-        time_taken: (Date.now() - startTime) / 1000,  // 从页面加载到提交的总时间
-        correct_answers: currentCorrectAnswers  // 关键：传递当前正确答案
-    };
-
-    console.log('答题时间计算:', answerData.time_taken, '秒');
-    console.log('当前输入模式:', currentInputMode);
-
-    // 强制同步所有输入框数据
-    for (let i = 1; i <= answerCount; i++) {
-        ScientificNotationUtils.syncInputModes(i);
-    }
-
-    if (answerCount === 1) {
-        // 单答案题目
-        const answerValue = document.getElementById('answer1').value;
-        if (answerValue) {
-            answerData.answer = parseFloat(answerValue);
-            console.log('最终答案:', answerData.answer);
-        }
-    } else {
-        // 多答案题目
-        for (let i = 1; i <= answerCount; i++) {
-            const answerValue = document.getElementById(`answer${i}`).value;
-            if (answerValue) {
-                answerData[`answer${i}`] = parseFloat(answerValue);
-                console.log(`答案${i}:`, answerData[`answer${i}`]);
-            }
-        }
-    }
-
-    console.log('提交的答案数据:', answerData);
-    console.log('使用的正确答案:', currentCorrectAnswers);
+    const answerData = {time_taken: (Date.now() - startTime) / 1000, correct_answers: currentCorrectAnswers};
+    scientificAnswers.values().forEach((value, index) => {
+        if (value !== undefined) answerData[answerCount === 1 ? 'answer' : `answer${index+1}`] = value;
+    });
     return answerData;
 }
 
-// 验证输入（双向转换兼容版本）
 function validateInputs() {
-    const answerCount = {{ answer_count }};
-    let hasValidInput = false;
-
-    // 强制同步数据以确保所有输入框都有值
-    for (let i = 1; i <= answerCount; i++) {
-        ScientificNotationUtils.syncInputModes(i);
-    }
-
-    // 检查隐藏的答案输入框（存储最终数值的地方）
-    for (let i = 1; i <= answerCount; i++) {
-        const hiddenInput = document.getElementById(`answer${i}`);
-        if (hiddenInput && hiddenInput.value && !isNaN(parseFloat(hiddenInput.value))) {
-            hasValidInput = true;
-        }
-    }
-
-    if (!hasValidInput) {
-        showMessage('请输入有效的数字答案', 'error');
-        return false;
-    }
-
-    return true;
+    return !scientificAnswers.validate();
 }
 
-// 清空输入框（双向转换兼容版本）
-function clearInputs() {
-    const answerCount = {{ answer_count }};
-
-    if (currentInputMode === 'scientific') {
-        // 清空科学计数法输入组件
-        for (let i = 1; i <= answerCount; i++) {
-            const mantissaInput = document.getElementById(`mantissa${i}`);
-            const exponentInput = document.getElementById(`exponent${i}`);
-            const signPositive = document.getElementById(`sign-positive${i}`);
-
-            if (mantissaInput) mantissaInput.value = '1.00';
-            if (exponentInput) exponentInput.value = '0';
-            if (signPositive) {
-                signPositive.checked = true;
-                signPositive.dispatchEvent(new Event('change'));
-            }
-
-            // 更新显示和同步数据
-            ScientificNotationUtils.updateScientificDisplay(i);
-        }
-    } else {
-        // 清空普通输入框
-        if (answerCount === 1) {
-            const normalInput = document.getElementById('answer-normal');
-            if (normalInput) {
-                normalInput.value = '';
-                ScientificNotationUtils.updateNormalDisplay(1);
-            }
-        } else {
-            for (let i = 1; i <= answerCount; i++) {
-                const normalInput = document.getElementById(`answer-normal${i}`);
-                if (normalInput) {
-                    normalInput.value = '';
-                    ScientificNotationUtils.updateNormalDisplay(i);
-                }
-            }
-        }
-    }
-}
-
-// 禁用输入框（双向转换兼容版本）
-function disableInputs() {
-    const answerCount = {{ answer_count }};
-
-    if (currentInputMode === 'scientific') {
-        // 禁用科学计数法输入组件
-        for (let i = 1; i <= answerCount; i++) {
-            const mantissaInput = document.getElementById(`mantissa${i}`);
-            const exponentInput = document.getElementById(`exponent${i}`);
-            const signRadios = document.querySelectorAll(`input[name="sign${i}"]`);
-
-            if (mantissaInput) mantissaInput.disabled = true;
-            if (exponentInput) exponentInput.disabled = true;
-            if (signRadios) {
-                signRadios.forEach(radio => radio.disabled = true);
-            }
-        }
-    } else {
-        // 禁用普通输入框
-        if (answerCount === 1) {
-            const normalInput = document.getElementById('answer-normal');
-            if (normalInput) normalInput.disabled = true;
-        } else {
-            for (let i = 1; i <= answerCount; i++) {
-                const normalInput = document.getElementById(`answer-normal${i}`);
-                if (normalInput) normalInput.disabled = true;
-            }
-        }
-    }
-
-    // 禁用模式切换按钮
-    document.getElementById('normal-mode-btn').disabled = true;
-    document.getElementById('scientific-mode-btn').disabled = true;
-}
-
-// 启用输入框（双向转换兼容版本）
-function enableInputs() {
-    const answerCount = {{ answer_count }};
-
-    if (currentInputMode === 'scientific') {
-        // 启用科学计数法输入组件
-        for (let i = 1; i <= answerCount; i++) {
-            const mantissaInput = document.getElementById(`mantissa${i}`);
-            const exponentInput = document.getElementById(`exponent${i}`);
-            const signRadios = document.querySelectorAll(`input[name="sign${i}"]`);
-
-            if (mantissaInput) mantissaInput.disabled = false;
-            if (exponentInput) exponentInput.disabled = false;
-            if (signRadios) {
-                signRadios.forEach(radio => radio.disabled = false);
-            }
-        }
-    } else {
-        // 启用普通输入框
-        if (answerCount === 1) {
-            const normalInput = document.getElementById('answer-normal');
-            if (normalInput) normalInput.disabled = false;
-        } else {
-            for (let i = 1; i <= answerCount; i++) {
-                const normalInput = document.getElementById(`answer-normal${i}`);
-                if (normalInput) normalInput.disabled = false;
-            }
-        }
-    }
-
-    // 启用模式切换按钮
-    document.getElementById('normal-mode-btn').disabled = false;
-    document.getElementById('scientific-mode-btn').disabled = false;
-}
+function clearInputs() { scientificAnswers.clear(); }
+function disableInputs() { scientificAnswers.setDisabled(true); }
+function enableInputs() { scientificAnswers.setDisabled(false); }
 
 // 重置表单状态（双向转换兼容版本）
 function resetFormState() {
@@ -2361,18 +1491,7 @@ async function updateProblemParameters(newVarValues, newCorrectAnswers, newProbl
 
 // 获取当前输入的答案
 function getCurrentAnswer() {
-    const answerCount = {{ answer_count }};
-
-    for (let i = 1; i <= answerCount; i++) {
-        // 同步数据以确保获取最新值
-        ScientificNotationUtils.syncInputModes(i);
-
-        const answerValue = document.getElementById(`answer${i}`).value;
-        if (answerValue && parseFloat(answerValue) !== 0) {
-            return true;
-        }
-    }
-    return false;
+    return scientificAnswers.hasInput();
 }
 
 // 根据显示序号获取实际题目ID
@@ -2513,55 +1632,16 @@ function initProblemSidebar() {
     });
 }
 
-// 设置输入框监听器 - 支持双模式
+// 回车依次移向下一项，最后一项回车提交；移动端不自动聚焦。
 function setupInputListeners() {
-    const answerCount = {{ answer_count }};
-
-    if (answerCount === 1) {
-        // 单答案：普通模式输入框回车提交
-        const normalInput = document.getElementById('answer-normal');
-        if (normalInput) {
-            normalInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
-                }
-            });
-        }
-
-        // 单答案：科学计数法模式，指数输入框回车提交
-        const exponentInput = document.getElementById('exponent1');
-        if (exponentInput) {
-            exponentInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
-                }
-            });
-        }
-    } else {
-        // 多答案：最后一个普通模式输入框回车提交
-        const lastNormalInput = document.getElementById(`answer-normal${answerCount}`);
-        if (lastNormalInput) {
-            lastNormalInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
-                }
-            });
-        }
-
-        // 多答案：最后一个科学计数法模式指数输入框回车提交
-        const lastExponentInput = document.getElementById(`exponent${answerCount}`);
-        if (lastExponentInput) {
-            lastExponentInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    document.getElementById('answer-form').dispatchEvent(new Event('submit'));
-                }
-            });
-        }
-    }
+    const form = document.getElementById('answer-form');
+    const inputs = Array.from(form.querySelectorAll('[data-mantissa], [data-exponent]'));
+    inputs.forEach((input, index) => input.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || event.isComposing) return;
+        event.preventDefault();
+        if (inputs[index + 1]) inputs[index + 1].focus();
+        else form.requestSubmit();
+    }));
 }
 
 let unresolvedSubmissionId = null;
@@ -2674,7 +1754,6 @@ document.getElementById('answer-form').addEventListener('submit', async function
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> 提交中...';
 
     console.log('开始提交答案...');
-    console.log('当前输入模式:', currentInputMode);
     console.log('当前正确答案:', currentCorrectAnswers);
 
     try {
@@ -2783,8 +1862,6 @@ document.addEventListener('DOMContentLoaded', function() {
     initSpotlightSystem();
     window.physicsMath.ready.then(updateSpotlightLayout).catch(console.error);
 
-    // 初始化双模式输入系统
-    initDualModeInput();
 
     // 已完成的题目直接锁定输入
     if (isProblemCompleted) {
@@ -2833,48 +1910,14 @@ document.addEventListener('DOMContentLoaded', function() {
             debugTimer();
         }
 
-        // Alt+M 切换输入模式
-        if (e.altKey && e.key === 'm') {
-            e.preventDefault();
-            if (currentInputMode === 'normal') {
-                document.getElementById('scientific-mode-btn').click();
-            } else {
-                document.getElementById('normal-mode-btn').click();
-            }
-        }
-
-        // Ctrl+Shift+C 测试模式转换
-        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-            e.preventDefault();
-            window.testModeConversion();
-        }
     });
 
     // 电脑端保留键盘输入效率；手机端不自动跳到答案框或弹出软键盘。
     if (!usesMobileProblemNavigation()) {
         setTimeout(() => {
-            if (answerCount === 1) {
-                if (currentInputMode === 'normal') {
-                    document.getElementById('answer-normal').focus();
-                } else {
-                    document.getElementById('mantissa1').focus();
-                }
-            } else if (answerCount > 1) {
-                if (currentInputMode === 'normal') {
-                    document.getElementById('answer-normal1').focus();
-                } else {
-                    document.getElementById('mantissa1').focus();
-                }
-            }
+            document.getElementById('mantissa1')?.focus();
         }, 500);
     }
-
-    // 初始化时强制同步一次数据
-    setTimeout(() => {
-        for (let i = 1; i <= answerCount; i++) {
-            ScientificNotationUtils.syncInputModes(i);
-        }
-    }, 500);
 
     // ============ 添加复制保护 ============
     const problemContainer = document.getElementById('problem-content-container');
@@ -3024,92 +2067,6 @@ window.testTimeCalculation = function() {
     const testAnswerData = getAnswerData();
     console.log('测试计算结果:', testAnswerData.time_taken, '秒');
     return testAnswerData.time_taken;
-};
-
-// 测试双模式转换
-window.testModeConversion = function() {
-    console.log('=== 测试双模式转换 ===');
-
-    // 测试1: 科学计数法 -> 普通模式
-    console.log('测试1: 科学计数法 -> 普通模式');
-    document.getElementById('mantissa1').value = '1.60';
-    document.getElementById('exponent1').value = '-19';
-    document.getElementById('sign-positive1').checked = true;
-
-    // 切换到科学计数法模式以确保同步
-    if (currentInputMode !== 'scientific') {
-        document.getElementById('scientific-mode-btn').click();
-    }
-    ScientificNotationUtils.syncInputModes(1);
-
-    // 切换到普通模式查看结果
-    document.getElementById('normal-mode-btn').click();
-    const normalValue = document.getElementById('answer-normal').value;
-    console.log('转换结果:', normalValue);
-    console.log('预期结果: 1.6e-19');
-
-    // 测试2: 普通模式 -> 科学计数法
-    console.log('\n测试2: 普通模式 -> 科学计数法');
-    document.getElementById('answer-normal').value = '3.00e8';
-    ScientificNotationUtils.syncInputModes(1);
-
-    // 切换到科学计数法模式查看结果
-    document.getElementById('scientific-mode-btn').click();
-    const mantissa = document.getElementById('mantissa1').value;
-    const exponent = document.getElementById('exponent1').value;
-    console.log('转换结果:', mantissa, '× 10^', exponent);
-    console.log('预期结果: 3.00 × 10^8');
-
-    // 测试3: 双向一致性检查
-    console.log('\n测试3: 双向一致性检查');
-    const testValues = [0.001, 1000, 1.5e-5, 6.02e23, -3.14];
-
-    for (const testValue of testValues) {
-        // 设置普通模式值
-        document.getElementById('answer-normal').value = testValue;
-        document.getElementById('normal-mode-btn').click();
-        ScientificNotationUtils.syncInputModes(1);
-
-        // 切换到科学计数法模式
-        document.getElementById('scientific-mode-btn').click();
-        const components = {
-            mantissa: document.getElementById('mantissa1').value,
-            exponent: document.getElementById('exponent1').value,
-            sign: document.querySelector('input[name="sign1"]:checked').value
-        };
-
-        // 再切换回普通模式
-        document.getElementById('normal-mode-btn').click();
-        const convertedBack = document.getElementById('answer-normal').value;
-
-        console.log(`原值: ${testValue}`);
-        console.log(`科学计数法: ${components.sign}${components.mantissa} × 10^${components.exponent}`);
-        console.log(`转换回普通: ${convertedBack}`);
-
-        // 计算误差
-        const originalFloat = parseFloat(testValue);
-        const convertedFloat = parseFloat(convertedBack);
-        const error = Math.abs(originalFloat - convertedFloat) / originalFloat * 100;
-        console.log(`相对误差: ${error.toFixed(6)}%`);
-        console.log('---');
-    }
-
-    return '测试完成';
-};
-
-// 获取当前模式状态
-window.getCurrentMode = function() {
-    return currentInputMode;
-};
-
-// 切换模式（测试用）
-window.toggleInputMode = function() {
-    if (currentInputMode === 'normal') {
-        document.getElementById('scientific-mode-btn').click();
-    } else {
-        document.getElementById('normal-mode-btn').click();
-    }
-    return currentInputMode;
 };
 
 </script>
@@ -3484,11 +2441,6 @@ window.toggleInputMode = function() {
         display: none;
     }
 
-    .answer-toolbar .btn-group[aria-label="输入模式切换"] {
-        width: 100%;
-        margin-top: 0;
-    }
-
     .answer-actions .btn {
         flex: 1 1 0;
         min-width: 120px;
@@ -3742,36 +2694,6 @@ window.toggleInputMode = function() {
     text-align: center;
 }
 
-/* 科学计数法特殊样式 */
-.scientific-notation-input .btn-group .btn-outline-primary.active {
-    background-color: #0d6efd;
-    color: white;
-}
-
-.scientific-notation-input .mantissa-input:focus,
-.scientific-notation-input .exponent-input:focus {
-    border-color: #0d6efd;
-    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
-}
-
-/* 模式切换按钮动画 */
-#normal-mode-btn,
-#scientific-mode-btn {
-    transition: all 0.3s ease;
-}
-
-#normal-mode-btn:not(.active):hover,
-#scientific-mode-btn:not(.active):hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-}
-
-/* 输入模式切换过渡 */
-.normal-mode,
-.scientific-mode {
-    animation: fadeIn 0.3s ease;
-}
-
 @keyframes fadeIn {
     from {
         opacity: 0;
@@ -3802,12 +2724,6 @@ window.toggleInputMode = function() {
     border-color: #0d6efd;
 }
 
-/* 科学计数法单位显示 */
-.scientific-notation-input .input-group-text.unit-display {
-    font-size: 0.85em;
-    padding: 0.25rem 0.5rem;
-}
-
 /* 响应式调整 */
 @media (max-width: 768px) {
     .problem-image {
@@ -3820,42 +2736,10 @@ window.toggleInputMode = function() {
         margin-bottom: 1rem;
     }
 
-    /* 移动端双模式输入调整 */
-    .scientific-notation-input {
-        flex-wrap: wrap;
-    }
-
-    .scientific-notation-input .btn-group {
-        width: 100%;
-        margin-bottom: 8px;
-        justify-content: center;
-    }
-
-    .scientific-notation-input .input-group {
-        width: 100% !important;
-        margin-bottom: 8px;
-    }
-
-    /* 移动端模式切换按钮调整 */
-    .btn-group[aria-label="输入模式切换"] {
-        width: 100%;
-        margin-top: 10px;
-    }
-
-    .btn-group[aria-label="输入模式切换"] .btn {
-        flex: 1;
-        text-align: center;
-    }
-
     /* 移动端单位显示调整 */
     .unit-display {
         min-width: 50px;
         font-size: 0.9em;
-    }
-
-    .scientific-notation-input .input-group-text.unit-display {
-        padding: 0.2rem 0.4rem;
-        font-size: 0.8em;
     }
 }
 
@@ -3863,20 +2747,6 @@ window.toggleInputMode = function() {
     .problem-image {
         max-width: 100%;
         max-height: 200px;
-    }
-
-    .scientific-notation-input {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .scientific-notation-input .btn-group {
-        width: 100%;
-        justify-content: center;
-    }
-
-    .scientific-notation-input .input-group {
-        margin: 5px 0;
     }
 
     /* 多答案题目在移动端垂直排列 */
@@ -3985,11 +2855,6 @@ window.toggleInputMode = function() {
     #spotlight-overlay-element {
         border-radius: 0; /* 移除圆角，避免定位问题 */
     }
-
-    /* 移动端输入提示调整 */
-    .normal-mode .form-text {
-        font-size: 0.8em;
-    }
 }
 
 /* 超小屏幕适配 */
@@ -4016,18 +2881,6 @@ window.toggleInputMode = function() {
     /* 统计卡片在移动端堆叠 */
     .row .col-md-6 {
         margin-bottom: 1rem;
-    }
-
-    /* 科学计数法输入组件的移动端适配 */
-    .scientific-notation-input .mantissa-input,
-    .scientific-notation-input .exponent-input {
-        font-size: 16px; /* 防止iOS缩放 */
-    }
-
-    /* 模式切换按钮在超小屏幕的调整 */
-    .btn-group[aria-label="输入模式切换"] .btn {
-        padding: 0.375rem 0.5rem;
-        font-size: 0.8rem;
     }
 }
 
@@ -4078,21 +2931,6 @@ window.toggleInputMode = function() {
         transform: scale(0.98);
         transition: transform 0.1s;
     }
-
-    /* 科学计数法触摸优化 */
-    .scientific-notation-input .btn-group .btn {
-        padding: 0.5rem 1rem;
-        min-height: 44px;
-    }
-
-    .scientific-notation-input .input-group {
-        min-height: 44px;
-    }
-
-    /* 模式切换按钮触摸优化 */
-    .btn-group[aria-label="输入模式切换"] .btn {
-        min-height: 44px;
-    }
 }
 
 /* 高分屏移动设备优化 */
@@ -4100,12 +2938,6 @@ window.toggleInputMode = function() {
     .math-formula {
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
-    }
-
-    /* 科学计数法高清优化 */
-    .scientific-notation-input .mantissa-input,
-    .scientific-notation-input .exponent-input {
-        -webkit-font-smoothing: antialiased;
     }
 }
 
@@ -4307,11 +3139,6 @@ body {
         display: block !important;
     }
 
-    .answer-toolbar .btn-group[aria-label="输入模式切换"] {
-        width: 100%;
-        margin: 0;
-    }
-
     .answer-toolbar .btn {
         min-height: 40px;
         margin: 0;
@@ -4324,60 +3151,6 @@ body {
         min-height: 46px;
         padding-top: 0.45rem;
         padding-bottom: 0.45rem;
-    }
-
-    .scientific-notation-input {
-        display: grid;
-        grid-template-columns: 64px minmax(88px, 1fr) minmax(76px, 0.85fr) auto;
-        align-items: stretch;
-        gap: 4px;
-        margin: 0;
-    }
-
-    .scientific-notation-input .scientific-signs,
-    .scientific-notation-input .scientific-mantissa,
-    .scientific-notation-input .scientific-exponent {
-        width: auto !important;
-        min-width: 0;
-        min-height: 42px;
-        margin: 0 !important;
-    }
-
-    .scientific-notation-input .scientific-signs .btn {
-        min-width: 0;
-        min-height: 42px;
-        padding: 0.35rem;
-    }
-
-    .scientific-notation-input .sign-label {
-        display: none;
-    }
-
-    .scientific-notation-input .form-control {
-        min-width: 0;
-        height: 42px;
-        padding: 0.35rem;
-    }
-
-    .scientific-notation-input .input-group-text {
-        min-height: 42px;
-        padding: 0.25rem 0.35rem;
-        white-space: nowrap;
-    }
-
-    .scientific-notation-input .scientific-exponent .input-group-text {
-        display: none;
-    }
-
-    .scientific-notation-input .scientific-exponent .form-control {
-        border-radius: 6px !important;
-    }
-
-    .scientific-notation-input .scientific-unit {
-        min-width: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
     }
 
     .answer-actions {
@@ -4397,16 +3170,7 @@ body {
     }
 }
 
-@media (max-width: 360px) {
-    .scientific-notation-input {
-        grid-template-columns: 58px minmax(78px, 1fr) minmax(68px, 0.8fr) auto;
-        gap: 3px;
-    }
 
-    .scientific-notation-input .input-group-text,
-    .scientific-notation-input .form-control {
-        font-size: 0.78rem;
-    }
-}
 </style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scientific-answer-input.css', v='1') }}">
 {% endblock %}

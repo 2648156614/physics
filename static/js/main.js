@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // 表单提交按钮防重复点击
     const forms = document.querySelectorAll('form');
     forms.forEach(form => {
+        if (form.dataset.managedSubmit === 'true') return;
         form.addEventListener('submit', function() {
             const submitBtn = this.querySelector('button[type="submit"]');
             if (submitBtn) {
