@@ -359,106 +359,9 @@
         </div>
         {% endif %}
 
-        <!-- 动态变量表 -->
-        <div class="card mt-3" id="variables-card">
-            <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> 题目参数表</h5>
-                <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse"
-                        data-bs-target="#variablesTable" aria-expanded="false" aria-controls="variablesTable">
-                    <i class="bi bi-chevron-down"></i>
-                </button>
-            </div>
-            <div class="collapse" id="variablesTable">
-                <div class="card-body">
-                    <table class="table table-bordered variable-table table-hover" id="variables-table">
-                        <thead class="table-light">
-                            <tr>
-                                <th><i class="bi bi-list-check me-1"></i>物理量</th>
-                                <th><i class="bi bi-symbol me-1"></i>符号</th>
-                                <th>数值</th>
-                                <th>单位</th>
-                            </tr>
-                        </thead>
-                        <tbody id="variables-body">
-                            {% set display_var_values = problem.display_var_values if problem.display_var_values is defined and problem.display_var_values else {} %}
-                            {% for key, value in problem.var_values.items() %}
-                            <tr data-var-key="{{ key }}">
-                                <td>
-                                    {% if key == 'r' %}<i class="bi bi-circle me-1"></i>线圈半径
-                                    {% elif key == 'R' %}<i class="bi bi-lightning-charge me-1"></i>电阻
-                                    {% elif key == 'i' %}<i class="bi bi-lightning me-1"></i>感应电流
-                                    {% elif key == 'N' %}<i class="bi bi-123 me-1"></i>线圈匝数
-                                    {% elif key == 'B' or key == 'B0' %}<i class="bi bi-magnet me-1"></i>磁感应强度
-                                    {% elif key == 'A' %}<i class="bi bi-arrow-up-down me-1"></i>振幅
-                                    {% elif key == 'omega' %}<i class="bi bi-arrow-clockwise me-1"></i>角速度
-                                    {% elif key == 'l' %}<i class="bi bi-rulers me-1"></i>边长
-                                    {% elif key == 'v' %}<i class="bi bi-speedometer me-1"></i>速度
-                                    {% elif key == 'dBdt' %}<i class="bi bi-graph-up me-1"></i>磁场变化率
-                                    {% elif key == 'alpha' %}<i class="bi bi-graph-up-arrow me-1"></i>电流变化率
-                                    {% elif key == 'I' %}<i class="bi bi-lightning-fill me-1"></i>电流
-                                    {% elif key == 'm' %}<i class="bi bi-calculator me-1"></i>质量
-                                    {% elif key == 'AC' %}<i class="bi bi-arrow-right me-1"></i>导体长度
-                                    {% elif key == 'L' %}<i class="bi bi-arrow-right me-1"></i>导线长度
-                                    {% elif key == 'x' %}<i class="bi bi-arrow-right me-1"></i>距离
-                                    {% elif key == 'd' %}<i class="bi bi-arrows-h me-1"></i>间距
-                                    {% elif key == 'a' %}<i class="bi bi-circle me-1"></i>小圆半径
-                                    {% else %}<i class="bi bi-question-circle me-1"></i>{{ key }}{% endif %}
-                                </td>
-                                <td class="math-symbol">
-                                    {% if key == 'dBdt' %}\( \frac{dB}{dt} \)
-                                    {% elif key == 'B0' %}\( B_0 \)
-                                    {% elif key == 'omega' %}\( \omega \)
-                                    {% elif key == 'alpha' %}\( \alpha \)
-                                    {% else %}\( {{ key }} \){% endif %}
-                                </td>
-                                <td class="var-value">
-                                    <strong>
-                                        {% if key in ['i', 'A', 'l'] %}
-                                            {{ display_var_values.get(key, "%.3f"|format(value) if value is number else value) }}
-                                        {% elif key in ['B', 'B0', 'v', 'dBdt', 'alpha', 'm'] %}
-                                            {{ display_var_values.get(key, "%.2f"|format(value) if value is number else value) }}
-                                        {% else %}
-                                            {{ display_var_values.get(key, value) }}
-                                        {% endif %}
-                                    </strong>
-                                </td>
-                                <td class="var-unit">
-                                    {% set inferred_unit = problem.var_units.get(key) if problem.var_units else '' %}
-                                    {% if inferred_unit %}{{ inferred_unit }}
-                                    {% elif key == 'r' or key == 'a' or key == 'AC' or key == 'x' %}cm
-                                    {% elif key == 'l' or key == 'L' or key == 'd' %}m
-                                    {% elif key == 'R' %}ohm
-                                    {% elif key == 'i' or key == 'I' %}A
-                                    {% elif key == 'B' or key == 'B0' %}T
-                                    {% elif key == 'A' %}m
-                                    {% elif key == 'omega' %}rad/s
-                                    {% elif key == 'v' %}m/s
-                                    {% elif key == 'dBdt' %}T/s
-                                    {% elif key == 'alpha' %}A/s
-                                    {% elif key == 'm' %}kg
-                                    {% elif key == 'density' %}kg/m^3
-                                    {% else %}see problem text{% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                            <!-- 固定电阻率行（仅第九题显示） -->
-                            {% if problem_id == 9 %}
-                            <tr>
-                                <td><i class="bi bi-droplet me-1"></i>电阻率</td>
-                                <td class="math-symbol">\( \rho \)</td>
-                                <td class="var-value"><strong>1.7×10⁻⁷</strong></td>
-                                <td class="var-unit">Ω·m</td>
-                            </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- 答题统计卡片和解题提示 - 这部分不受蒙版影响 -->
-        <div class="row mt-4" id="hint-and-stats-container">
-            <div class="col-md-6">
+        <!-- 答题统计，不展示额外解题提示 -->
+        <div class="row mt-4" id="answer-stats-container">
+            <div class="col-12">
                 <div class="card bg-light">
                     <div class="card-body text-center">
                         <h6><i class="bi bi-clock-history me-2"></i>答题统计</h6>
@@ -471,32 +374,6 @@
                                 <small class="text-muted">累计尝试</small>
                                 <div class="h5 mb-0" id="total-attempts-display">{{ total_attempts }} 次</div>
                             </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-6">
-                <div class="card bg-light">
-                    <div class="card-body text-center">
-                        <h6><i class="bi bi-lightbulb me-2"></i>解题提示</h6>
-                        <div class="hint-content">
-                            {% if problem_id == 1 %}
-                            <small class="text-muted">法拉第电磁感应定律：\( \varepsilon = -\frac{d\Phi}{dt} \)，磁通量：\( \Phi = B \cdot S = B \cdot \pi r^2 \)，感应电流：\( i = \frac{\varepsilon}{R} \)</small>
-                            {% elif problem_id == 2 %}
-                            <small class="text-muted">速度单位换算：km/h → m/s，磁场单位换算：μT → T，感应电动势：ε = BLv</small>
-                            {% elif problem_id == 3 %}
-                            <small class="text-muted">动生电动势：\( \varepsilon = \int (\vec{v} \times \vec{B}) \cdot d\vec{l} \)，考虑各边的运动情况和磁场方向</small>
-                            {% elif problem_id == 4 %}
-                            <small class="text-muted">动生电动势：导体切割磁感线产生，感生电动势：磁场变化产生，总电动势为两者之和</small>
-                            {% elif problem_id == 5 %}
-                            <small class="text-muted">动生电动势公式：\( \varepsilon = \int (\vec{v} \times \vec{B}) \cdot d\vec{l} \)，考虑不同运动方向时各段的电动势</small>
-                            {% elif problem_id == 6 %}
-                            <small class="text-muted">感应电荷量：\( q = \frac{\Delta\Phi}{R} \)，做功与功率和时间有关</small>
-                            {% elif problem_id == 7 %}
-                            <small class="text-muted">法拉第电磁感应定律，总电动势为两个线圈电动势之和，感应电流最大值</small>
-                            {% elif problem_id == 9 %}
-                            <small class="text-muted">铜制回路的感应电流计算，考虑电阻率和密度</small>
-                            {% endif %}
                         </div>
                     </div>
                 </div>
@@ -2948,8 +2825,8 @@ window.testTimeCalculation = function() {
     background: rgba(255, 255, 255, 0.05);
 }
 
-/* 确保答题提示和统计区域不被遮挡 */
-#hint-and-stats-container {
+/* 确保答题统计区域不被遮挡 */
+#answer-stats-container {
     position: relative;
     z-index: 20;
 }

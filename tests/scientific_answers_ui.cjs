@@ -59,6 +59,8 @@ async function scenario(browser,width,count,completed=false) {
     await page.evaluate(()=>window.physicsMath.ready);
     await page.waitForFunction(()=>performance.now()>850);
     assert.equal(await page.locator('[data-answer-row]').count(),count);
+    assert.equal(await page.locator('.hint-content, #variables-card').count(),0);
+    assert(!await page.locator('body').textContent().then(text=>text.includes('解题提示')));
     assert.equal(await page.locator('#normal-mode-btn, #scientific-mode-btn, [id^="answer-normal"]').count(),0);
     assert(!await page.locator('#answer-form').textContent().then(text=>text.includes('示例')));
     const bounds=await page.locator('#answer-form').boundingBox();
