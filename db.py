@@ -81,6 +81,14 @@ def get_db_connection():
 
         try:
             conn.ping(reconnect=True, attempts=1, delay=0)
+            # Set the server session explicitly: some connector/server combinations
+            # retain the server's default collation despite the connection options.
+            # Repeat after checkout/reconnect because pool reset can discard it.
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci")
+            finally:
+                cursor.close()
             return conn
         except mysql.connector.Error as err:
             # 连接已失效，归还后重试
