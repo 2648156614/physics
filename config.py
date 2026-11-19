@@ -49,7 +49,10 @@ DB_CONFIG = {
     'port': int(os.getenv('MYSQL_PORT', 3306)),
     'user': os.getenv('MYSQL_USER', 'root'),
     'password': os.getenv('MYSQL_PASSWORD', ''),
-    'database': os.getenv('MYSQL_DATABASE', 'physics_new3')
+    'database': os.getenv('MYSQL_DATABASE', 'physics_new3'),
+    # Match the application's tables; connector defaults differ across versions.
+    'charset': 'utf8mb4',
+    'collation': 'utf8mb4_unicode_ci',
 }
 DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
 MYSQL_CONNECTOR_POOL_MAX_SIZE = 32
