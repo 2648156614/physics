@@ -1,0 +1,12 @@
+{% macro answer_number(value) -%}
+    {%- if value is none -%}
+        —
+    {%- elif value == 0 -%}
+        0
+    {%- elif value == value|int and value|abs < 1000000000 -%}
+        {{ value|int }}
+    {%- else -%}
+        {%- set scientific = ("%.2e"|format(value)).split('e') -%}
+        {{ scientific[0] }} × 10<sup>{{ scientific[1]|int }}</sup>
+    {%- endif -%}
+{%- endmacro %}

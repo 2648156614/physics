@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros/number_display.html" import answer_number %}
 
 {% block title %}答题历史{% endblock %}
 
@@ -125,12 +126,12 @@
                             </td>
                             <td>
                                 <span class="fw-bold {% if response.is_correct %}text-success{% else %}text-danger{% endif %}">
-                                    {{ "%.2f"|format(response.user_answer) }}
+                                    {{ answer_number(response.user_answer) }}
                                 </span>
                             </td>
                             <td>
                                 <span class="fw-bold text-primary">
-                                    {{ "%.2f"|format(response.correct_answer) }}
+                                    {{ answer_number(response.correct_answer) }}
                                 </span>
                             </td>
                             <td>
@@ -201,18 +202,18 @@
                                                     <strong>答案差异:</strong>
                                                     {% set difference = (response.user_answer - response.correct_answer)|abs %}
                                                     <span class="{% if difference < 0.01 %}text-success{% else %}text-warning{% endif %}">
-                                                        {{ "%.4f"|format(difference) }}
+                                                        {{ answer_number(difference) }}
                                                     </span>
                                                 </div>
                                                 <div class="mb-2">
-                                                    <strong>准确度:</strong>
+                                                    <strong>相对误差:</strong>
                                                     {% if response.correct_answer != 0 %}
-                                                        {% set accuracy = (1 - difference / response.correct_answer|abs) * 100 %}
-                                                        <span class="{% if accuracy > 99 %}text-success{% elif accuracy > 90 %}text-warning{% else %}text-danger{% endif %}">
-                                                            {{ "%.1f"|format(accuracy) }}%
-                                                        </span>
+                                                        {% set relative_error = difference / (response.correct_answer|abs) * 100 %}
+                                                        <span class="{{ 'text-success' if response.is_correct else 'text-danger' }}">{{ answer_number(relative_error) }}%</span>
+                                                    {% elif response.user_answer == 0 %}
+                                                        <span class="text-success">0%</span>
                                                     {% else %}
-                                                        <span class="text-muted">N/A</span>
+                                                        <span class="text-muted">不适用（正确答案为 0）</span>
                                                     {% endif %}
                                                 </div>
                                             </div>
