@@ -225,3 +225,5 @@
 }
 </style>
 {% endblock %}
+
+{% block scripts %}{{ super() }}<script src="{{ url_for('static', filename='js/choice-question-editor.js') }}"></script>{% endblock %}

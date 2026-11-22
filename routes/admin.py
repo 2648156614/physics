@@ -1,5 +1,6 @@
 ﻿from flask import Blueprint, g
 from services.exam_question_plan_service import describe_plan, normalize_plan, plan_count, public_plan
+from services.choice_question_service import selection_labels
 
 
 import io
@@ -2081,6 +2082,7 @@ def create_admin_blueprint(deps):
                     ur.answer_index,
                     ur.user_answer,
                     ur.correct_answer,
+                    ur.problem_text,
                     ur.is_correct,
                     ur.error_type,
                     ur.time_taken,
@@ -2229,8 +2231,8 @@ def create_admin_blueprint(deps):
                 problem_name_by_id.get(row['template_id'], ''),
                 row.get('attempt_count') or 0,
                 (row.get('answer_index') or 0) + 1,
-                row.get('user_answer'),
-                row.get('correct_answer'),
+                selection_labels(row['user_answer']) if 'data-choice-question=' in (row.get('problem_text') or '') else row.get('user_answer'),
+                selection_labels(row['correct_answer']) if 'data-choice-question=' in (row.get('problem_text') or '') else row.get('correct_answer'),
                 '是' if row.get('is_correct') else '否',
                 row.get('error_type') or '',
                 round(as_float(row.get('time_taken')), 1),

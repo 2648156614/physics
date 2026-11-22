@@ -1,3 +1,4 @@
+from services.choice_question_service import grade_selection, selection_labels
 from functools import wraps
 from time import perf_counter
 import json
@@ -934,6 +935,13 @@ def create_exam_blueprint(deps):
     
             logger.info("最终记录用时: %.2fs", time_taken)
     
+            is_choice = problem_data.get('question_type') in ('single_choice', 'multiple_choice')
+            if is_choice:
+                try:
+                    choice_value, choice_correct = grade_selection(problem_data, data.get('selected_ids'))
+                except ValueError as error:
+                    return jsonify(success=False, saved=False, message=str(error)), 400
+                data = dict(data, answer=choice_value)
             # 获取用户答案
             user_answers = []
             for i in range(answer_count):
@@ -952,7 +960,7 @@ def create_exam_blueprint(deps):
     
             for i, (user_answer, correct_answer) in enumerate(zip(user_answers, correct_answers)):
                 # 使用不同的变量名避免冲突
-                answer_is_correct = is_correct(user_answer, correct_answer)
+                answer_is_correct = choice_correct if is_choice else is_correct(user_answer, correct_answer)
                 is_correct_list.append(answer_is_correct)
                 if not answer_is_correct:
                     all_correct = False
@@ -965,7 +973,7 @@ def create_exam_blueprint(deps):
                 )
     
             error_types = [
-                classify_error_type(user_answer, correct_answer, is_correct)
+                (None if is_correct else "选项错误") if is_choice else classify_error_type(user_answer, correct_answer, is_correct)
                 for user_answer, correct_answer, is_correct in zip(user_answers, correct_answers, is_correct_list)
             ]
     
@@ -987,7 +995,9 @@ def create_exam_blueprint(deps):
     
             # 生成正确答案消息
             correct_answer_message = "正确答案: "
-            if answer_count == 1:
+            if is_choice:
+                correct_answer_message += selection_labels(correct_answers[0])
+            elif answer_count == 1:
                 correct_answer_message += f"{correct_answers[0]:.12g}"
             else:
                 correct_parts = []
@@ -1029,7 +1039,7 @@ def create_exam_blueprint(deps):
                 next_problem_id = problem_id
     
                 # 答错时从 Redis 题目池抽取新题（不再限制尝试次数）
-                new_token, new_problem_data = fetch_distinct_problem(actual_id, problem_data)
+                new_token, new_problem_data = (problem_token, problem_data) if is_choice else fetch_distinct_problem(actual_id, problem_data)
     
                 if new_problem_data:
                     # 更新session中的题目数据和正确答案
@@ -1038,6 +1048,8 @@ def create_exam_blueprint(deps):
     
                     # 构建错误消息
                     message = f'❌ 答案不正确！用时 {time_taken:.1f}秒。{correct_answer_message}。已为您生成新题目，请重新作答。'
+                    if is_choice:
+                        message = f'答案不正确。{correct_answer_message}。请重新选择。'
     
                     response_data.update({
                         'correct': False,

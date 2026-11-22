@@ -3,6 +3,7 @@
 {% block title %}第{{ problem_id }}题{% endblock %}
 
 {% block content %}
+<style>#problem-content .choice-options-snapshot {display:none} .choice-answer-option img {cursor:zoom-in} .choice-image-dialog{max-width:95vw;max-height:95vh;border:0;border-radius:12px} .choice-image-dialog img{max-width:85vw;max-height:80vh;object-fit:contain}</style>
 <style>
     /* 首屏关键样式：在完整样式解析前就固定手机导航，避免桌面侧栏闪现。 */
     @media (max-width: 768px) {
@@ -268,6 +269,17 @@
                         <h3 class="answer-heading"><i class="bi bi-pencil-fill me-2" aria-hidden="true"></i>请输入答案</h3>
                     </div>
                     <div id="answer-inputs">
+                        {% if problem.get('question_type') in ['single_choice', 'multiple_choice'] %}
+                        <p>{{ '单选题：请选择一个选项' if problem.question_type == 'single_choice' else '多选题：请选择所有正确选项' }}</p>
+                        {% for option in problem.choice_options %}
+                        <label class="choice-answer-option border rounded p-3 mb-2 d-flex gap-3 align-items-start" style="min-height:48px;overflow-wrap:anywhere;cursor:pointer">
+                            <input class="form-check-input flex-shrink-0" type="{{ 'radio' if problem.question_type == 'single_choice' else 'checkbox' }}" name="choice-answer" value="{{ option.id }}">
+                            <span style="min-width:0">{{ 'ABCDEFGH'[option.id-1] }}. {{ option.text }}
+                            {% if option.image_filename %}<img class="img-fluid d-block mt-2" style="max-height:260px" src="{{ url_for('question.problem_image_file', filename=option.image_filename) }}" alt="选项 {{ 'ABCDEFGH'[option.id-1] }} 图片">{% endif %}</span>
+                        </label>
+                        {% endfor %}
+                        <p data-choice-error class="text-danger" role="alert"></p>
+                        {% else %}
                         {% for i in range(answer_count) %}
                         {% set unit = problem.answer_units[i] if problem.answer_units and i < problem.answer_units|length else '' %}
                         <div class="scientific-answer-row" data-answer-row="{{ i+1 }}" data-unit="{{ unit }}" role="group" aria-labelledby="answer-title{{ i+1 }}">
@@ -298,6 +310,7 @@
                             <p class="answer-input-error" id="answer-error{{ i+1 }}" data-answer-error hidden></p>
                         </div>
                         {% endfor %}
+                        {% endif %}
                     </div>
                     <div class="answer-preview" aria-label="答案预览">
                         <span class="answer-preview-title">答案预览</span>
@@ -478,6 +491,7 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/answer-submission.js') }}"></script>
 <script src="{{ url_for('static', filename='js/scientific-answer-input.js', v='1') }}"></script>
+<script src="{{ url_for('static', filename='js/choice-answer-input.js') }}"></script>
 <script>
 // 蒙版系统配置 - 在这里修改参数
 const SPOTLIGHT_CONFIG = {
@@ -552,7 +566,8 @@ if (arrivedFromMobileQuestionSwitch && usesMobileProblemNavigation()) {
 }
 
 // 科学计数法输入统一处理单空和多空；提交仍使用原有数值接口。
-const scientificAnswers = new ScientificAnswerInput(document.getElementById('answer-inputs'));
+const isChoiceQuestion = {{ (problem.get('question_type') in ['single_choice', 'multiple_choice']) | tojson }};
+const scientificAnswers = new (isChoiceQuestion ? ChoiceAnswerInput : ScientificAnswerInput)(document.getElementById('answer-inputs'));
 
 // ======================== 蒙版系统函数 ========================
 
@@ -1012,7 +1027,7 @@ const displayToActual = {{ display_to_actual | tojson }};
 const isProblemCompleted = {{ 'true' if is_completed else 'false' }};
 let completionLocked = false;
 // 初始化全局正确答案变量
-let currentCorrectAnswers = {{ problem.correct_answers | tojson }};
+let currentCorrectAnswers = {{ ([] if problem.get('question_type') else problem.correct_answers) | tojson }};
 console.log('Ajax问题页面初始化 - 问题ID:', problemId, '答案数量:', answerCount, '累计尝试:', totalAttempts, '总题目数:', totalProblems);
 console.log('初始正确答案:', currentCorrectAnswers);
 console.log('页面加载时间:', new Date().toLocaleTimeString());
@@ -1043,6 +1058,7 @@ function initTimer() {
 
 // 格式化正确答案显示（使用科学计数法）
 function formatCorrectAnswers(correctAnswers) {
+    if (isChoiceQuestion && correctAnswers && correctAnswers.length) return "正确答案：" + ChoiceAnswerInput.labels(correctAnswers[0]);
     if (!correctAnswers || !Array.isArray(correctAnswers)) {
         return "正确答案: 暂无";
     }
@@ -1190,6 +1206,7 @@ function resetSubmitButton() {
 // 保持原有单空/多空提交字段，所有答案由同一输入组件读取。
 function getAnswerData() {
     const answerData = {time_taken: (Date.now() - startTime) / 1000, correct_answers: currentCorrectAnswers};
+    if (isChoiceQuestion) answerData.selected_ids = scientificAnswers.selected();
     scientificAnswers.values().forEach((value, index) => {
         if (value !== undefined) answerData[answerCount === 1 ? 'answer' : `answer${index+1}`] = value;
     });

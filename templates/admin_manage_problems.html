@@ -226,6 +226,7 @@
                             <td><small class="text-muted">{{ template.id }}</small></td>
                             <td>
                                 <strong>{{ template.template_name }}</strong>
+                                <span class="badge bg-secondary">{{ template.question_type_label or '计算题' }}</span>
                                 <div class="text-muted small mt-1">{{ template.problem_text|striptags|truncate(100) }}</div>
                             </td>
                             <td>

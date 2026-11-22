@@ -1,3 +1,4 @@
+from services.choice_question_service import choice_definition
 import os
 import re
 from html import escape
@@ -117,6 +118,38 @@ def create_question_blueprint(deps):
             (template_id, template_id, template_id),
         )
         return bool((cursor.fetchone() or {}).get('referenced'))
+
+    def _choice_form_strategy():
+        kind = request.form.get('question_type', 'calculation')
+        if kind == 'calculation':
+            return None
+        if kind not in ('single_choice', 'multiple_choice'):
+            raise ValueError('题型无效')
+        count = request.form.get('choice_count', type=int)
+        if count is None or not 2 <= count <= 8:
+            raise ValueError('选项数量须为 2～8')
+        stem = request.form.get('problem_text', '').strip()
+        image = request.files.get('problem_image')
+        if not stem and not (image and image.filename) and not request.form.get('current_image'):
+            raise ValueError('请填写题干文字或上传题干图片')
+        if len(request.form.get('problem_text', '').encode('utf-8')) > 20000:
+            raise ValueError('选择题题干过长，请缩短文字或使用图片')
+        options = []
+        for i in range(1, count + 1):
+            filename = request.form.get(f'choice_image_existing_{i}', '')
+            upload = request.files.get(f'choice_image_{i}')
+            if upload and upload.filename:
+                filename = save_uploaded_file(upload)
+                if not filename:
+                    raise ValueError('选项图片上传失败，请检查图片格式')
+            options.append(dict(id=i, text=request.form.get(f'choice_text_{i}', '').strip(), image_filename=filename))
+        try:
+            answers = [int(value) for value in request.form.getlist('choice_correct')]
+        except ValueError:
+            raise ValueError('正确选项格式无效')
+        definition = dict(mode='choice_v1', question_type=kind, options=options, correct_ids=answers)
+        choice_definition(definition)
+        return json.dumps(definition, ensure_ascii=False)
 
     @bp.route('/problem_image/<path:filename>')
     def problem_image_file(filename):
@@ -241,6 +274,17 @@ def create_question_blueprint(deps):
                             'content_base64': base64.b64encode(image_file.read()).decode('ascii')
                         }
     
+            choice_images = {}
+            definition = choice_definition(template.get('generation_strategy'))
+            if definition:
+                for option in definition['options']:
+                    filename = option.get('image_filename')
+                    if filename:
+                        image_path = os.path.join(upload_folder, filename)
+                        if not os.path.isfile(image_path):
+                            raise ValueError('选项图片缺失，无法生成完整备份')
+                        with open(image_path, 'rb') as image_file:
+                            choice_images[str(option['id'])] = dict(filename=filename, content_base64=base64.b64encode(image_file.read()).decode('ascii'))
             exported_templates.append({
                 'template_name': template.get('template_name'),
                 'problem_text': template.get('problem_text'),
@@ -251,6 +295,7 @@ def create_question_blueprint(deps):
                 'generation_strategy': template.get('generation_strategy'),
                 'difficulty': template.get('difficulty'),
                 'image_filename': image_filename,
+                'choice_images': choice_images,
                 'image': image_payload
             })
     
@@ -370,6 +415,16 @@ def create_question_blueprint(deps):
                 if not template_name or not problem_text or not solution_formula:
                     continue
     
+                definition = choice_definition(item.get('generation_strategy'))
+                if definition:
+                    for option in definition['options']:
+                        image = (item.get('choice_images') or {}).get(str(option['id']))
+                        if image:
+                            filename = save_imported_image(image)
+                            if not filename:
+                                raise ValueError('选项图片导入失败')
+                            option['image_filename'] = filename
+                    item = dict(item, generation_strategy=definition)
                 old_image_filename = item.get('image_filename')
                 image_filename = save_imported_image(item.get('image'))
                 final_image_filename = image_filename or old_image_filename
@@ -428,18 +483,19 @@ def create_question_blueprint(deps):
             try:
                 template_name = request.form['template_name']
                 problem_text = request.form['problem_text']
-                variables = question_generation_service.normalize_variable_specs(request.form['variables'])
-                solution_formula = request.form['solution_formula']
+                choice_strategy = _choice_form_strategy()
+                variables = '' if choice_strategy else question_generation_service.normalize_variable_specs(request.form['variables'])
+                solution_formula = '0' if choice_strategy else request.form['solution_formula']
                 problem_text = question_generation_service.normalize_problem_placeholders(problem_text)
                 problem_text = question_generation_service.normalize_problem_image_urls(problem_text)
-                answer_count = int(request.form.get('answer_count', 1))
+                answer_count = 1 if choice_strategy else int(request.form.get('answer_count', 1))
                 difficulty = request.form.get('difficulty', 'medium')
-                answer_units = request.form.get('answer_units', '')
+                answer_units = '' if choice_strategy else request.form.get('answer_units', '')
                 paper_id = request.form.get('paper_id', type=int)
                 knowledge_point = request.form.get('knowledge_point', '').strip()
                 if not knowledge_point:
                     knowledge_point = infer_knowledge_label(template_name)
-                generation_strategy = request.form.get('generation_strategy', '').strip()
+                generation_strategy = choice_strategy or request.form.get('generation_strategy', '').strip()
                 question_generation_service.validate_template_definition(
                     variables, solution_formula, answer_count, generation_strategy)
                 if not generation_strategy:
@@ -551,6 +607,8 @@ def create_question_blueprint(deps):
         }
         for template in templates:
             template['display_number'] = display_number_by_id.get(int(template['id']), template['id'])
+            definition = choice_definition(template.get('generation_strategy'))
+            template['question_type_label'] = ('单选题' if definition['question_type'] == 'single_choice' else '多选题') if definition else '计算题'
     
         return render_template('admin_manage_problems.html',
                                templates=templates,
@@ -576,18 +634,19 @@ def create_question_blueprint(deps):
             try:
                 template_name = request.form['template_name']
                 problem_text = request.form['problem_text']
-                variables = question_generation_service.normalize_variable_specs(request.form['variables'])
-                solution_formula = request.form['solution_formula']
+                choice_strategy = _choice_form_strategy()
+                variables = '' if choice_strategy else question_generation_service.normalize_variable_specs(request.form['variables'])
+                solution_formula = '0' if choice_strategy else request.form['solution_formula']
                 problem_text = question_generation_service.normalize_problem_placeholders(problem_text)
                 problem_text = question_generation_service.normalize_problem_image_urls(problem_text)
-                answer_count = int(request.form.get('answer_count', 1))
+                answer_count = 1 if choice_strategy else int(request.form.get('answer_count', 1))
                 difficulty = request.form.get('difficulty', 'medium')
-                answer_units = request.form.get('answer_units', '')
+                answer_units = '' if choice_strategy else request.form.get('answer_units', '')
                 paper_id = request.form.get('paper_id', type=int)
                 knowledge_point = request.form.get('knowledge_point', '').strip()
                 if not knowledge_point:
                     knowledge_point = infer_knowledge_label(template_name)
-                generation_strategy = request.form.get('generation_strategy', '').strip()
+                generation_strategy = choice_strategy or request.form.get('generation_strategy', '').strip()
                 question_generation_service.validate_template_definition(
                     variables, solution_formula, answer_count, generation_strategy)
                 if not generation_strategy:

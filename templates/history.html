@@ -126,12 +126,12 @@
                             </td>
                             <td>
                                 <span class="fw-bold {% if response.is_correct %}text-success{% else %}text-danger{% endif %}">
-                                    {{ answer_number(response.user_answer) }}
+                                    {{ answer_number(response.user_answer, response.problem_text) }}
                                 </span>
                             </td>
                             <td>
                                 <span class="fw-bold text-primary">
-                                    {{ answer_number(response.correct_answer) }}
+                                    {{ answer_number(response.correct_answer, response.problem_text) }}
                                 </span>
                             </td>
                             <td>
@@ -198,6 +198,7 @@
                                                     <strong>记录ID:</strong>
                                                     <span class="text-muted">{{ response.id }}</span>
                                                 </div>
+                                                {% if 'data-choice-question=' not in (response.problem_text or '') %}
                                                 <div class="mb-2">
                                                     <strong>答案差异:</strong>
                                                     {% set difference = (response.user_answer - response.correct_answer)|abs %}
@@ -216,6 +217,7 @@
                                                         <span class="text-muted">不适用（正确答案为 0）</span>
                                                     {% endif %}
                                                 </div>
+                                                {% endif %}
                                             </div>
                                         </div>
                                     </div>

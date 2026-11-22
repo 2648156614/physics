@@ -1877,7 +1877,7 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
         print("✅ 模板存在")
 
         # 3. 截断过长的problem_text
-        truncated_problem_text = problem_text[:1000] + "..." if len(problem_text) > 1000 else problem_text
+        truncated_problem_text = problem_text if 'data-choice-question=' in problem_text else (problem_text[:1000] + "..." if len(problem_text) > 1000 else problem_text)
         print(f"✅ 问题文本已截断: {len(truncated_problem_text)} 字符")
 
         # 4. 保存每个答案的记录

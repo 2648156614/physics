@@ -15,6 +15,7 @@ import sympy as sp
 
 from db import get_db_connection
 from services.generation_errors import TemplateGenerationError
+from services.choice_question_service import choice_definition, generate_choice_problem
 
 
 TEMPLATE_CACHE = {}
@@ -46,6 +47,10 @@ def _formula_tree(expression, allowed_names, depth=0):
 
 def validate_template_definition(variables_text, formula, answer_count=1, generation_strategy=None):
     """Static validation only: no AI call, random sampling, or symbolic solving."""
+    if choice_definition(generation_strategy):
+        if int(answer_count) != 1:
+            raise TemplateGenerationError("选择题答案记录数必须为 1")
+        return {}
     if not isinstance(formula, str) or not formula.strip():
         raise TemplateGenerationError('公式必须是非空文本')
     variables, ranges = parse_variable_specs(variables_text or '')
@@ -132,6 +137,9 @@ def verify_cached_problem(problem):
     template = get_template(problem.get('template_id'))
     if not template:
         raise TemplateGenerationError('缓存对应的题目模板不可用')
+    definition = choice_definition(template.get('generation_strategy'))
+    if definition:
+        return generate_choice_problem(template, definition, CALCULATION_VERSION)
     constraints = validate_template_definition(template.get('variables'), template['solution_formula'],
                                                template.get('answer_count', 1), template.get('generation_strategy'))
     context = build_formula_context()
@@ -1299,6 +1307,9 @@ def generate_problem_from_template(template_id, max_attempts=10):
     template = get_template(template_id)
     if not template:
         return None
+    definition = choice_definition(template.get('generation_strategy'))
+    if definition:
+        return generate_choice_problem(template, definition, CALCULATION_VERSION)
     constraints = validate_template_definition(template.get('variables'), template['solution_formula'],
                                                template.get('answer_count', 1), template.get('generation_strategy'))
     variables, configured_ranges = parse_variable_specs(template.get('variables', ''))

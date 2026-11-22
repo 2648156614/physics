@@ -1,5 +1,13 @@
-{% macro answer_number(value) -%}
-    {%- if value is none -%}
+{% macro answer_number(value, problem_text='') -%}
+    {%- if 'data-choice-question=' in (problem_text or '') and value is not none -%}
+        {%- set state = namespace(labels=[]) -%}
+        {%- for i in range(8) -%}
+            {%- if ((value|int // (2 ** i)) % 2) == 1 -%}
+                {%- set state.labels = state.labels + ['ABCDEFGH'[i]] -%}
+            {%- endif -%}
+        {%- endfor -%}
+        {{ state.labels|join('、') or '未选择' }}
+    {%- elif value is none -%}
         —
     {%- elif value == 0 -%}
         0
