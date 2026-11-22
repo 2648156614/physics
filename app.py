@@ -12,7 +12,7 @@ from decimal import Decimal
 from datetime import datetime
 
 import mysql.connector
-from flask import render_template, request, redirect, url_for, session, flash, jsonify, Response
+from flask import g, has_request_context, render_template, request, redirect, url_for, session, flash, jsonify, Response
 from openpyxl import load_workbook
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash
@@ -43,6 +43,8 @@ from services.redis_cache_service import (
 )
 from services import question_generation_service
 from services.exam_assignment_service import select_exam_template_ids
+from services.exam_paper_service import ensure_exam_paper_enabled
+from services.exam_question_plan_service import describe_plan, freeze_plan, select_plan_questions
 from services.seb_exam_service import (
     build_finish_summary,
     normalize_config_key,
@@ -365,6 +367,8 @@ def get_exam_by_id(exam_id):
         )
         exam = cursor.fetchone()
         result = dict(exam) if exam else None
+        if result and result.get('question_plan'):
+            result['paper_name'] = describe_plan(result['question_plan'])
         return result
     except mysql.connector.Error as err:
         if getattr(err, 'errno', None) == 1146:
@@ -488,7 +492,11 @@ def get_all_exams(limit=100):
             """,
             (limit,)
         )
-        return cursor.fetchall()
+        exams = cursor.fetchall()
+        for exam in exams:
+            if exam.get('question_plan'):
+                exam['paper_name'] = describe_plan(exam['question_plan'])
+        return exams
     except mysql.connector.Error as err:
         if getattr(err, 'errno', None) == 1146:
             return []
@@ -527,6 +535,8 @@ def get_user_available_exams(user_id, include_unavailable=True):
         )
         exams = [dict(row) for row in cursor.fetchall()]
         for exam in exams:
+            if exam.get('question_plan'):
+                exam['paper_name'] = describe_plan(exam['question_plan'])
             exam['start_time'] = exam.get('batch_start_time')
             exam['end_time'] = exam.get('batch_end_time')
             start_time = exam['start_time']
@@ -624,6 +634,9 @@ def get_problem_templates_by_paper(paper_id=None, enabled_only=True):
 
 def replace_exam_question_pool(cursor, exam_id, paper_id):
     """Freeze the currently active questions for an exam."""
+    plan = getattr(g, 'exam_question_plan', None) if has_request_context() else None
+    if plan:
+        return freeze_plan(cursor, exam_id, plan, ensure_exam_paper_enabled)
     cursor.execute("DELETE FROM exam_question_pool WHERE exam_id = %s", (exam_id,))
     cursor.execute(
         """
@@ -1223,11 +1236,14 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
         if not exam:
             return {}
         paper_id = int(exam['paper_id'])
+        plan = json.loads(exam['question_plan']) if exam.get('question_plan') else None
         cursor.execute(
             "SELECT EXISTS(SELECT 1 FROM exam_question_pool WHERE exam_id = %s LIMIT 1) AS frozen",
             (exam_id,),
         )
         if not (cursor.fetchone() or {}).get('frozen'):
+            if plan:
+                raise ValueError('考试固定题目缺失，请联系管理员')
             cursor.execute(
                 """
                 INSERT IGNORE INTO exam_question_pool (exam_id, template_id)
@@ -1237,15 +1253,16 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
                 """,
                 (exam_id, paper_id),
             )
+        paper_scope = '' if plan else ' AND pt.paper_id = %s'
         cursor.execute(
-            """
+            f"""
             SELECT pt.id, pt.template_name, pt.paper_id
             FROM exam_question_pool eqp
             JOIN problem_templates pt ON pt.id = eqp.template_id
-            WHERE eqp.exam_id = %s AND pt.paper_id = %s
+            WHERE eqp.exam_id = %s{paper_scope}
             ORDER BY pt.id
             """,
-            (exam_id, paper_id),
+            (exam_id,) if plan else (exam_id, paper_id),
         )
         templates = cursor.fetchall()
         template_lookup = {int(item['id']): item for item in templates}
@@ -1253,7 +1270,9 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
             return {}
 
         configured_count = exam.get('question_count')
-        if configured_count is None:
+        if plan:
+            selected_ids = select_plan_questions(plan, template_lookup, exam_id, user_id, app.config.get('SECRET_KEY'))
+        elif configured_count is None:
             selected_ids = list(template_lookup)
         else:
             selected_ids = select_exam_template_ids(
@@ -1273,14 +1292,14 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
         if not batch_id:
             return {}
 
-        query = """
+        query = f"""
             SELECT q.template_id, q.display_number, pt.template_name, pt.paper_id
             FROM exam_user_questions q
             JOIN problem_templates pt ON pt.id = q.template_id
-            WHERE q.exam_id = %s AND q.user_id = %s AND pt.paper_id = %s
+            WHERE q.exam_id = %s AND q.user_id = %s{paper_scope}
             ORDER BY q.display_number
         """
-        cursor.execute(query, (exam_id, user_id, paper_id))
+        cursor.execute(query, (exam_id, user_id) if plan else (exam_id, user_id, paper_id))
         rows = cursor.fetchall()
 
         if not rows and persist:
@@ -1296,7 +1315,7 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
                 ],
             )
             conn.commit()
-            cursor.execute(query, (exam_id, user_id, paper_id))
+            cursor.execute(query, (exam_id, user_id) if plan else (exam_id, user_id, paper_id))
             rows = cursor.fetchall()
 
         if not rows:
@@ -1305,7 +1324,7 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
                     'template_id': template_id,
                     'display_number': display_number,
                     'template_name': template_lookup[template_id]['template_name'],
-                    'paper_id': paper_id,
+                    'paper_id': int(template_lookup[template_id]['paper_id']),
                 }
                 for display_number, template_id in enumerate(selected_ids, 1)
             ]
@@ -2088,6 +2107,9 @@ def ensure_seb_exam_schema(cursor):
 
 def ensure_question_lifecycle_schema(cursor):
     """Add non-destructive question versioning and freeze each exam's question pool."""
+    cursor.execute("SHOW COLUMNS FROM exams LIKE 'question_plan'")
+    if not cursor.fetchone():
+        cursor.execute('ALTER TABLE exams ADD COLUMN question_plan LONGTEXT DEFAULT NULL')
     cursor.execute("SHOW COLUMNS FROM problem_templates LIKE 'status'")
     if not cursor.fetchone():
         cursor.execute(
@@ -2131,6 +2153,7 @@ def ensure_question_lifecycle_schema(cursor):
         FROM exams e
         JOIN problem_templates pt ON pt.paper_id = e.paper_id
         WHERE COALESCE(pt.status, 'active') = 'active'
+          AND e.question_plan IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM exam_question_pool existing WHERE existing.exam_id = e.id
           )

@@ -448,6 +448,8 @@ def create_exam_blueprint(deps):
                 )
             response_filter = "COALESCE(r.paper_id, t.paper_id) = %s"
             response_filter_param = selected_paper_id
+            if selected_exam_id:
+                response_filter, response_filter_param = 'r.exam_id = %s', selected_exam_id
     
             # 获取答题记录
             cursor.execute(f"""
@@ -974,7 +976,7 @@ def create_exam_blueprint(deps):
     
             # 保存答题记录 - 使用更新后的累计尝试次数
             save_success, response_ids = save_user_response(
-                user_id, template_id, paper_id, problem_text, user_answers,
+                user_id, template_id, display_mapping[actual_id].get('paper_id', paper_id), problem_text, user_answers,
                 correct_answers, is_correct_list, total_attempts, time_taken, error_types, switch_count, selected_exam_id
             )
     

@@ -123,6 +123,14 @@ class SebEntryRouteTests(unittest.TestCase):
             self.assertEqual(state['current_problem']['total_attempts'],0)
             self.assertEqual(state['current_problem']['token'],'original-token')
 
+    def test_cross_bank_submission_saves_source_bank_instead_of_exam_anchor(self):
+        namespace = self.prepare_submission()
+        self.deps['get_user_exam_problem_display_info'].return_value[200]['paper_id'] = 20
+        response = self.client.post('/api/submit/2', json=dict(answer=4, submission_id='7'*32))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['correct'])
+        self.assertEqual(namespace['save_user_response'].call_args.args[2], 20)
+
     def test_specific_seb_and_exam_time_failures_reach_api_client(self):
         self.prepare_submission()
         self.deps['validate_seb_exam_request'].return_value=(False,'SEB 配置需要更新')

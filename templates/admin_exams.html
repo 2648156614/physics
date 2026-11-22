@@ -20,6 +20,19 @@
 .assign-checkbox-list .form-check-input:checked + .form-check-label {
     font-weight: 600;
 }
+.exam-question-planner {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.exam-question-planner .form-check,
+.exam-question-planner summary {
+    min-height: 44px;
+    cursor: pointer;
+}
+.exam-question-planner .form-check {
+    padding-top: .5rem !important;
+    padding-bottom: .5rem !important;
+}
 </style>
 
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
@@ -54,7 +67,7 @@
                 <h5 class="mb-0"><i class="bi bi-calendar-plus me-2"></i>新建 / 分配考试</h5>
             </div>
             <div class="card-body">
-                <form method="post" action="{{ url_for('admin.admin_create_exam') }}" enctype="multipart/form-data" class="vstack gap-3" data-roster-preview="create_exam">
+                <form method="post" action="{{ url_for('admin.admin_create_exam') }}" enctype="multipart/form-data" class="vstack gap-3" data-roster-preview="create_exam" data-question-planner>
                     <div>
                         <label class="form-label">考试名称</label>
                         <input class="form-control" name="name" required placeholder="例如：2025-2026 学年期末补考">
@@ -166,7 +179,7 @@
                 <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin.admin_exams') }}">关闭</a>
             </div>
             <div class="card-body">
-                <form method="post" action="{{ url_for('admin.admin_update_exam', exam_id=editing_exam.id) }}" enctype="multipart/form-data" class="vstack gap-3" data-roster-preview="update_exam" data-exam-id="{{ editing_exam.id }}">
+                <form method="post" action="{{ url_for('admin.admin_update_exam', exam_id=editing_exam.id) }}" enctype="multipart/form-data" class="vstack gap-3" data-roster-preview="update_exam" data-question-planner data-exam-id="{{ editing_exam.id }}">
                     <div>
                         <label class="form-label">考试名称</label>
                         <input class="form-control" name="name" required value="{{ editing_exam.name }}">
@@ -363,13 +376,14 @@
     </div>
 </div>
 
+<script src="{{ url_for('static', filename='js/exam-question-planner.js', v='1') }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('form').forEach(function (form) {
         const paperSelect = form.querySelector('.exam-paper-select');
         const countInput = form.querySelector('.exam-question-count');
         const hint = form.querySelector('.exam-question-count-hint');
-        if (!paperSelect || !countInput || !hint) return;
+        if (!paperSelect || !countInput || !hint || form.hasAttribute('data-question-planner')) return;
 
         function syncQuestionCount() {
             const option = paperSelect.options[paperSelect.selectedIndex];
@@ -392,6 +406,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const assignValue = document.getElementById(valueInputId);
         const fileWrap = document.getElementById(fileWrapId);
         const fileInput = document.getElementById(fileInputId);
+        if (!assignType || !assignValueWrap || !assignValue || !fileWrap || !fileInput) return;
 
         function syncFields() {
             const isStudent = assignType.value === 'student';

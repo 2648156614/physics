@@ -624,11 +624,11 @@ def create_student_blueprint(deps):
     def render_student_details(user_id, self_view=False):
         """渲染学生答题详情；学生本人视图不接受外部用户或考试范围。"""
 
-        selected_exam_id = None if self_view else request.args.get('exam_id', type=int)
-        selected_batch_id = None if self_view else request.args.get('batch_id', type=int)
+        selected_exam_id = session.get('selected_exam_id') if self_view else request.args.get('exam_id', type=int)
+        selected_batch_id = session.get('selected_exam_batch_id') if self_view else request.args.get('batch_id', type=int)
         if bool(selected_exam_id) != bool(selected_batch_id):
             flash('考试详情参数不完整，请从考试批次页面重新进入。', 'danger')
-            return redirect(url_for('admin.admin_exams'))
+            return redirect(url_for('dashboard') if self_view else url_for('admin.admin_exams'))
 
         exam_scope = None
         selected_paper_id = None
@@ -665,7 +665,7 @@ def create_student_blueprint(deps):
                 exam_scope = cursor.fetchone()
                 if not exam_scope:
                     flash('该学生不属于指定的考试批次。', 'danger')
-                    return redirect(url_for('admin.admin_exam_detail', exam_id=selected_exam_id))
+                    return redirect(url_for('dashboard') if self_view else url_for('admin.admin_exam_detail', exam_id=selected_exam_id))
                 selected_paper_id = int(exam_scope['paper_id'])
                 total_problems = int(
                     exam_scope['question_count']

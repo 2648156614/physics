@@ -27,7 +27,7 @@ class ExamPaperLifecycleTests(unittest.TestCase):
         self.assertIn("e.status = 'published'", query)
         self.assertIn("b.status = 'active'", query)
         self.assertIn('b.end_time > NOW()', query)
-        self.assertEqual(params, (7,))
+        self.assertEqual(params, (7, 7))
 
     def test_finished_exam_allows_paper_close(self):
         cursor = FakeCursor([{'locked': 0}])

@@ -5,7 +5,11 @@ def paper_has_unfinished_exam(cursor, paper_id):
         SELECT EXISTS(
             SELECT 1
             FROM exams e
-            WHERE e.paper_id = %s
+            WHERE (e.paper_id = %s OR EXISTS (
+                SELECT 1 FROM exam_question_pool qp
+                JOIN problem_templates pt ON pt.id = qp.template_id
+                WHERE qp.exam_id = e.id AND pt.paper_id = %s
+            ))
               AND e.status = 'published'
               AND (
                   EXISTS(
@@ -26,7 +30,7 @@ def paper_has_unfinished_exam(cursor, paper_id):
             LIMIT 1
         ) AS locked
         """,
-        (paper_id,),
+        (paper_id, paper_id),
     )
     return bool((cursor.fetchone() or {}).get('locked'))
 

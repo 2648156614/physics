@@ -1,4 +1,5 @@
-﻿from flask import Blueprint
+﻿from flask import Blueprint, g
+from services.exam_question_plan_service import describe_plan, normalize_plan, plan_count, public_plan
 
 
 import io
@@ -27,6 +28,43 @@ from services.seb_exam_service import normalize_config_key, parse_checkbox, rota
 def create_admin_blueprint(deps):
     globals().update(deps)
     bp = Blueprint('admin', __name__)
+
+    @bp.route('/admin/exams/question-options')
+    @login_required
+    def exam_question_options():
+        if session.get('username') != 'admin':
+            return jsonify(success=False, message='权限不足'), 403
+        exam_id = request.args.get('exam_id', type=int)
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute("SELECT id, name, is_enabled FROM exam_papers ORDER BY id")
+            papers = cursor.fetchall()
+            cursor.execute("SELECT id, paper_id, template_name FROM problem_templates WHERE COALESCE(status, 'active') = 'active' ORDER BY paper_id, id")
+            questions = cursor.fetchall()
+            selected, locked, has_plan = None, False, False
+            if exam_id:
+                cursor.execute('SELECT * FROM exams WHERE id = %s', (exam_id,))
+                exam = cursor.fetchone()
+                if not exam:
+                    return jsonify(success=False, message='考试不存在'), 404
+                cursor.execute('SELECT (EXISTS(SELECT 1 FROM exam_user_questions WHERE exam_id = %s) OR EXISTS(SELECT 1 FROM user_responses WHERE exam_id = %s)) AS started', (exam_id, exam_id))
+                locked = bool((cursor.fetchone() or {}).get('started'))
+                has_plan = bool(exam.get('question_plan'))
+                selected = public_plan(exam.get('question_plan')) if exam.get('question_plan') else [dict(paper_id=exam['paper_id'], mandatory_ids=[], random_count=(exam['question_count'] if exam.get('question_count') is not None else get_exam_question_pool_count(exam_id,exam['paper_id'])))]
+                if locked or has_plan:
+                    cursor.execute('''
+                        SELECT pt.id, pt.paper_id, pt.template_name
+                        FROM exam_question_pool qp
+                        JOIN problem_templates pt ON pt.id = qp.template_id
+                        WHERE qp.exam_id = %s ORDER BY pt.paper_id, pt.id
+                    ''', (exam_id,))
+                    known = {row['id'] for row in questions}
+                    questions.extend(row for row in cursor.fetchall() if row['id'] not in known)
+            return jsonify(success=True, papers=papers, questions=questions, selected=selected, locked=locked, has_plan=has_plan)
+        finally:
+            cursor.close()
+            conn.close()
 
     @bp.route('/admin/seb/settings', methods=['POST'])
     @login_required
@@ -111,7 +149,7 @@ def create_admin_blueprint(deps):
                     SELECT
                         b.id AS batch_id, b.exam_id, b.name AS batch_name,
                         b.start_time, b.end_time,
-                        e.name AS exam_name, e.question_count, e.seb_required,
+                        e.name AS exam_name, e.question_count, e.seb_required, e.question_plan,
                         ep.name AS paper_name, ep.is_enabled AS paper_enabled,
                         (
                             SELECT COUNT(*)
@@ -160,6 +198,8 @@ def create_admin_blueprint(deps):
                 conn.close()
 
             for batch in schedule_rows:
+                if batch.get('question_plan'):
+                    batch['paper_name'] = describe_plan(batch['question_plan'])
                 batch['student_count'] = int(batch.get('student_count') or 0)
                 batch['entered_count'] = int(batch.get('entered_count') or 0)
                 batch['available_question_count'] = int(batch.get('available_question_count') or 0)
@@ -283,6 +323,10 @@ def create_admin_blueprint(deps):
 
 
     def _finish_auto_enabled_paper(paper_id, auto_enabled):
+        for selected in (getattr(g, 'exam_question_plan', None) or []):
+            if selected['paper_id'] != paper_id:
+                invalidate_exam_paper_cache(selected['paper_id'])
+                schedule_exam_paper_prewarm(selected['paper_id'])
         if not auto_enabled:
             return
         invalidate_exam_paper_cache(paper_id)
@@ -1147,6 +1191,15 @@ def create_admin_blueprint(deps):
         name = (request.form.get('name') or '').strip()
         paper_id = request.form.get('paper_id', type=int)
         question_count = request.form.get('question_count', type=int)
+        try:
+            raw_plan = request.form.get('question_plan')
+            plan = normalize_plan(raw_plan, lambda pid:get_problem_templates_by_paper(pid, enabled_only=False)) if raw_plan else None
+            g.exam_question_plan = plan
+            if plan:
+                paper_id, question_count = plan[0]['paper_id'], plan_count(plan)
+        except ValueError as error:
+            flash(str(error), 'danger')
+            return redirect(url_for('admin.admin_exams'))
         exam_type = (request.form.get('exam_type') or 'normal').strip()
         assign_type = (request.form.get('assign_type') or '').strip()
         assign_values = [
@@ -1169,6 +1222,8 @@ def create_admin_blueprint(deps):
         available_question_count = len(
             get_problem_templates_by_paper(paper_id, enabled_only=False)
         ) if paper_id else 0
+        if plan:
+            available_question_count = sum(len(row['pool_ids']) for row in plan)
         if not name or not paper_id or not question_count:
             flash('请填写考试名称、选择题库并设置抽题数量。', 'danger')
             return redirect(url_for('admin.admin_exams'))
@@ -1351,6 +1406,18 @@ def create_admin_blueprint(deps):
         name = (request.form.get('name') or '').strip()
         paper_id = request.form.get('paper_id', type=int)
         question_count = request.form.get('question_count', type=int)
+        try:
+            raw_plan = request.form.get('question_plan')
+            prior_plan = existing_exam.get('question_plan')
+            if prior_plan and not raw_plan:
+                raise ValueError('请刷新页面，加载当前多题库选题方案后保存')
+            plan = normalize_plan(raw_plan, lambda pid:get_problem_templates_by_paper(pid, enabled_only=False), prior_plan) if raw_plan else None
+            g.exam_question_plan = plan
+            if plan:
+                paper_id, question_count = plan[0]['paper_id'], plan_count(plan)
+        except ValueError as error:
+            flash(str(error), 'danger')
+            return redirect(url_for('admin.admin_exams'))
         exam_type = (request.form.get('exam_type') or 'normal').strip()
         assign_type = (request.form.get('assign_type') or '').strip()
         assign_values = [
@@ -1376,6 +1443,8 @@ def create_admin_blueprint(deps):
         available_question_count = len(
             get_problem_templates_by_paper(paper_id, enabled_only=False)
         ) if paper_id else 0
+        if plan:
+            available_question_count = sum(len(row['pool_ids']) for row in plan)
         if not name or not paper_id or not question_count:
             flash('请填写考试名称、选择题库并设置抽题数量。', 'danger')
             return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
@@ -1463,7 +1532,8 @@ def create_admin_blueprint(deps):
                 stored_question_count = question_count
             question_config_changed = (
                 int(existing_exam['paper_id']) != paper_id or
-                old_question_count != stored_question_count
+                old_question_count != stored_question_count or
+                public_plan(existing_exam.get('question_plan')) != public_plan(plan)
             )
             if question_config_changed:
                 cursor.execute(
