@@ -7,7 +7,7 @@
     try {original=JSON.parse(strategy.value||'{}');}catch(_){}
     const section=document.createElement('section');
     section.className='border rounded p-3 mb-3';
-    section.innerHTML='<label class="form-label">题型<select name="question_type" class="form-select"><option value="calculation">计算题</option><option value="single_choice">单选题</option><option value="multiple_choice">多选题</option></select></label><div data-choice-editor><label class="form-label d-block">选项数量<select name="choice_count" class="form-select"></select></label><p>勾选正确答案。单选题选一个，多选题选多个。每个选项可填写文字或上传图片。</p><div data-choice-options></div><button type="button" class="btn btn-outline-secondary" data-choice-preview>预览选择题</button><div data-choice-preview-body class="mt-3"></div></div>';
+    section.innerHTML='<label class="form-label">题型<select name="question_type" class="form-select"><option value="calculation">计算题</option><option value="single_choice">单选题</option><option value="multiple_choice">多选题</option></select></label><div data-choice-editor><label class="form-label d-block">选项数量<select name="choice_count" class="form-select"></select></label><p>勾选正确答案。单选题选一个，多选题选多个。把完整题目文字或整题图片放在题目内容里，下方选项文字和图片均可不填，只需勾选正确答案。也可按需单独填写各选项。题目名称留空时自动生成。</p><div data-choice-options></div><button type="button" class="btn btn-outline-secondary" data-choice-preview>预览选择题</button><div data-choice-preview-body class="mt-3"></div></div>';
     form.prepend(section);
     const type=section.querySelector('[name=question_type]');
     const count=section.querySelector('[name=choice_count]');
@@ -26,6 +26,7 @@
         const choice=type.value!=='calculation';
         section.querySelector('[data-choice-editor]').hidden=!choice;
         form.querySelector('[name=problem_text]').required=!choice;
+        form.querySelector('[name=template_name]').required=!choice;
         for(const name of numericNames){const field=form.querySelector(`[name="${name}"]`);if(field){const wrap=field.closest('.mb-3')||field.parentElement;wrap.hidden=choice;field.disabled=choice;}}
         for(const row of options.children){row.hidden=Number(row.dataset.index)>Number(count.value);row.querySelectorAll('input,textarea').forEach(el=>el.disabled=!choice||row.hidden);}
         if(!choice&&original.mode==='choice_v1'&&strategy.value.includes('choice_v1'))strategy.value='';

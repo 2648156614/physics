@@ -1,6 +1,7 @@
 """Fixed choice questions, independent of numeric formula generation and tolerance."""
 import html
 import json
+import re
 
 CHOICE_TYPES = ('single_choice', 'multiple_choice')
 
@@ -24,7 +25,7 @@ def choice_definition(strategy):
     for option in options:
         if not isinstance(option.get('text', ''), str) or not isinstance(option.get('image_filename', ''), str):
             raise ValueError('选项内容格式无效')
-        if not option.get('text', '').strip() and not option.get('image_filename'):
+        if not option.get('text', '').strip() and not option.get('image_filename') and strategy.get('options_in_stem') is not True:
             raise ValueError('每个选项至少填写文字或上传图片')
         if len(option.get('text', '')) > 1000:
             raise ValueError('每个选项文字请控制在 1000 字以内')
@@ -36,6 +37,14 @@ def choice_definition(strategy):
     if kind == 'single_choice' and len(answers) != 1:
         raise ValueError('单选题只能设置一个正确答案')
     return strategy
+
+
+def validate_choice_stem(strategy, problem_text):
+    definition = choice_definition(strategy)
+    if definition and definition.get('options_in_stem'):
+        text = re.sub(r'<[^>]+>', '', problem_text or '').replace('&nbsp;', '').strip()
+        if not text and not re.search(r'<img\b', problem_text or '', re.I):
+            raise ValueError('请填写完整题目文字或插入整题图片')
 
 
 def encode_selection(ids):
@@ -65,6 +74,7 @@ def grade_selection(problem, submitted):
 
 
 def generate_choice_problem(template, definition, calculation_version):
+    validate_choice_stem(definition, template['problem_text'])
     options = definition['options']
     kind = definition['question_type']
     snapshot = f'<div class="choice-options-snapshot" data-choice-question="{kind}">'

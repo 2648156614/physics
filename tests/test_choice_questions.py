@@ -19,6 +19,41 @@ def definition(kind='multiple_choice'):
 
 
 class ChoiceTests(unittest.TestCase):
+    def test_whole_question_image_allows_empty_option_contents(self):
+        fixture=author_tests.AuthoringValidationTests();fixture.setUp()
+        fixture.cursor.lastrowid=28
+        fixture.app.view_functions['question.admin_add_problem'].__globals__['save_uploaded_file']=Mock(return_value='whole-question.png')
+        response=fixture.client.post('/admin/add_problem',data=dict(template_name='整题图片',problem_text='',
+            question_type='single_choice',choice_count='4',choice_correct='3',paper_id='1',
+            problem_image=(io.BytesIO(b'fixture'),'whole-question.png')))
+        self.assertEqual(response.status_code,302)
+        fixture.conn.commit.assert_called_once()
+        insert=next(c for c in fixture.cursor.execute.call_args_list if 'INSERT INTO problem_templates' in c.args[0])
+        d=json.loads(insert.args[1][-1])
+        self.assertTrue(d['options_in_stem'])
+        problem=generate_choice_problem(dict(id=1,template_name='整题图片',problem_text=insert.args[1][1]),d,2)
+        self.assertEqual([o['id'] for o in problem['choice_options']],[1,2,3,4])
+        self.assertTrue(grade_selection(problem,[3])[1])
+
+    def test_empty_options_without_whole_question_image_still_fail(self):
+        d=definition();d['options']=[dict(id=i,text='') for i in range(1,5)]
+        with self.assertRaises(ValueError):choice_definition(d)
+        d['options_in_stem']=True
+        with self.assertRaises(ValueError):generate_choice_problem(dict(id=1,template_name='missing image',problem_text='<p> </p>'),d,2)
+
+    def test_whole_text_question_needs_only_correct_selection(self):
+        fixture=author_tests.AuthoringValidationTests();fixture.setUp()
+        fixture.cursor.lastrowid=28
+        response=fixture.client.post('/admin/add_problem',data=dict(template_name='',
+            problem_text='哪项正确？\nA. 甲\nB. 乙\nC. 丙\nD. 丁',question_type='multiple_choice',
+            choice_count='4',choice_correct=['1','3'],paper_id='1'))
+        self.assertEqual(response.status_code,302)
+        fixture.conn.commit.assert_called_once()
+        insert=next(c for c in fixture.cursor.execute.call_args_list if 'INSERT INTO problem_templates' in c.args[0])
+        self.assertTrue(insert.args[1][0])
+        d=json.loads(insert.args[1][-1]);self.assertTrue(d['options_in_stem'])
+        self.assertEqual(d['correct_ids'],[1,3])
+
     def problem(self, kind='multiple_choice'):
         return generate_choice_problem(dict(id=200, template_name='选择题', problem_text='<p>选择正确选项</p>'), definition(kind), 2)
 

@@ -1,4 +1,4 @@
-from services.choice_question_service import choice_definition
+from services.choice_question_service import choice_definition, validate_choice_stem
 import os
 import re
 from html import escape
@@ -148,6 +148,11 @@ def create_question_blueprint(deps):
         except ValueError:
             raise ValueError('正确选项格式无效')
         definition = dict(mode='choice_v1', question_type=kind, options=options, correct_ids=answers)
+        # A whole-question image already contains the option contents. Keep stable
+        # option IDs for grading without requiring the teacher to transcribe it.
+        if all(not o['text'] and not o['image_filename'] for o in options) and (
+                stem or (image and image.filename) or request.form.get('current_image')):
+            definition['options_in_stem'] = True
         choice_definition(definition)
         return json.dumps(definition, ensure_ascii=False)
 
@@ -431,6 +436,7 @@ def create_question_blueprint(deps):
                 if final_image_filename:
                     problem_text = build_problem_image_html(final_image_filename, template_name) + strip_problem_image_html(problem_text)
     
+                validate_choice_stem(item.get('generation_strategy'), problem_text)
                 cursor.execute(
                     """
                     INSERT INTO problem_templates
@@ -484,6 +490,8 @@ def create_question_blueprint(deps):
                 template_name = request.form['template_name']
                 problem_text = request.form['problem_text']
                 choice_strategy = _choice_form_strategy()
+                if choice_strategy and not template_name.strip():
+                    template_name = re.sub(r'<[^>]+>', '', problem_text).strip()[:40] or '图片选择题'
                 variables = '' if choice_strategy else question_generation_service.normalize_variable_specs(request.form['variables'])
                 solution_formula = '0' if choice_strategy else request.form['solution_formula']
                 problem_text = question_generation_service.normalize_problem_placeholders(problem_text)
@@ -516,6 +524,7 @@ def create_question_blueprint(deps):
                         if image_filename:
                             problem_text = build_problem_image_html(image_filename, template_name) + strip_problem_image_html(problem_text)
     
+                validate_choice_stem(generation_strategy, problem_text)
                 conn = get_db_connection()
                 cursor = conn.cursor()
     
@@ -635,6 +644,8 @@ def create_question_blueprint(deps):
                 template_name = request.form['template_name']
                 problem_text = request.form['problem_text']
                 choice_strategy = _choice_form_strategy()
+                if choice_strategy and not template_name.strip():
+                    template_name = re.sub(r'<[^>]+>', '', problem_text).strip()[:40] or '图片选择题'
                 variables = '' if choice_strategy else question_generation_service.normalize_variable_specs(request.form['variables'])
                 solution_formula = '0' if choice_strategy else request.form['solution_formula']
                 problem_text = question_generation_service.normalize_problem_placeholders(problem_text)
@@ -682,6 +693,7 @@ def create_question_blueprint(deps):
                 if image_filename:
                     problem_text = build_problem_image_html(image_filename, template_name) + strip_problem_image_html(problem_text)
     
+                validate_choice_stem(generation_strategy, problem_text)
                 creates_new_version = _template_is_referenced(cursor, template_id)
                 if creates_new_version:
                     version_parent_id = existing_template.get('version_parent_id') or template_id
