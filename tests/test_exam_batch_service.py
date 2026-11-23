@@ -21,6 +21,14 @@ def classify(**overrides):
 
 
 class ExamBatchStatusTests(unittest.TestCase):
+    def test_submission_is_independent_of_score_and_missing_answers(self):
+        for correct in [0,3,8]:
+            self.assertEqual(classify(entered=True,completed_count=correct,submitted=True),'completed')
+            self.assertEqual(classify(entered=True,completed_count=correct,submitted=True,grading_pending=True),'grading_pending')
+
+    def test_all_correct_is_not_an_implicit_hand_in(self):
+        self.assertEqual(classify(entered=True,completed_count=8),'in_progress')
+
     def test_unopened_and_not_started_students_are_distinguished(self):
         self.assertEqual(classify(start_time=NOW + timedelta(minutes=1)), 'not_open')
         self.assertEqual(classify(start_time=None), 'not_started')
@@ -30,7 +38,7 @@ class ExamBatchStatusTests(unittest.TestCase):
 
     def test_completed_status_has_priority_at_or_after_end(self):
         self.assertEqual(
-            classify(entered=True, completed_count=8, end_time=NOW),
+            classify(entered=True, completed_count=8, end_time=NOW, submitted=True),
             'completed',
         )
 

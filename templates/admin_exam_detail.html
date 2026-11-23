@@ -80,9 +80,10 @@
 <section class="border-top border-bottom py-3 mb-4">
     <div class="exam-summary-grid">
         <div class="summary-item"><div class="text-muted small">批次名单人数（含历史）</div><strong>{{ total_students }}</strong></div>
-        <div class="summary-item"><div class="text-muted small">已完成</div><strong class="text-success">{{ status_counts.completed }}</strong></div>
+        <div class="summary-item"><div class="text-muted small">已交卷</div><strong class="text-success">{{ status_counts.completed + status_counts.grading_pending }}</strong></div>
         <div class="summary-item"><div class="text-muted small">答题中</div><strong class="text-primary">{{ status_counts.in_progress }}</strong></div>
-        <div class="summary-item"><div class="text-muted small">未完成/缺考</div><strong class="text-danger">{{ status_counts.ended_incomplete + status_counts.absent }}</strong></div>
+        <div class="summary-item"><div class="text-muted small">已结束（未记录交卷）</div><strong>{{ status_counts.ended_incomplete }}</strong></div>
+        <div class="summary-item"><div class="text-muted small">缺考</div><strong class="text-danger">{{ status_counts.absent }}</strong></div>
     </div>
 </section>
 
@@ -272,7 +273,7 @@
     <div class="student-table-scroll">
         <table class="table table-hover align-middle mb-0 student-table">
             <thead>
-                <tr><th>学号</th><th>姓名</th><th>班级</th><th>专业</th><th>课程号</th><th>状态</th><th>完成题数</th><th>正确率</th><th>最后作答</th></tr>
+                <tr><th>学号</th><th>姓名</th><th>班级</th><th>专业</th><th>课程号</th><th>状态</th><th>已作答题数</th><th>已答对题数</th><th>正确率（已判分）</th><th>最后作答</th></tr>
             </thead>
             <tbody>
                 {% for student in students %}
@@ -283,12 +284,13 @@
                     <td>{{ student.major or '-' }}</td>
                     <td>{{ student.teacher_name or '-' }}</td>
                     <td><span class="badge {{ 'bg-success' if student.exam_status == 'completed' else 'bg-primary' if student.exam_status == 'in_progress' else 'bg-danger' if student.exam_status in ['absent', 'ended_incomplete'] else 'bg-secondary' }}">{{ student.exam_status_label }}</span></td>
+                    <td>{{ student.answered_count or 0 }}/{{ total_problems }}</td>
                     <td>{{ student.completed_count }}/{{ total_problems }}</td>
                     <td>{% if student.accuracy is not none %}{{ student.accuracy }}%{% else %}-{% endif %}</td>
                     <td>{{ student.last_response_time.strftime('%m-%d %H:%M') if student.last_response_time else '-' }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="9" class="text-center text-muted py-4">当前筛选条件下没有学生</td></tr>
+                <tr><td colspan="10" class="text-center text-muted py-4">当前筛选条件下没有学生</td></tr>
                 {% endfor %}
             </tbody>
         </table>

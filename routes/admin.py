@@ -822,9 +822,25 @@ def create_admin_blueprint(deps):
                            COALESCE(c.completed_count, 0) AS completed_count,
                            COALESCE(r.answer_rows, 0) AS answer_rows,
                            COALESCE(r.correct_rows, 0) AS correct_rows,
-                           r.first_response_time, r.last_response_time
+                           r.first_response_time, r.last_response_time,
+                           (COALESCE(cs.submitted,FALSE) OR sec.exit_confirmed_at IS NOT NULL) AS submitted,
+                           (gd.exam_id IS NOT NULL) AS grading_done,
+                           EXISTS(SELECT 1 FROM exam_user_questions cq
+                               JOIN problem_templates ct ON ct.id=cq.template_id
+                               WHERE cq.exam_id=s.exam_id AND cq.user_id=s.user_id
+                               AND ct.generation_strategy LIKE '%choice_v1%') AS has_choices,
+                           (SELECT COUNT(*) FROM exam_user_questions aq
+                               WHERE aq.exam_id=s.exam_id AND aq.user_id=s.user_id
+                               AND (EXISTS(SELECT 1 FROM user_responses ar
+                                   WHERE ar.exam_id=aq.exam_id AND ar.user_id=aq.user_id AND ar.template_id=aq.template_id
+                                   AND NOT(ar.user_answer=0 AND COALESCE(ar.problem_text,'') LIKE '%data-choice-question=%'))
+                               OR EXISTS(SELECT 1 FROM exam_choice_drafts ad
+                                   WHERE ad.exam_id=aq.exam_id AND ad.user_id=aq.user_id AND ad.template_id=aq.template_id))) AS answered_count
                     FROM exam_batch_students s
                     JOIN users u ON u.id = s.user_id
+                    LEFT JOIN exam_choice_sessions cs ON cs.exam_id=s.exam_id AND cs.user_id=s.user_id
+                    LEFT JOIN exam_grading_done gd ON gd.exam_id=s.exam_id AND gd.user_id=s.user_id
+                    LEFT JOIN exam_secure_sessions sec ON sec.exam_id=s.exam_id AND sec.user_id=s.user_id
                     LEFT JOIN (
                         SELECT user_id, COUNT(*) AS entered_count
                         FROM exam_user_questions
@@ -887,6 +903,8 @@ def create_admin_blueprint(deps):
                 start_time=selected_batch.get('start_time') if selected_batch else None,
                 end_time=selected_batch.get('end_time') if selected_batch else None,
                 now=now,
+                submitted=bool(student.get('submitted')),
+                grading_pending=bool(student.get('has_choices')) and not bool(student.get('grading_done')),
             )
             if not student.get('is_active', True):
                 status = 'removed'
