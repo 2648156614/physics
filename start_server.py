@@ -12,6 +12,9 @@ from app import (
     repair_database,
     prewarm_pools,
     get_upload_folder_path,
+    get_db_connection,
+    update_user_completion_status,
+    clear_exam_metadata_cache,
 )
 
 
@@ -84,6 +87,11 @@ if __name__ == '__main__':
 
         # 生产环境使用 Waitress
         from waitress import serve
+        from services.exam_auto_submit_service import start_worker
+        def after_auto_submit(user_id, exam_id):
+            update_user_completion_status(user_id, exam_id)
+        start_worker(get_db_connection, after_auto_submit,
+                     pause_seconds=get_int_env("AUTO_GRADING_PAUSE_MS",250)/1000)
 
         print("🎯 服务器配置信息:")
         print(f"   - 节点: {INSTANCE_ID} ({DEPLOYMENT_ROLE})")

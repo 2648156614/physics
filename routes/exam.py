@@ -930,7 +930,7 @@ def create_exam_blueprint(deps):
                 except ValueError as error:
                     return jsonify(success=False, saved=False, message=str(error)), 400
                 return jsonify(success=True, saved=True, choice_saved=True,
-                               message='答案已保存，可继续修改；交卷后统一判分。', selected_ids=selected,
+                               message='答案已保存。', selected_ids=selected,
                                next_problem=(problem_id+1 if problem_id<total_problems else None))
 
             # 如果题目已完成，阻止重复作答
@@ -1163,9 +1163,8 @@ def create_exam_blueprint(deps):
         if not any(info.get('is_choice') for info in mapping.values()):
             return jsonify(success=False, message='当前考试沿用原有完成流程'), 400
         try:
-            choice_exam_service.hand_in(get_db_connection, exam_id, session['user_id'])
+            choice_exam_service.lock_answers(get_db_connection, exam_id, session['user_id'])
             clear_exam_metadata_cache()
-            update_user_completion_status(session['user_id'], exam_id)
         except ValueError as error:
             return jsonify(success=False, message=str(error)), 400
         return jsonify(success=True, message='已交卷，选择题答案已锁定。')
@@ -1211,8 +1210,7 @@ def create_exam_blueprint(deps):
         if current_problem_state.get('display_number') != len(display_mapping):
             return jsonify({'success': False, 'message': '请先进入最后一题页面再确认完成。'}), 400
         if any(info.get('is_choice') for info in display_mapping.values()):
-            choice_exam_service.hand_in(get_db_connection, exam_id, session['user_id'])
-            update_user_completion_status(session['user_id'], exam_id)
+            choice_exam_service.lock_answers(get_db_connection, exam_id, session['user_id'])
         saved, summary = finish_secure_exam_session(
             session['user_id'],
             exam_id,

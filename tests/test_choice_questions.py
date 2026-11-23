@@ -143,7 +143,7 @@ class ChoiceTests(unittest.TestCase):
         with fixture.client.session_transaction() as state:state['selected_exam_id']=9
         fixture.deps['get_user_exam_problem_display_info'].return_value[200]['is_choice']=True
         ns['get_db_connection']=Mock();ns['clear_exam_metadata_cache']=Mock()
-        with patch.object(choice_exam_service,'hand_in') as hand_in:
+        with patch.object(choice_exam_service,'lock_answers') as hand_in:
             response=fixture.client.post('/api/exam/hand-in')
             self.assertEqual(response.status_code,200)
             hand_in.assert_called_once_with(ns['get_db_connection'],9,25)

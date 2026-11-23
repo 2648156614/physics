@@ -21,7 +21,7 @@ with app.test_request_context('/problem_ajax/4'):
  session.update(user_id=1,username='fixture')
  if count==5:
   print(render_template('admin_add_problem.html',exam_papers=[dict(id=1,name='fixture')],selected_paper_id=1));sys.exit(0)
- print(render_template('problem_ajax.html',problem=dict(template_name='科学计数法输入检查',problem_text='<p>请计算题目中各物理量，按顺序填写答案。</p>',answer_units=['m/s','m/s','cm'][:count] if count<=3 else ['N/C']*count,correct_answers=[5],var_values={},var_units={},question_type=('single_choice' if count==1 else 'multiple_choice'),exam_has_choices=True,exam_submitted=data.get('completed',False),selected_ids=([2] if data.get('completed') else []),choice_options=[dict(id=i,text='选项 '+str(i),image_filename=('fixture.png' if i==1 else '')) for i in range(1,5)]),answer_count=count,problem_id=4,total_problems=5,total_attempts=0,display_mapping={},display_to_actual={},is_completed=data.get('completed',False),seb_required=False,resumed_problem_url=None))
+ print(render_template('problem_ajax.html',problem=dict(template_name='科学计数法输入检查',problem_text='<p>请计算题目中各物理量，按顺序填写答案。</p>',answer_units=['m/s','m/s','cm'][:count] if count<=3 else ['N/C']*count,correct_answers=[5],var_values={},var_units={},question_type=('single_choice' if count==1 else 'multiple_choice'),exam_has_choices=True,exam_submitted=data.get('completed',False),selected_ids=([2] if data.get('completed') else []),choice_options=[dict(id=i,text='选项 '+str(i),image_filename=('fixture.png' if i==1 else '')) for i in range(1,5)]),answer_count=count,problem_id=4,total_problems=4,total_attempts=0,display_mapping={},display_to_actual={},is_completed=data.get('completed',False),seb_required=False,resumed_problem_url=None))
 `;
 const cache = new Map();
 function render(count, completed=false) {
@@ -58,10 +58,14 @@ async function scenario(browser,width,count){
  await page.evaluate(()=>disableInputs());assert(await page.locator('[name=choice-answer]').first().isDisabled());await page.evaluate(()=>enableInputs());
  await page.locator('#submit-btn').click();await page.waitForTimeout(1200);assert.deepEqual(payload.selected_ids,expected);
  assert.deepEqual(await page.evaluate(()=>getAnswerData().selected_ids),expected);
+ await page.locator('#message-area .btn-close').last().click();
  await page.locator('#submit-btn').click();await page.waitForTimeout(800);
  assert.equal(await page.locator('[name=choice-answer]').first().isDisabled(),false);
+ assert.equal(await page.evaluate(()=>getCurrentAnswer()),false);
+ assert(!(await page.locator('body').textContent()).includes('选择题先保存'));
  assert.equal(await page.locator('#submit-btn').textContent(),'保存答案');
  assert.equal(await page.locator('#next-btn').isVisible(),true);
+ await page.locator('#message-area .btn-close').last().click();
  await page.locator('#hand-in-btn').click();await page.waitForFunction(()=>document.getElementById('hand-in-btn')?.textContent==='已交卷');
  assert(await page.locator('[name=choice-answer]').first().isDisabled());
  assert(await page.locator('[name=choice-answer][value="2"]').isChecked());

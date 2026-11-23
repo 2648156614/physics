@@ -264,12 +264,6 @@
                     </section>
 
                     <section class="answer-pane" aria-label="答题区">
-                {% if problem.get('exam_has_choices') %}
-                <div class="border rounded p-3 mb-3">
-                    <span>选择题先保存，交卷后判分；计算题保持原有答题规则。</span>
-                    <button type="button" class="btn btn-dark mt-2" id="hand-in-btn" {% if problem.get('exam_submitted') %}disabled{% endif %}>{{ '已交卷' if problem.get('exam_submitted') else '交卷并锁定答案' }}</button>
-                </div>
-                {% endif %}
                 <form id="answer-form" data-managed-submit="true" novalidate>
                     <div class="answer-toolbar">
                         <h3 class="answer-heading"><i class="bi bi-pencil-fill me-2" aria-hidden="true"></i>请输入答案</h3>
@@ -338,6 +332,11 @@
                             <i class="bi bi-arrow-clockwise me-1"></i> 刷新题目
                         </button>
                     </div>
+                    {% if problem.get('exam_has_choices') and not seb_required and problem_id == total_problems %}
+                    <div class="border-top pt-3 mt-3 text-end">
+                        <button type="button" class="btn btn-dark" id="hand-in-btn" {% if problem.get('exam_submitted') %}disabled{% endif %}>{{ '已交卷' if problem.get('exam_submitted') else '提交试卷' }}</button>
+                    </div>
+                    {% endif %}
                     {% if seb_required and problem_id == total_problems %}
                     <div class="secure-finish-panel" id="secure-finish-panel">
                         <div>
@@ -345,7 +344,7 @@
                             <div class="secure-finish-note">无论本题是否答对，都可以确认完成并退出安全考试。</div>
                         </div>
                         <button type="button" class="btn btn-outline-dark" id="secure-finish-btn">
-                            确认完成并退出
+                            {{ '提交试卷并退出' if problem.get('exam_has_choices') else '确认完成并退出' }}
                         </button>
                     </div>
                     {% endif %}
@@ -366,7 +365,7 @@
                     <div class="modal-body">
                         <p class="mb-2" id="secure-finish-summary">正在核对答题进度...</p>
                         <div class="alert alert-warning mb-0" id="secure-finish-warning" hidden>
-                            仍有题目未完成。选择题按已保存、计算题按已答对统计。确认交卷后不能修改答案。
+                            仍有题目未完成，请检查后再交卷。交卷后不能修改答案。
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -1417,6 +1416,7 @@ async function updateProblemParameters(newVarValues, newCorrectAnswers, newProbl
 
 // 获取当前输入的答案
 function getCurrentAnswer() {
+    if (isChoiceQuestion) return !examSubmitted && !choiceLocked && JSON.stringify(scientificAnswers.selected()) !== choiceSavedSelection;
     return scientificAnswers.hasInput();
 }
 

@@ -11,6 +11,11 @@ def ensure_schema(cursor):
         exam_id INT NOT NULL, user_id INT NOT NULL, template_id INT NOT NULL,
         selected_ids TEXT NOT NULL, time_taken DOUBLE NOT NULL DEFAULT 0,
         PRIMARY KEY (exam_id,user_id,template_id))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS exam_auto_submit_settings (
+        id INT PRIMARY KEY, enabled_after DATETIME NOT NULL)''')
+    cursor.execute('INSERT IGNORE INTO exam_auto_submit_settings (id,enabled_after) VALUES (1,CURRENT_TIMESTAMP)')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS exam_grading_done (
+        exam_id INT NOT NULL,user_id INT NOT NULL,PRIMARY KEY(exam_id,user_id))''')
 
 
 def state(connect, exam_id, user_id):
@@ -47,11 +52,24 @@ def save_draft(connect, exam_id, user_id, template_id, selected, elapsed):
         cur.close();conn.close()
 
 
-def hand_in(connect, exam_id, user_id):
+def hand_in(connect, exam_id, user_id, only_if_expired=False):
     conn=connect();cur=conn.cursor(dictionary=True)
     try:
-        if lock_session(cur,exam_id,user_id):
-            conn.commit();return
+        already_locked=lock_session(cur,exam_id,user_id)
+        cur.execute('SELECT exam_id FROM exam_grading_done WHERE exam_id=%s AND user_id=%s',(exam_id,user_id))
+        if cur.fetchone():
+            conn.commit();return True
+        if only_if_expired:
+            cur.execute('''SELECT e.id FROM exams e
+                JOIN exam_batch_students s ON s.exam_id=e.id
+                JOIN exam_batches b ON b.id=s.batch_id AND b.exam_id=e.id
+                JOIN exam_auto_submit_settings cfg ON cfg.id=1
+                WHERE e.id=%s AND s.user_id=%s AND s.is_active=TRUE
+                  AND e.status='published' AND b.status='active'
+                  AND COALESCE(b.end_time,e.end_time)>=cfg.enabled_after
+                  AND COALESCE(b.end_time,e.end_time)<=CURRENT_TIMESTAMP FOR UPDATE''',(exam_id,user_id))
+            if not cur.fetchone():
+                conn.rollback();return False
         cur.execute('''SELECT pt.*, q.batch_id FROM exam_user_questions q
             JOIN problem_templates pt ON pt.id=q.template_id
             WHERE q.exam_id=%s AND q.user_id=%s ORDER BY q.display_number''',(exam_id,user_id))
@@ -67,7 +85,7 @@ def hand_in(connect, exam_id, user_id):
             # Preserve legacy graded answers if the student never created a draft.
             cur.execute('SELECT 1 AS found FROM user_responses WHERE exam_id=%s AND user_id=%s AND template_id=%s LIMIT 1',(exam_id,user_id,template['id']))
             existing = cur.fetchone()
-            if not draft and existing:continue
+            if existing and (already_locked or not draft):continue
             cur.fetchall()  # consume buffered/unbuffered cursor results
             selected=json.loads(draft['selected_ids']) if draft else []
             value=encode_selection(selected)
@@ -81,6 +99,21 @@ def hand_in(connect, exam_id, user_id):
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,0,%s,0,%s,%s)''',
                 (user_id,template['id'],problem['problem_text'],value,correct,value==correct,attempt,
                  draft['time_taken'] if draft else 0,template['paper_id'],exam_id,template['batch_id']))
+        cur.execute('UPDATE exam_choice_sessions SET submitted=TRUE WHERE exam_id=%s AND user_id=%s',(exam_id,user_id))
+        cur.execute('INSERT IGNORE INTO exam_grading_done (exam_id,user_id) VALUES (%s,%s)',(exam_id,user_id))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback();raise
+    finally:
+        cur.close();conn.close()
+
+
+def lock_answers(connect, exam_id, user_id):
+    """Manual hand-in closes editing without doing grading work on the request."""
+    conn=connect();cur=conn.cursor(dictionary=True)
+    try:
+        lock_session(cur,exam_id,user_id)
         cur.execute('UPDATE exam_choice_sessions SET submitted=TRUE WHERE exam_id=%s AND user_id=%s',(exam_id,user_id))
         conn.commit()
     except Exception:

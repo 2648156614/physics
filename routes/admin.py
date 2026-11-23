@@ -1,4 +1,5 @@
-﻿from flask import Blueprint, g
+from services.exam_auto_submit_service import notify_schedule_changed
+from flask import Blueprint, g
 from services.exam_question_plan_service import describe_plan, normalize_plan, plan_count, public_plan
 from services.choice_question_service import selection_labels
 
@@ -1000,6 +1001,7 @@ def create_admin_blueprint(deps):
             )
             conn.commit()
             clear_exam_metadata_cache()
+            notify_schedule_changed()
             _finish_auto_enabled_paper(exam['paper_id'], paper_auto_enabled)
             message = f'批次创建成功，已分配 {student_count} 名学生。'
             if missing_count:
@@ -1070,6 +1072,7 @@ def create_admin_blueprint(deps):
                 cursor.execute('UPDATE exams SET start_time = %s, end_time = %s WHERE id = %s', (start_time, end_time, exam_id))
             conn.commit()
             clear_exam_metadata_cache()
+            notify_schedule_changed()
             _finish_auto_enabled_paper(exam['paper_id'], paper_auto_enabled)
             flash('批次安排已更新，原有题单与答题记录已保留。', 'success')
         except (ValueError, mysql.connector.Error) as err:
@@ -1120,6 +1123,7 @@ def create_admin_blueprint(deps):
                 message = f"批次《{batch['name']}》已删除。"
             conn.commit()
             clear_exam_metadata_cache()
+            notify_schedule_changed()
             flash(message, 'success')
         except (ValueError, mysql.connector.Error) as err:
             conn.rollback()
@@ -1171,6 +1175,7 @@ def create_admin_blueprint(deps):
                 cursor.execute('UPDATE exams SET end_time = %s WHERE id = %s', (new_end_time, exam_id))
             conn.commit()
             clear_exam_metadata_cache()
+            notify_schedule_changed()
             _finish_auto_enabled_paper(exam['paper_id'], paper_auto_enabled)
             flash(f"批次《{batch['name']}》结束时间已延长。", 'success')
         except (ValueError, mysql.connector.Error) as err:
@@ -1372,6 +1377,7 @@ def create_admin_blueprint(deps):
             )
             conn.commit()
             clear_exam_metadata_cache()
+            notify_schedule_changed()
             _finish_auto_enabled_paper(paper_id, paper_auto_enabled)
             if assign_type == 'student' and missing_rows:
                 flash(f'有 {len(missing_rows)} 行未匹配账户，已按预览结果跳过。', 'warning')
@@ -1663,6 +1669,7 @@ def create_admin_blueprint(deps):
                     )
                     conn.commit()
                     clear_exam_metadata_cache()
+                    notify_schedule_changed()
                     _finish_auto_enabled_paper(paper_id, paper_auto_enabled)
                     flash('考试更新成功，已保留原有学生名单。', 'success')
                     return redirect(url_for('admin.admin_exams', edit_exam_id=exam_id))
@@ -1693,6 +1700,7 @@ def create_admin_blueprint(deps):
                 )
             conn.commit()
             clear_exam_metadata_cache()
+            notify_schedule_changed()
             _finish_auto_enabled_paper(paper_id, paper_auto_enabled)
             if assign_type == 'student' and missing_rows:
                 flash(f'有 {len(missing_rows)} 行未匹配账户，已按预览结果跳过。', 'warning')
@@ -2305,6 +2313,7 @@ def create_admin_blueprint(deps):
                 message = f"考试《{exam['name']}》已删除。"
             conn.commit()
             clear_exam_metadata_cache()
+            notify_schedule_changed()
             flash(message, 'success')
         except mysql.connector.Error as err:
             conn.rollback()
