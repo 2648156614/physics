@@ -1,4 +1,5 @@
-from services.choice_question_service import grade_selection, selection_labels
+from services import choice_exam_service
+from services.choice_question_service import validate_selection
 from functools import wraps
 from time import perf_counter
 import json
@@ -577,6 +578,12 @@ def create_exam_blueprint(deps):
             if actual_id is None:
                 return jsonify({'success': False, 'message': '无效的题目编号'})
     
+            if display_mapping[actual_id].get('is_choice'):
+                return jsonify(success=False, message='选择题为固定题目，请保存选项答案，无需刷新'), 400
+            if any(info.get('is_choice') for info in display_mapping.values()):
+                submitted, _ = choice_exam_service.state(get_db_connection, selected_exam_id, session['user_id'])
+                if submitted:
+                    return jsonify(success=False, message='已交卷，不能刷新题目'), 409
             current_problem_data = None
             current_problem_state = session.get('current_problem') or {}
             if current_problem_state.get('display_number') == problem_id:
@@ -781,6 +788,13 @@ def create_exam_blueprint(deps):
             completion_map.get(actual_id, False) if completion_map is not None
             else is_problem_completed(session['user_id'], actual_id, paper_id, selected_exam_id)
         )
+        if any(info.get('is_choice') for info in display_mapping.values()):
+            submitted, drafts = choice_exam_service.state(get_db_connection, selected_exam_id, session['user_id'])
+            problem_data = dict(problem_data, exam_has_choices=True, exam_submitted=submitted,
+                                selected_ids=drafts.get(actual_id, []))
+            if problem_data.get('question_type'):
+                is_completed = submitted or (is_completed and actual_id not in drafts)
+                problem_data['choice_locked'] = is_completed
         seb_required = is_seb_exam_required(exam)
         if seb_required and session.get('seb_entry_recorded_exam_id') != selected_exam_id:
             if record_secure_exam_entry(
@@ -883,6 +897,10 @@ def create_exam_blueprint(deps):
                 session.modified = True
                 return jsonify({'success': False, 'message': '会话已过期，请重新开始答题'})
     
+            if any(info.get('is_choice') for info in display_mapping.values()):
+                submitted, _ = choice_exam_service.state(get_db_connection, selected_exam_id, session['user_id'])
+                if submitted:
+                    return jsonify(success=False, saved=False, message='已交卷，不能再提交答案'), 409
             problem_token = session['current_problem'].get('token')
             problem_data = get_problem_by_token(problem_token)
             if not problem_data:
@@ -901,6 +919,20 @@ def create_exam_blueprint(deps):
             template_id = problem_data['template_id']
             problem_text = problem_data['problem_text']
     
+            if problem_data.get('question_type') in ('single_choice', 'multiple_choice'):
+                try:
+                    if is_problem_completed(user_id, actual_id, paper_id, selected_exam_id):
+                        return jsonify(success=False, saved=False, message='该题已有已判分记录，不能修改'), 409
+                    selected = data.get('selected_ids')
+                    # Validate IDs without calculating or exposing correctness.
+                    validate_selection(problem_data, selected)
+                    choice_exam_service.save_draft(get_db_connection, selected_exam_id, user_id, actual_id, selected, time_taken)
+                except ValueError as error:
+                    return jsonify(success=False, saved=False, message=str(error)), 400
+                return jsonify(success=True, saved=True, choice_saved=True,
+                               message='答案已保存，可继续修改；交卷后统一判分。', selected_ids=selected,
+                               next_problem=(problem_id+1 if problem_id<total_problems else None))
+
             # 如果题目已完成，阻止重复作答
             if is_problem_completed(user_id, actual_id, paper_id, selected_exam_id):
                 return jsonify({
@@ -935,13 +967,6 @@ def create_exam_blueprint(deps):
     
             logger.info("最终记录用时: %.2fs", time_taken)
     
-            is_choice = problem_data.get('question_type') in ('single_choice', 'multiple_choice')
-            if is_choice:
-                try:
-                    choice_value, choice_correct = grade_selection(problem_data, data.get('selected_ids'))
-                except ValueError as error:
-                    return jsonify(success=False, saved=False, message=str(error)), 400
-                data = dict(data, answer=choice_value)
             # 获取用户答案
             user_answers = []
             for i in range(answer_count):
@@ -960,7 +985,7 @@ def create_exam_blueprint(deps):
     
             for i, (user_answer, correct_answer) in enumerate(zip(user_answers, correct_answers)):
                 # 使用不同的变量名避免冲突
-                answer_is_correct = choice_correct if is_choice else is_correct(user_answer, correct_answer)
+                answer_is_correct = is_correct(user_answer, correct_answer)
                 is_correct_list.append(answer_is_correct)
                 if not answer_is_correct:
                     all_correct = False
@@ -973,7 +998,7 @@ def create_exam_blueprint(deps):
                 )
     
             error_types = [
-                (None if is_correct else "选项错误") if is_choice else classify_error_type(user_answer, correct_answer, is_correct)
+                classify_error_type(user_answer, correct_answer, is_correct)
                 for user_answer, correct_answer, is_correct in zip(user_answers, correct_answers, is_correct_list)
             ]
     
@@ -995,9 +1020,7 @@ def create_exam_blueprint(deps):
     
             # 生成正确答案消息
             correct_answer_message = "正确答案: "
-            if is_choice:
-                correct_answer_message += selection_labels(correct_answers[0])
-            elif answer_count == 1:
+            if answer_count == 1:
                 correct_answer_message += f"{correct_answers[0]:.12g}"
             else:
                 correct_parts = []
@@ -1039,7 +1062,7 @@ def create_exam_blueprint(deps):
                 next_problem_id = problem_id
     
                 # 答错时从 Redis 题目池抽取新题（不再限制尝试次数）
-                new_token, new_problem_data = (problem_token, problem_data) if is_choice else fetch_distinct_problem(actual_id, problem_data)
+                new_token, new_problem_data = fetch_distinct_problem(actual_id, problem_data)
     
                 if new_problem_data:
                     # 更新session中的题目数据和正确答案
@@ -1048,8 +1071,6 @@ def create_exam_blueprint(deps):
     
                     # 构建错误消息
                     message = f'❌ 答案不正确！用时 {time_taken:.1f}秒。{correct_answer_message}。已为您生成新题目，请重新作答。'
-                    if is_choice:
-                        message = f'答案不正确。{correct_answer_message}。请重新选择。'
     
                     response_data.update({
                         'correct': False,
@@ -1128,6 +1149,27 @@ def create_exam_blueprint(deps):
             return jsonify(success=False, saved=saved,
                            message='答案已保存，但页面更新失败，请联系监考教师协助恢复。' if saved else '服务暂时异常，当前输入已保留，请稍后重试。'), 500
 
+    @bp.route('/api/exam/hand-in', methods=['POST'])
+    @login_required
+    def hand_in_exam():
+        exam_id = session.get('selected_exam_id')
+        access = get_user_exam_access(session['user_id'], exam_id)
+        if not access['allowed'] and access.get('status') != 'ended':
+            return jsonify(success=False, message=access['message']), 403
+        exam = get_exam_by_id(exam_id)
+        blocked = seb_guard(exam, api=True)
+        if blocked:return blocked
+        mapping = get_user_exam_problem_display_info(session['user_id'], exam_id, access['paper_id'])
+        if not any(info.get('is_choice') for info in mapping.values()):
+            return jsonify(success=False, message='当前考试沿用原有完成流程'), 400
+        try:
+            choice_exam_service.hand_in(get_db_connection, exam_id, session['user_id'])
+            clear_exam_metadata_cache()
+            update_user_completion_status(session['user_id'], exam_id)
+        except ValueError as error:
+            return jsonify(success=False, message=str(error)), 400
+        return jsonify(success=True, message='已交卷，选择题答案已锁定。')
+
     @bp.route('/api/exam/secure-finish-summary', methods=['POST'])
     @login_required
     def secure_finish_summary():
@@ -1168,6 +1210,9 @@ def create_exam_blueprint(deps):
         display_mapping, _, summary = secure_exam_progress(exam_id, exam_access['paper_id'])
         if current_problem_state.get('display_number') != len(display_mapping):
             return jsonify({'success': False, 'message': '请先进入最后一题页面再确认完成。'}), 400
+        if any(info.get('is_choice') for info in display_mapping.values()):
+            choice_exam_service.hand_in(get_db_connection, exam_id, session['user_id'])
+            update_user_completion_status(session['user_id'], exam_id)
         saved, summary = finish_secure_exam_session(
             session['user_id'],
             exam_id,

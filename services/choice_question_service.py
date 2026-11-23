@@ -48,13 +48,18 @@ def selection_labels(value):
     return '、'.join(chr(65 + i) for i in range(8) if int(value) & (1 << i)) or '未选择'
 
 
-def grade_selection(problem, submitted):
+def validate_selection(problem, submitted):
     options = problem['choice_options']
     valid = {o['id'] for o in options}
     if not isinstance(submitted, list) or not submitted or any(type(i) is not int or i not in valid for i in submitted) or len(submitted) != len(set(submitted)):
         raise ValueError('请选择有效选项后提交')
     if problem['question_type'] == 'single_choice' and len(submitted) != 1:
         raise ValueError('单选题只能选择一个选项')
+    return submitted
+
+
+def grade_selection(problem, submitted):
+    validate_selection(problem, submitted)
     value = encode_selection(submitted)
     return value, value == problem['correct_answers'][0]
 

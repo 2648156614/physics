@@ -10,6 +10,8 @@ from flask import g, has_request_context
 from services.exam_question_plan_service import (
     describe_plan, freeze_plan, normalize_plan, plan_count, public_plan, select_plan_questions,
 )
+from services import choice_exam_service
+from services.choice_question_service import choice_definition
 from services.exam_paper_service import ensure_exam_paper_enabled, paper_has_unfinished_exam
 import test_exam_arrangement_routes as arrangements
 import test_seb_entry_routes as exam_routes
@@ -72,7 +74,7 @@ class QuestionPlanTests(unittest.TestCase):
     def test_schema_upgrade_adds_nullable_policy_once_and_does_not_rebuild_planned_pools(self):
         tree = ast.parse((Path(__file__).parents[1] / 'app.py').read_text(encoding='utf-8'))
         func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'ensure_question_lifecycle_schema')
-        ns = {}
+        ns = dict(choice_exam_service=choice_exam_service)
         exec(compile(ast.Module(body=[func], type_ignores=[]), 'app.py', 'exec'), ns)
         class MigrationCursor:
             def __init__(self):
@@ -105,13 +107,13 @@ class QuestionPlanDatabaseTests(unittest.TestCase):
         self.db.executescript('''
             ALTER TABLE exams ADD COLUMN question_plan TEXT;
             ALTER TABLE exam_user_questions ADD COLUMN display_number INT;
-            CREATE TABLE problem_templates(id INT PRIMARY KEY,paper_id INT,template_name TEXT,status TEXT);
+            CREATE TABLE problem_templates(id INT PRIMARY KEY,paper_id INT,template_name TEXT,status TEXT,generation_strategy TEXT);
             CREATE TABLE exam_question_pool(exam_id INT,template_id INT,PRIMARY KEY(exam_id,template_id));
             INSERT INTO exam_papers VALUES(20,'second bank','',0);
             DELETE FROM exam_user_questions;
             DELETE FROM user_responses;
         ''')
-        self.db.executemany('INSERT INTO problem_templates VALUES(?,?,?,?)',
+        self.db.executemany('INSERT INTO problem_templates(id,paper_id,template_name,status) VALUES(?,?,?,?)',
                             [(i, bank, f'question {i}', 'active') for bank, ids in
                              [(10, range(101, 106)), (20, range(201, 209))] for i in ids])
         self.raw = [dict(paper_id=10, mandatory_ids=[101], random_count=2),
@@ -244,21 +246,26 @@ class QuestionPlanDatabaseTests(unittest.TestCase):
 
     def test_first_entry_persists_cross_bank_questions_and_reentry_reuses_them(self):
         self.save()
+        choice = dict(mode='choice_v1', question_type='single_choice',options=[dict(id=1,text='甲'),dict(id=2,text='乙')],correct_ids=[1])
+        self.db.execute('UPDATE problem_templates SET generation_strategy=? WHERE paper_id=10',(json.dumps(choice),))
+        self.db.commit()
         tree = ast.parse((Path(__file__).parents[1] / 'app.py').read_text(encoding='utf-8'))
         func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'get_user_exam_problem_display_info')
         ns = dict(app=self.fixture.app, get_exam_by_id=self.fixture.deps['get_exam_by_id'],
                   get_db_connection=lambda: arrangements.Connection(self.db), json=json,
-                  select_plan_questions=select_plan_questions,
+                  select_plan_questions=select_plan_questions, choice_definition=choice_definition,
                   get_exam_metadata_cache=Mock(return_value=None), set_exam_metadata_cache=Mock())
         exec(compile(ast.Module(body=[func], type_ignores=[]), 'app.py', 'exec'), ns)
         assign = ns[func.name]
         first = assign(1, 9)
         self.assertEqual(len(first), 8)
+        self.assertTrue(all(first[tid]['is_choice'] for tid in list(first)[:3]))
+        self.assertTrue(all(not first[tid]['is_choice'] for tid in list(first)[3:]))
         self.assertTrue({101, 201, 202}.issubset(first))
         self.assertEqual(sum(q['paper_id'] == 20 for q in first.values()), 5)
         self.assertEqual(sorted(q['display_number'] for q in first.values()), list(range(1, 9)))
         self.db.execute("UPDATE problem_templates SET status='retired' WHERE id=101")
-        self.db.execute("INSERT INTO problem_templates VALUES(999,10,'new version','active')")
+        self.db.execute("INSERT INTO problem_templates(id,paper_id,template_name,status) VALUES(999,10,'new version','active')")
         self.db.commit()
         self.fixture.app.secret_key = 'changed-secret'
         self.assertEqual(assign(1, 9), first)

@@ -3,6 +3,7 @@ import io
 import openpyxl  # Load real numeric dependencies before legacy isolated service fixtures.
 import unittest
 from unittest.mock import patch, Mock
+from services import choice_exam_service
 from jinja2 import Environment, FileSystemLoader
 
 import test_generation_validation as author_tests
@@ -57,10 +58,15 @@ class ChoiceTests(unittest.TestCase):
         ns=fixture.prepare_submission()
         ns['get_problem_by_token'].return_value=self.problem()
         ns['is_correct']=Mock(side_effect=AssertionError('numeric tolerance called'))
-        response=fixture.client.post('/api/submit/2',json=dict(selected_ids=[1,3],answer=255,correct_answers=[255],submission_id='6'*32))
+        ns['get_db_connection']=Mock()
+        with patch.object(choice_exam_service,'save_draft') as saved:
+            response=fixture.client.post('/api/submit/2',json=dict(selected_ids=[1,3],answer=255,correct_answers=[255],submission_id='6'*32))
+            self.assertEqual(saved.call_args.args[4],[1,3])
         self.assertEqual(response.status_code,200)
-        self.assertTrue(response.get_json()['correct'])
-        self.assertEqual(ns['save_user_response'].call_args.args[4], [5.0])
+        self.assertTrue(response.get_json()['choice_saved'])
+        self.assertNotIn('correct',response.get_json())
+        self.assertNotIn('correct_answers',response.get_json())
+        ns['save_user_response'].assert_not_called()
         ns['is_correct'].assert_not_called()
 
     def test_wrong_choice_reuses_fixed_question_and_invalid_choice_does_not_save(self):
@@ -68,10 +74,12 @@ class ChoiceTests(unittest.TestCase):
             fixture=exam_tests.SebEntryRouteTests();fixture.setUp();ns=fixture.prepare_submission()
             ns['get_problem_by_token'].return_value=self.problem()
             ns['fetch_distinct_problem']=Mock(side_effect=AssertionError('fixed question rerolled'))
-            response=fixture.client.post('/api/submit/2',json=dict(selected_ids=ids,submission_id='5'*32))
+            ns['get_db_connection']=Mock()
+            with patch.object(choice_exam_service,'save_draft'):
+                response=fixture.client.post('/api/submit/2',json=dict(selected_ids=ids,submission_id='5'*32))
             self.assertEqual(response.status_code,status)
             if status==400:ns['save_user_response'].assert_not_called()
-            else:self.assertFalse(response.get_json()['correct'])
+            else:self.assertTrue(response.get_json()['choice_saved'])
 
     def test_authoring_without_formula(self):
         fixture=author_tests.AuthoringValidationTests();fixture.setUp()
@@ -94,3 +102,18 @@ class ChoiceTests(unittest.TestCase):
         fixture.conn.commit.assert_called_once()
         insert=next(c for c in fixture.cursor.execute.call_args_list if 'INSERT INTO problem_templates' in c.args[0])
         restored=json.loads(insert.args[1][-1]);self.assertEqual(restored['correct_ids'],[1,3]);self.assertEqual(restored['options'][0]['image_filename'],'imported.png')
+
+    def test_explicit_hand_in_checks_access_and_does_not_publish_answers(self):
+        fixture=exam_tests.SebEntryRouteTests();fixture.setUp();ns=fixture.prepare_submission()
+        with fixture.client.session_transaction() as state:state['selected_exam_id']=9
+        fixture.deps['get_user_exam_problem_display_info'].return_value[200]['is_choice']=True
+        ns['get_db_connection']=Mock();ns['clear_exam_metadata_cache']=Mock()
+        with patch.object(choice_exam_service,'hand_in') as hand_in:
+            response=fixture.client.post('/api/exam/hand-in')
+            self.assertEqual(response.status_code,200)
+            hand_in.assert_called_once_with(ns['get_db_connection'],9,25)
+            self.assertNotIn('correct_answers',response.get_json())
+            fixture.deps['get_user_exam_access'].return_value={'allowed':False,'status':'unassigned','message':'不在名单中'}
+            hand_in.reset_mock()
+            self.assertEqual(fixture.client.post('/api/exam/hand-in').status_code,403)
+            hand_in.assert_not_called()

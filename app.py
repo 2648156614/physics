@@ -43,6 +43,8 @@ from services.redis_cache_service import (
 )
 from services import question_generation_service
 from services.exam_assignment_service import select_exam_template_ids
+from services.choice_question_service import choice_definition
+from services import choice_exam_service
 from services.exam_paper_service import ensure_exam_paper_enabled
 from services.exam_question_plan_service import describe_plan, freeze_plan, select_plan_questions
 from services.seb_exam_service import (
@@ -1256,7 +1258,7 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
         paper_scope = '' if plan else ' AND pt.paper_id = %s'
         cursor.execute(
             f"""
-            SELECT pt.id, pt.template_name, pt.paper_id
+            SELECT pt.id, pt.template_name, pt.paper_id, pt.generation_strategy
             FROM exam_question_pool eqp
             JOIN problem_templates pt ON pt.id = eqp.template_id
             WHERE eqp.exam_id = %s{paper_scope}
@@ -1293,7 +1295,7 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
             return {}
 
         query = f"""
-            SELECT q.template_id, q.display_number, pt.template_name, pt.paper_id
+            SELECT q.template_id, q.display_number, pt.template_name, pt.paper_id, pt.generation_strategy
             FROM exam_user_questions q
             JOIN problem_templates pt ON pt.id = q.template_id
             WHERE q.exam_id = %s AND q.user_id = %s{paper_scope}
@@ -1302,6 +1304,8 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
         cursor.execute(query, (exam_id, user_id) if plan else (exam_id, user_id, paper_id))
         rows = cursor.fetchall()
 
+        # Sort only a new assignment. Stable sort preserves random order within each section.
+        selected_ids.sort(key=lambda tid: 0 if choice_definition(template_lookup[tid].get('generation_strategy')) else 1)
         if not rows and persist:
             cursor.executemany(
                 """
@@ -1325,6 +1329,7 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
                     'display_number': display_number,
                     'template_name': template_lookup[template_id]['template_name'],
                     'paper_id': int(template_lookup[template_id]['paper_id']),
+                    'generation_strategy': template_lookup[template_id].get('generation_strategy'),
                 }
                 for display_number, template_id in enumerate(selected_ids, 1)
             ]
@@ -1335,6 +1340,7 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
                 'template_name': row['template_name'],
                 'actual_id': int(row['template_id']),
                 'paper_id': int(row['paper_id']),
+                'is_choice': bool(choice_definition(row.get('generation_strategy'))),
             }
             for row in rows
         }
@@ -1483,10 +1489,16 @@ def get_completion_status_map(user_id, paper_id, template_ids, exam_id=None):
         """, params)
 
         completed_ids = {int(row['template_id']) for row in cursor.fetchall()}
-        return {int(template_id): (int(template_id) in completed_ids) for template_id in template_ids}
     finally:
         cursor.close()
         conn.close()
+    if exam_id is not None:
+        mapping = get_user_exam_problem_display_info(user_id, exam_id, paper_id, persist=False)
+        choice_ids = {tid for tid, info in mapping.items() if info.get('is_choice')}
+        if choice_ids:
+            submitted, drafts = choice_exam_service.state(get_db_connection, exam_id, user_id)
+            completed_ids.update(choice_ids if submitted else choice_ids.intersection(drafts))
+    return {int(template_id): (int(template_id) in completed_ids) for template_id in template_ids}
 
 
 def get_latest_attempt_count(user_id, template_id, paper_id=None, exam_id=None):
@@ -1851,6 +1863,15 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
 
         cursor = conn.cursor()
         print("✅ 数据库连接成功")
+        if exam_id is not None:
+            mapping = get_user_exam_problem_display_info(user_id, exam_id, paper_id)
+            if any(info.get('is_choice') for info in mapping.values()):
+                cursor.execute('INSERT IGNORE INTO exam_choice_sessions (exam_id,user_id) VALUES (%s,%s)', (exam_id,user_id))
+                cursor.execute('SELECT submitted FROM exam_choice_sessions WHERE exam_id=%s AND user_id=%s FOR UPDATE', (exam_id,user_id))
+                if cursor.fetchone()[0]:
+                    conn.rollback()
+                    return (False, [])
+
 
         batch_id = None
         if exam_id is not None:
@@ -2107,6 +2128,7 @@ def ensure_seb_exam_schema(cursor):
 
 def ensure_question_lifecycle_schema(cursor):
     """Add non-destructive question versioning and freeze each exam's question pool."""
+    choice_exam_service.ensure_schema(cursor)
     cursor.execute("SHOW COLUMNS FROM exams LIKE 'question_plan'")
     if not cursor.fetchone():
         cursor.execute('ALTER TABLE exams ADD COLUMN question_plan LONGTEXT DEFAULT NULL')
@@ -3162,8 +3184,9 @@ def update_user_completion_status(user_id, exam_id=None):
         if not selected_paper_id:
             return False
 
+        assignment = get_user_exam_problem_display_info(user_id, exam_id, selected_paper_id) if exam_id else {}
         total_problems = (
-            len(get_user_exam_problem_display_info(user_id, exam_id, selected_paper_id))
+            len(assignment)
             if exam_id else get_total_problem_count(selected_paper_id)
         )
         response_scope = (
@@ -3209,6 +3232,16 @@ def update_user_completion_status(user_id, exam_id=None):
         """, (user_id, scope_param))
         stats = cursor.fetchone()
 
+        choice_ids = [tid for tid, info in assignment.items() if info.get('is_choice')]
+        if choice_ids:
+            cursor.execute('SELECT submitted FROM exam_choice_sessions WHERE exam_id=%s AND user_id=%s',(exam_id,user_id))
+            submitted = bool((cursor.fetchone() or {}).get('submitted'))
+            if not submitted:
+                completed_count = -1
+            else:
+                placeholders = ','.join(['%s'] * len(choice_ids))
+                cursor.execute(f'SELECT COUNT(DISTINCT template_id) AS n FROM user_responses WHERE exam_id=%s AND user_id=%s AND template_id IN ({placeholders}) AND is_correct=TRUE', [exam_id,user_id,*choice_ids])
+                completed_count += len(choice_ids) - cursor.fetchone()['n']
         completed_all = total_problems > 0 and completed_count >= total_problems
         if completed_all:
             cursor.execute("""

@@ -264,6 +264,12 @@
                     </section>
 
                     <section class="answer-pane" aria-label="答题区">
+                {% if problem.get('exam_has_choices') %}
+                <div class="border rounded p-3 mb-3">
+                    <span>选择题先保存，交卷后判分；计算题保持原有答题规则。</span>
+                    <button type="button" class="btn btn-dark mt-2" id="hand-in-btn" {% if problem.get('exam_submitted') %}disabled{% endif %}>{{ '已交卷' if problem.get('exam_submitted') else '交卷并锁定答案' }}</button>
+                </div>
+                {% endif %}
                 <form id="answer-form" data-managed-submit="true" novalidate>
                     <div class="answer-toolbar">
                         <h3 class="answer-heading"><i class="bi bi-pencil-fill me-2" aria-hidden="true"></i>请输入答案</h3>
@@ -360,7 +366,7 @@
                     <div class="modal-body">
                         <p class="mb-2" id="secure-finish-summary">正在核对答题进度...</p>
                         <div class="alert alert-warning mb-0" id="secure-finish-warning" hidden>
-                            仍有题目未答对。确认后也可以退出，请先确认这符合您的意愿。
+                            仍有题目未完成。选择题按已保存、计算题按已答对统计。确认交卷后不能修改答案。
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -568,6 +574,32 @@ if (arrivedFromMobileQuestionSwitch && usesMobileProblemNavigation()) {
 // 科学计数法输入统一处理单空和多空；提交仍使用原有数值接口。
 const isChoiceQuestion = {{ (problem.get('question_type') in ['single_choice', 'multiple_choice']) | tojson }};
 const scientificAnswers = new (isChoiceQuestion ? ChoiceAnswerInput : ScientificAnswerInput)(document.getElementById('answer-inputs'));
+const examHasChoices = {{ problem.get('exam_has_choices', false)|tojson }};
+const examSubmitted = {{ problem.get('exam_submitted', false)|tojson }};
+const choiceLocked = {{ problem.get('choice_locked', false)|tojson }};
+let choiceSavedSelection = JSON.stringify({{ problem.get('selected_ids', [])|tojson }});
+if (isChoiceQuestion) {
+    const savedIds={{ problem.get('selected_ids', [])|tojson }};
+    document.querySelectorAll('[name=choice-answer]').forEach(input=>input.checked=savedIds.includes(Number(input.value)));
+    scientificAnswers.preview();
+    document.getElementById('submit-btn').textContent='保存答案';
+    document.getElementById('refresh-btn').hidden=true;
+}
+if (examSubmitted || (isChoiceQuestion && choiceLocked)) { scientificAnswers.setDisabled(true);document.getElementById('submit-btn').hidden=true;document.getElementById('refresh-btn').hidden=true; }
+document.getElementById('hand-in-btn')?.addEventListener('click',async event=>{
+    if (isChoiceQuestion && JSON.stringify(scientificAnswers.selected())!==choiceSavedSelection) {
+        showMessage('当前选择尚未保存，请先点击保存答案。','error');return;
+    }
+    if(!confirm('确认交卷？未作答的选择题计为错误，未完成的计算题也不能再补答，交卷后不能修改答案。'))return;
+    const button=event.currentTarget;button.disabled=true;
+    try {
+        const response=await fetch('/api/exam/hand-in',{method:'POST'});
+        const data=await response.json();
+        if(!response.ok||!data.success)throw Error(data.message||'交卷失败');
+        location.reload();
+    } catch(error){showMessage(error.message,'error');button.disabled=false;}
+});
+
 
 // ======================== 蒙版系统函数 ========================
 
@@ -1405,6 +1437,7 @@ function getActualIdFromDisplay(displayId) {
 
 // 锁定已完成题目的输入
 function handleCompletedProblem() {
+    if (isChoiceQuestion && !examSubmitted && !choiceLocked) return;
     if (completionLocked) {
         return;
     }
@@ -1540,6 +1573,16 @@ function setupInputListeners() {
 
 let unresolvedSubmissionId = null;
 function handleSubmissionData(data) {
+    if (data.choice_saved) {
+        choiceSavedSelection = JSON.stringify(data.selected_ids);
+        showMessage(data.message, "success");
+        resetSubmitButton();
+        document.getElementById("submit-btn").textContent="保存答案";
+        const next=document.getElementById("next-btn");
+        if(data.next_problem)next.style.display="inline-block";
+        updateProblemSidebar();
+        return;
+    }
     const submitBtn = document.getElementById('submit-btn');
     if (data.already_completed) {
         showMessage(data.message || '该题已完成，无需再次作答', 'info');
@@ -1572,7 +1615,7 @@ function handleSubmissionData(data) {
                 }, 3000);
             } else if (sebRequired) {
                 showTempMessage('本题结果已保存，请使用下方按钮确认完成并退出。', 'success');
-            } else {
+            } else if (!examHasChoices) {
                 setTimeout(() => {
                     showTempMessage('恭喜完成所有题目！3秒后返回主页...', 'success');
                 }, 500);
@@ -1694,7 +1737,7 @@ if (secureFinishButton) {
             if (!response.ok || !data.success) {
                 throw new Error(data.message || '无法获取答题进度');
             }
-            finishSummary.textContent = `共 ${data.total_count} 题，已答对 ${data.completed_count} 题，未完成 ${data.incomplete_count} 题。`;
+            finishSummary.textContent = `共 ${data.total_count} 题，已完成 ${data.completed_count} 题，未完成 ${data.incomplete_count} 题。`;
             finishWarning.hidden = data.incomplete_count === 0;
             finishModal.show();
         } catch (error) {
