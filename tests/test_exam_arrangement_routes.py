@@ -24,6 +24,8 @@ class Cursor:
     def sql(self, sql):
         sql = sql.replace('%s', '?').replace(' FOR UPDATE', '').replace('BINARY ', '')
         sql = sql.replace('INSERT IGNORE', 'INSERT OR IGNORE')
+        sql = sql.replace('ON DUPLICATE KEY UPDATE selected_ids=VALUES(selected_ids), time_taken=VALUES(time_taken)',
+                          'ON CONFLICT(exam_id,user_id,template_id) DO UPDATE SET selected_ids=excluded.selected_ids, time_taken=excluded.time_taken')
         return sql.replace('ON DUPLICATE KEY UPDATE is_active = TRUE',
                            'ON CONFLICT(exam_id, user_id) DO UPDATE SET is_active = TRUE')
 

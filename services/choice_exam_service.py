@@ -1,5 +1,8 @@
 """Transactional choice drafts and an irreversible, idempotent exam hand-in."""
 import json
+import random
+import time
+from mysql.connector import Error as MySQLError
 from services.choice_question_service import choice_definition, encode_selection, generate_choice_problem
 
 
@@ -36,20 +39,38 @@ def lock_session(cur, exam_id, user_id):
 
 
 def save_draft(connect, exam_id, user_id, template_id, selected, elapsed):
-    conn=connect();cur=conn.cursor(dictionary=True)
-    try:
-        if lock_session(cur,exam_id,user_id):
-            raise ValueError('已交卷，不能再修改答案')
-        cur.execute('SELECT template_id FROM exam_user_questions WHERE exam_id=%s AND user_id=%s AND template_id=%s',(exam_id,user_id,template_id))
-        if not cur.fetchone():
-            raise ValueError('题目不属于当前考试')
-        cur.execute('DELETE FROM exam_choice_drafts WHERE exam_id=%s AND user_id=%s AND template_id=%s',(exam_id,user_id,template_id))
-        cur.execute('INSERT INTO exam_choice_drafts (exam_id,user_id,template_id,selected_ids,time_taken) VALUES (%s,%s,%s,%s,%s)',(exam_id,user_id,template_id,json.dumps(selected),elapsed))
-        conn.commit()
-    except Exception:
-        conn.rollback();raise
-    finally:
-        cur.close();conn.close()
+    for attempt in range(3):
+        conn = connect()
+        if conn is None:
+            raise RuntimeError('暂时无法获取数据库连接，请稍后重试')
+        cur = None
+        try:
+            cur = conn.cursor(dictionary=True)
+            # Recheck the submit lock and question ownership on every retry.
+            if lock_session(cur, exam_id, user_id):
+                raise ValueError('已交卷，不能再修改答案')
+            cur.execute('SELECT template_id FROM exam_user_questions WHERE exam_id=%s AND user_id=%s AND template_id=%s',
+                        (exam_id, user_id, template_id))
+            if not cur.fetchone():
+                raise ValueError('题目不属于当前考试')
+            cur.execute('''INSERT INTO exam_choice_drafts
+                (exam_id,user_id,template_id,selected_ids,time_taken) VALUES (%s,%s,%s,%s,%s)
+                ON DUPLICATE KEY UPDATE selected_ids=VALUES(selected_ids), time_taken=VALUES(time_taken)''',
+                (exam_id, user_id, template_id, json.dumps(selected), elapsed))
+            conn.commit()
+            return
+        except Exception as error:
+            conn.rollback()
+            if not isinstance(error, MySQLError) or error.errno not in (1213, 1205) or attempt == 2:
+                raise
+        finally:
+            try:
+                if cur is not None:
+                    cur.close()
+            finally:
+                conn.close()
+        # Return the connection before backing off; retry the whole transaction.
+        time.sleep(0.025 * (2 ** attempt) + random.uniform(0, 0.025))
 
 
 def hand_in(connect, exam_id, user_id, only_if_expired=False):

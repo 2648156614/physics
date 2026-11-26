@@ -53,6 +53,10 @@ DB_CONFIG = {
     # Match the application's tables; connector defaults differ across versions.
     'charset': 'utf8mb4',
     'collation': 'utf8mb4_unicode_ci',
+    # The C-extension/session-reset path stalled under concurrent exam traffic.
+    # Keep an explicit opt-out for comparing deployments without changing SQL.
+    'use_pure': os.getenv('MYSQL_USE_PURE', 'true').lower() in ('1', 'true', 'yes', 'on'),
+    'connection_timeout': 10,
 }
 DB_POOL_NAME = os.getenv('DB_POOL_NAME', 'physics_app_pool')
 MYSQL_CONNECTOR_POOL_MAX_SIZE = 32

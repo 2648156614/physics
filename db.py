@@ -3,8 +3,8 @@ import threading
 import time
 
 import mysql.connector
-from mysql.connector import pooling
 from mysql.connector.errors import PoolError
+from services.mysql_connection_pool import MySQLConnectionPool
 
 from config import (
     DB_CONFIG,
@@ -39,18 +39,18 @@ def _get_pool():
             normalized_pool_size = max(1, min(DB_POOL_SIZE, MYSQL_CONNECTOR_POOL_MAX_SIZE))
             if normalized_pool_size != DB_POOL_SIZE:
                 logger.warning(
-                    "DB_POOL_SIZE=%s 超出 mysql-connector 支持范围，已自动调整为 %s",
+                    "DB_POOL_SIZE=%s 超出应用连接池配置范围，已自动调整为 %s",
                     DB_POOL_SIZE,
                     normalized_pool_size,
                 )
 
-            db_pool = pooling.MySQLConnectionPool(
-                pool_name=DB_POOL_NAME,
+            db_pool = MySQLConnectionPool(
+                connect=lambda: mysql.connector.connect(**DB_CONFIG),
                 pool_size=normalized_pool_size,
-                pool_reset_session=DB_POOL_RESET_SESSION,
-                **DB_CONFIG
+                reset_session=DB_POOL_RESET_SESSION,
             )
-            logger.info("MySQL连接池初始化成功: %s, 大小=%s", DB_POOL_NAME, normalized_pool_size)
+            logger.info("MySQL连接池初始化成功: %s, 大小=%s, application_pool=True, use_pure=%s",
+                        DB_POOL_NAME, normalized_pool_size, DB_CONFIG.get('use_pure'))
 
     return db_pool
 

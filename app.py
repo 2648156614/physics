@@ -1882,7 +1882,11 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
     print(f"答案数量: {len(user_answers)}")
 
     conn = None
+    cursor = None
     try:
+        # Resolve the assignment before borrowing the write connection. Concurrent
+        # saves must not each hold one pool slot while waiting for a second one.
+        mapping = get_user_exam_problem_display_info(user_id, exam_id, paper_id) if exam_id is not None else {}
         # 1. 获取数据库连接
         conn = get_db_connection()
         if not conn:
@@ -1892,7 +1896,6 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
         cursor = conn.cursor()
         print("✅ 数据库连接成功")
         if exam_id is not None:
-            mapping = get_user_exam_problem_display_info(user_id, exam_id, paper_id)
             if any(info.get('is_choice') for info in mapping.values()):
                 cursor.execute('INSERT IGNORE INTO exam_choice_sessions (exam_id,user_id) VALUES (%s,%s)', (exam_id,user_id))
                 cursor.execute('SELECT submitted FROM exam_choice_sessions WHERE exam_id=%s AND user_id=%s FOR UPDATE', (exam_id,user_id))
@@ -1996,9 +1999,13 @@ def save_user_response(user_id, template_id, paper_id, problem_text, user_answer
         return False
 
     finally:
-        if conn and conn.is_connected():
-            conn.close()
-            print("✅ 数据库连接已关闭")
+        try:
+            if cursor is not None:
+                cursor.close()
+        finally:
+            if conn is not None:
+                conn.close()
+                print("✅ 数据库连接已关闭")
         print("=== 保存答题记录结束 ===\n")
 
 
@@ -3203,8 +3210,8 @@ def update_user_completion_status(user_id):
 
 def update_user_completion_status(user_id, exam_id=None):
     """Update legacy completion fields, scoped to exam_id when available."""
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    conn = None
+    cursor = None
 
     try:
         selected_exam = get_exam_by_id(exam_id) if exam_id else None
@@ -3217,6 +3224,12 @@ def update_user_completion_status(user_id, exam_id=None):
             len(assignment)
             if exam_id else get_total_problem_count(selected_paper_id)
         )
+        # Metadata helpers use their own connections; finish them before opening
+        # the statistics transaction to avoid nested pool acquisition.
+        conn = get_db_connection()
+        if conn is None:
+            return False
+        cursor = conn.cursor(dictionary=True)
         response_scope = (
             "ur.exam_id = %s"
             if exam_id
@@ -3293,11 +3306,16 @@ def update_user_completion_status(user_id, exam_id=None):
         return completed_all
     except Exception as e:
         print(f"更新用户完成状态失败: {e}")
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()
         return False
     finally:
-        cursor.close()
-        conn.close()
+        try:
+            if cursor is not None:
+                cursor.close()
+        finally:
+            if conn is not None:
+                conn.close()
 
 
 def update_all_users_completion_status():
