@@ -1225,75 +1225,14 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
     if cached is not None:
         return {int(actual_id): dict(info) for actual_id, info in cached.items()}
 
-    exam = get_exam_by_id(exam_id)
-    if not exam:
-        return {}
-    paper_id = int(exam['paper_id'])
     conn = get_db_connection()
+    if conn is None:
+        raise RuntimeError('暂时无法获取数据库连接，请稍后重试')
     cursor = conn.cursor(dictionary=True)
-    try:
-        # Serialize the first formal entry with administrative question-pool changes.
-        cursor.execute('SELECT * FROM exams WHERE id = %s FOR UPDATE', (exam_id,))
-        exam = cursor.fetchone()
-        if not exam:
-            return {}
-        paper_id = int(exam['paper_id'])
-        plan = json.loads(exam['question_plan']) if exam.get('question_plan') else None
-        cursor.execute(
-            "SELECT EXISTS(SELECT 1 FROM exam_question_pool WHERE exam_id = %s LIMIT 1) AS frozen",
-            (exam_id,),
-        )
-        if not (cursor.fetchone() or {}).get('frozen'):
-            if plan:
-                raise ValueError('考试固定题目缺失，请联系管理员')
-            cursor.execute(
-                """
-                INSERT IGNORE INTO exam_question_pool (exam_id, template_id)
-                SELECT %s, pt.id
-                FROM problem_templates pt
-                WHERE pt.paper_id = %s AND COALESCE(pt.status, 'active') = 'active'
-                """,
-                (exam_id, paper_id),
-            )
-        paper_scope = '' if plan else ' AND pt.paper_id = %s'
-        cursor.execute(
-            f"""
-            SELECT pt.id, pt.template_name, pt.paper_id, pt.generation_strategy
-            FROM exam_question_pool eqp
-            JOIN problem_templates pt ON pt.id = eqp.template_id
-            WHERE eqp.exam_id = %s{paper_scope}
-            ORDER BY pt.id
-            """,
-            (exam_id,) if plan else (exam_id, paper_id),
-        )
-        templates = cursor.fetchall()
-        template_lookup = {int(item['id']): item for item in templates}
-        if not template_lookup:
-            return {}
 
-        configured_count = exam.get('question_count')
-        if plan:
-            selected_ids = select_plan_questions(plan, template_lookup, exam_id, user_id, app.config.get('SECRET_KEY'))
-        elif configured_count is None:
-            selected_ids = list(template_lookup)
-        else:
-            selected_ids = select_exam_template_ids(
-                template_lookup,
-                configured_count,
-                exam_id,
-                user_id,
-                app.config.get('SECRET_KEY'),
-            )
-
-        cursor.execute(
-            "SELECT batch_id FROM exam_batch_students WHERE exam_id = %s AND user_id = %s AND is_active = TRUE",
-            (exam_id, user_id),
-        )
-        membership = cursor.fetchone() or {}
-        batch_id = membership.get('batch_id')
-        if not batch_id:
-            return {}
-
+    def read_assignment(exam):
+        # A saved assignment is immutable; reading it must not lock the exam row.
+        paper_scope = '' if exam.get('question_plan') else ' AND pt.paper_id = %s'
         query = f"""
             SELECT q.template_id, q.display_number, pt.template_name, pt.paper_id, pt.generation_strategy
             FROM exam_user_questions q
@@ -1301,54 +1240,143 @@ def get_user_exam_problem_display_info(user_id, exam_id, paper_id=None, persist=
             WHERE q.exam_id = %s AND q.user_id = %s{paper_scope}
             ORDER BY q.display_number
         """
-        cursor.execute(query, (exam_id, user_id) if plan else (exam_id, user_id, paper_id))
-        rows = cursor.fetchall()
+        params = (exam_id, user_id) if not paper_scope else (exam_id, user_id, int(exam['paper_id']))
+        cursor.execute(query, params)
+        return cursor.fetchall()
 
-        # Sort only a new assignment. Stable sort preserves random order within each section.
+    def read_membership():
+        cursor.execute(
+            "SELECT batch_id FROM exam_batch_students WHERE exam_id = %s AND user_id = %s AND is_active = TRUE",
+            (exam_id, user_id),
+        )
+        return (cursor.fetchone() or {}).get('batch_id')
+
+    def create_assignment(exam, batch_id):
+        paper_id = int(exam['paper_id'])
+        plan = json.loads(exam['question_plan']) if exam.get('question_plan') else None
+        cursor.execute(
+            "SELECT EXISTS(SELECT 1 FROM exam_question_pool WHERE exam_id = %s LIMIT 1) AS frozen",
+            (exam_id,),
+        )
+        frozen = bool((cursor.fetchone() or {}).get('frozen'))
+        if not frozen and plan:
+            raise ValueError('考试固定题目缺失，请联系管理员')
+        if not frozen and persist:
+            cursor.execute(
+                """
+                INSERT IGNORE INTO exam_question_pool (exam_id, template_id)
+                SELECT %s, pt.id FROM problem_templates pt
+                WHERE pt.paper_id = %s AND COALESCE(pt.status, 'active') = 'active'
+                """,
+                (exam_id, paper_id),
+            )
+            frozen = True
+        if frozen:
+            paper_scope = '' if plan else ' AND pt.paper_id = %s'
+            cursor.execute(
+                f"""
+                SELECT pt.id, pt.template_name, pt.paper_id, pt.generation_strategy
+                FROM exam_question_pool eqp
+                JOIN problem_templates pt ON pt.id = eqp.template_id
+                WHERE eqp.exam_id = %s{paper_scope} ORDER BY pt.id
+                """,
+                (exam_id,) if plan else (exam_id, paper_id),
+            )
+        else:
+            # Legacy exams may not have a frozen pool yet. A preview can derive
+            # their list, but must never create pool or assignment rows.
+            cursor.execute(
+                """
+                SELECT pt.id, pt.template_name, pt.paper_id, pt.generation_strategy
+                FROM problem_templates pt
+                WHERE pt.paper_id = %s AND COALESCE(pt.status, 'active') = 'active'
+                ORDER BY pt.id
+                """,
+                (paper_id,),
+            )
+        template_lookup = {int(item['id']): item for item in cursor.fetchall()}
+        if not template_lookup:
+            return []
+        configured_count = exam.get('question_count')
+        if plan:
+            selected_ids = select_plan_questions(plan, template_lookup, exam_id, user_id, app.config.get('SECRET_KEY'))
+        elif configured_count is None:
+            selected_ids = list(template_lookup)
+        else:
+            selected_ids = select_exam_template_ids(
+                template_lookup, configured_count, exam_id, user_id, app.config.get('SECRET_KEY'),
+            )
+        # Sort only a new assignment, preserving random order within each section.
         selected_ids.sort(key=lambda tid: 0 if choice_definition(template_lookup[tid].get('generation_strategy')) else 1)
-        if not rows and persist:
+        if persist:
             cursor.executemany(
                 """
                 INSERT IGNORE INTO exam_user_questions
                     (exam_id, batch_id, user_id, template_id, display_number)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
-                [
-                    (exam_id, batch_id, user_id, template_id, display_number)
-                    for display_number, template_id in enumerate(selected_ids, 1)
-                ],
+                [(exam_id, batch_id, user_id, tid, number) for number, tid in enumerate(selected_ids, 1)],
             )
-            conn.commit()
-            cursor.execute(query, (exam_id, user_id) if plan else (exam_id, user_id, paper_id))
-            rows = cursor.fetchall()
+            return read_assignment(exam)
+        return [
+            dict(template_id=tid, display_number=number,
+                 template_name=template_lookup[tid]['template_name'],
+                 paper_id=int(template_lookup[tid]['paper_id']),
+                 generation_strategy=template_lookup[tid].get('generation_strategy'))
+            for number, tid in enumerate(selected_ids, 1)
+        ]
+
+    try:
+        cursor.execute('SELECT * FROM exams WHERE id = %s', (exam_id,))
+        exam = cursor.fetchone()
+        if not exam:
+            return {}
+        batch_id = read_membership()
+        if not batch_id:
+            return {}
+        rows = read_assignment(exam)
+        if not rows and persist:
+            # End the read snapshot before waiting for the administrative lock.
+            # Only the first formal assignment needs this lock. Recheck inside it
+            # so simultaneous requests from the same student reuse one assignment.
+            conn.rollback()
+            cursor.execute('SELECT * FROM exams WHERE id = %s FOR UPDATE', (exam_id,))
+            exam = cursor.fetchone()
+            if not exam:
+                return {}
+            batch_id = read_membership()
+            if not batch_id:
+                return {}
+            rows = read_assignment(exam)
 
         if not rows:
-            rows = [
-                {
-                    'template_id': template_id,
-                    'display_number': display_number,
-                    'template_name': template_lookup[template_id]['template_name'],
-                    'paper_id': int(template_lookup[template_id]['paper_id']),
-                    'generation_strategy': template_lookup[template_id].get('generation_strategy'),
-                }
-                for display_number, template_id in enumerate(selected_ids, 1)
-            ]
+            rows = create_assignment(exam, batch_id)
 
-        mapping = {
-            int(row['template_id']): {
-                'display_number': int(row['display_number']),
-                'template_name': row['template_name'],
-                'actual_id': int(row['template_id']),
-                'paper_id': int(row['paper_id']),
-                'is_choice': bool(choice_definition(row.get('generation_strategy'))),
-            }
-            for row in rows
-        }
-        set_exam_metadata_cache(cache_key, mapping)
-        return mapping
+        # Release any first-entry lock before cache publication or returning the
+        # pooled connection. Do not depend on pool_reset_session for transaction end.
+        if persist:
+            conn.commit()
     finally:
-        cursor.close()
-        conn.close()
+        try:
+            conn.rollback()
+        finally:
+            try:
+                cursor.close()
+            finally:
+                conn.close()
+
+    mapping = {
+        int(row['template_id']): {
+            'display_number': int(row['display_number']),
+            'template_name': row['template_name'],
+            'actual_id': int(row['template_id']),
+            'paper_id': int(row['paper_id']),
+            'is_choice': bool(choice_definition(row.get('generation_strategy'))),
+        }
+        for row in rows
+    }
+    set_exam_metadata_cache(cache_key, mapping)
+    return mapping
 
 
 def build_display_to_actual_map(paper_id=None):

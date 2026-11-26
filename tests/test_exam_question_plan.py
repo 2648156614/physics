@@ -12,6 +12,7 @@ from services.exam_question_plan_service import (
 )
 from services import choice_exam_service
 from services.choice_question_service import choice_definition
+from services.exam_assignment_service import select_exam_template_ids
 from services.exam_paper_service import ensure_exam_paper_enabled, paper_has_unfinished_exam
 import test_exam_arrangement_routes as arrangements
 import test_seb_entry_routes as exam_routes
@@ -244,20 +245,56 @@ class QuestionPlanDatabaseTests(unittest.TestCase):
         self.assertEqual({row['template_id'] for row in data['responses']}, {101, 201})
         self.assertEqual(data['stats']['total'], 2)
 
+    def assignment_driver(self, before_lock=None):
+        events = []
+        db = self.db
+
+        class TrackedCursor(arrangements.Cursor):
+            def execute(self, sql, params=()):
+                events.append(sql)
+                if 'FOR UPDATE' in sql and before_lock:
+                    before_lock()
+                return super().execute(sql, params)
+
+            def executemany(self, sql, params):
+                events.append(sql)
+                return super().executemany(sql, params)
+
+        class TrackedConnection(arrangements.Connection):
+            def cursor(self, **kwargs):
+                return TrackedCursor(db)
+
+            def commit(self):
+                events.append('commit')
+                super().commit()
+
+            def rollback(self):
+                events.append('rollback')
+                super().rollback()
+
+            def close(self):
+                events.append('close')
+
+        tree = ast.parse((Path(__file__).parents[1] / 'app.py').read_text(encoding='utf-8'))
+        func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'get_user_exam_problem_display_info')
+        ns = dict(app=self.fixture.app, get_exam_by_id=self.fixture.deps['get_exam_by_id'],
+                  get_db_connection=lambda: TrackedConnection(db), json=json,
+                  select_plan_questions=select_plan_questions, select_exam_template_ids=select_exam_template_ids,
+                  choice_definition=choice_definition, get_exam_metadata_cache=Mock(return_value=None),
+                  set_exam_metadata_cache=lambda *args: events.append('cache'))
+        exec(compile(ast.Module(body=[func], type_ignores=[]), 'app.py', 'exec'), ns)
+        return ns[func.name], events
+
     def test_first_entry_persists_cross_bank_questions_and_reentry_reuses_them(self):
         self.save()
         choice = dict(mode='choice_v1', question_type='single_choice',options=[dict(id=1,text='甲'),dict(id=2,text='乙')],correct_ids=[1])
         self.db.execute('UPDATE problem_templates SET generation_strategy=? WHERE paper_id=10',(json.dumps(choice),))
         self.db.commit()
-        tree = ast.parse((Path(__file__).parents[1] / 'app.py').read_text(encoding='utf-8'))
-        func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'get_user_exam_problem_display_info')
-        ns = dict(app=self.fixture.app, get_exam_by_id=self.fixture.deps['get_exam_by_id'],
-                  get_db_connection=lambda: arrangements.Connection(self.db), json=json,
-                  select_plan_questions=select_plan_questions, choice_definition=choice_definition,
-                  get_exam_metadata_cache=Mock(return_value=None), set_exam_metadata_cache=Mock())
-        exec(compile(ast.Module(body=[func], type_ignores=[]), 'app.py', 'exec'), ns)
-        assign = ns[func.name]
+        assign, events = self.assignment_driver()
         first = assign(1, 9)
+        self.assertEqual(sum('FOR UPDATE' in e for e in events), 1)
+        self.assertLess(events.index('commit'), events.index('close'))
+        self.assertLess(events.index('close'), events.index('cache'))
         self.assertEqual(len(first), 8)
         self.assertTrue(all(first[tid]['is_choice'] for tid in list(first)[:3]))
         self.assertTrue(all(not first[tid]['is_choice'] for tid in list(first)[3:]))
@@ -276,6 +313,89 @@ class QuestionPlanDatabaseTests(unittest.TestCase):
         self.assertTrue({101, 201, 202}.issubset(other))
         self.assertNotIn(999, other)
         self.assertNotEqual(list(first), list(other))
+
+    def test_saved_assignment_and_progress_reads_do_not_lock_or_redraw(self):
+        self.save()
+        assign, events = self.assignment_driver()
+        first = assign(1, 9)
+        # An unrelated change to the pool must not force a saved student to redraw.
+        self.db.execute('DELETE FROM exam_question_pool')
+        self.db.commit()
+        for persist in (True, False):
+            events.clear()
+            self.assertEqual(assign(1, 9, persist=persist), first)
+            self.assertFalse(any('FOR UPDATE' in e or 'exam_question_pool' in e or 'INSERT' in e for e in events))
+            self.assertIn('rollback', events)
+
+    def test_preview_never_creates_assignment_and_matches_formal_entry(self):
+        self.save()
+        assign, events = self.assignment_driver()
+        preview = assign(1, 9, persist=False)
+        self.assertEqual(len(preview), 8)
+        self.assertFalse(any('FOR UPDATE' in e or 'INSERT' in e or e == 'commit' for e in events))
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM exam_user_questions').fetchone()[0], 0)
+        self.assertEqual(assign(1, 9), preview)
+
+    def test_legacy_preview_without_frozen_pool_is_read_only(self):
+        self.db.execute('UPDATE exams SET question_plan=NULL, question_count=3 WHERE id=9')
+        self.db.commit()
+        assign, events = self.assignment_driver()
+        preview = assign(1, 9, persist=False)
+        self.assertEqual(len(preview), 3)
+        self.assertFalse(any('FOR UPDATE' in e or 'INSERT' in e for e in events))
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM exam_question_pool').fetchone()[0], 0)
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM exam_user_questions').fetchone()[0], 0)
+        self.assertEqual(assign(1, 9), preview)
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM exam_question_pool').fetchone()[0], 5)
+
+    def test_concurrent_first_entry_rechecks_assignment_after_lock(self):
+        self.save()
+
+        def other_request_finishes():
+            self.db.execute('INSERT INTO exam_user_questions VALUES(9,7,1,201,1)')
+            self.db.commit()
+
+        assign, events = self.assignment_driver(before_lock=other_request_finishes)
+        result = assign(1, 9)
+        self.assertEqual(list(result), [201])
+        self.assertFalse(any('INSERT' in e for e in events))
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM exam_user_questions').fetchone()[0], 1)
+
+    def test_assignment_reloads_admin_policy_after_waiting_for_lock(self):
+        self.save()
+
+        def admin_changes_policy():
+            self.db.execute('UPDATE exams SET question_plan=NULL, question_count=1 WHERE id=9')
+            self.db.commit()
+
+        assign, events = self.assignment_driver(before_lock=admin_changes_policy)
+        result = assign(1, 9)
+        self.assertEqual(len(result), 1)
+        self.assertTrue(all(info['paper_id'] == 10 for info in result.values()))
+
+    def test_assignment_failure_explicitly_rolls_back_and_does_not_cache(self):
+        self.save()
+        self.db.execute('DELETE FROM exam_question_pool')
+        self.db.commit()
+        assign, events = self.assignment_driver()
+        with self.assertRaisesRegex(ValueError, '考试固定题目缺失'):
+            assign(1, 9)
+        self.assertNotIn('commit', events)
+        self.assertNotIn('cache', events)
+        self.assertEqual(events[-2:], ['rollback', 'close'])
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM exam_user_questions').fetchone()[0], 0)
+
+    def test_removed_student_is_not_assigned_after_waiting_for_lock(self):
+        self.save()
+
+        def admin_removes_student():
+            self.db.execute('UPDATE exam_batch_students SET is_active=0 WHERE exam_id=9 AND user_id=1')
+            self.db.commit()
+
+        assign, events = self.assignment_driver(before_lock=admin_removes_student)
+        self.assertEqual(assign(1, 9), {})
+        self.assertFalse(any('INSERT' in e for e in events))
+        self.assertEqual(events[-2:], ['rollback', 'close'])
 
 
 if __name__ == '__main__':
